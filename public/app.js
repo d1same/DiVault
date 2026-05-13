@@ -776,7 +776,7 @@ function activeClientName() {
 function renderNotes() {
   if (!state.notes.length) return `<div class="empty card"><h2>No notes here yet</h2><p>Tap + to capture a quick thought, photo, file, password, checklist, or client note.</p></div>`;
   const titleOnly = Boolean(state.active) && state.noteLayout === 'list';
-  return state.notes.map(note => `<article class="card note-card ${titleOnly ? 'title-only' : ''} ${state.active && Number(state.active.id) === Number(note.id) ? 'active' : ''} ${state.selectedNoteIds.has(Number(note.id)) ? 'selected' : ''}" draggable="true" data-note-id="${note.id}">
+  return state.notes.map(note => `<article class="card note-card ${titleOnly ? 'title-only' : ''} ${state.active && Number(state.active.id) === Number(note.id) ? 'active' : ''} ${state.selectedNoteIds.has(Number(note.id)) ? 'selected' : ''}" draggable="true" data-note-id="${note.id}" data-open-card="${note.id}" tabindex="0" role="button" aria-label="Open ${esc(note.title || 'note')}">
     <div class="note-title-row">${state.selectionMode ? `<label class="note-select"><input type="checkbox" data-select-note="${note.id}" ${state.selectedNoteIds.has(Number(note.id)) ? 'checked' : ''} aria-label="Select ${esc(note.title)}"><span class="sr-only">Select ${esc(note.title)}</span></label>` : ''}<button data-open="${note.id}"><h2>${esc(note.title)}</h2></button></div>
     ${titleOnly ? '' : `
     <div class="pill-row">
@@ -913,11 +913,18 @@ function renderReadableBlocks(blocks) {
     if (block.type === 'checklist') return `<div class="read-check">${block.checked ? '☑' : '☐'} ${esc(block.text || '')}</div>`;
     if (block.type === 'quote') return `<blockquote>${esc(block.text || '').replace(/\n/g, '<br>')}</blockquote>`;
     if (block.type === 'table') return `<div class="table-editor-grid readonly-table">${renderReadOnlyTable(block.rows)}</div>`;
-    if (block.type === 'code') return `<pre class="read-code"><code>${esc(block.text || '')}</code></pre>`;
+    if (block.type === 'code') return renderReadableCode(block.text || '');
     if (block.type === 'secret') return renderInlineSecret(block.label, block.value);
     if (block.type === 'drawing' && block.dataUrl) return `<img class="read-drawing" src="${esc(block.dataUrl)}" alt="Drawing">`;
     return '';
   }).join('');
+}
+
+function renderReadableCode(code) {
+  const text = String(code || '');
+  const lines = text.split('\n');
+  const numbers = Array.from({ length: Math.max(1, lines.length) }, (_, index) => index + 1).join('\n');
+  return `<div class="read-code-shell"><div class="code-view-topbar"><span>${lines.length} line${lines.length === 1 ? '' : 's'}</span><button class="btn ghost" type="button" data-copy-readable-code data-code="${esc(text)}">Copy</button></div><pre class="read-code"><span class="code-line-numbers" aria-hidden="true">${numbers}</span><code>${esc(text)}</code></pre></div>`;
 }
 
 function renderInlineSecret(label, value) {
@@ -1082,6 +1089,23 @@ function bindContentActions() {
   document.querySelectorAll('[data-open]').forEach(el => el.addEventListener('click', async () => {
     if (!await confirmDiscardUnsaved()) return;
     openEditor(Number(el.dataset.open));
+  }));
+  document.querySelectorAll('[data-open-card]').forEach(card => card.addEventListener('click', async e => {
+    if (e.target.closest('button, input, label, a, select, textarea')) return;
+    if (!await confirmDiscardUnsaved()) return;
+    openEditor(Number(card.dataset.openCard));
+  }));
+  document.querySelectorAll('[data-open-card]').forEach(card => card.addEventListener('keydown', async e => {
+    if (!['Enter', ' '].includes(e.key)) return;
+    if (e.target.closest('button, input, label, a, select, textarea')) return;
+    e.preventDefault();
+    if (!await confirmDiscardUnsaved()) return;
+    openEditor(Number(card.dataset.openCard));
+  }));
+  document.querySelectorAll('[data-copy-readable-code]').forEach(btn => btn.addEventListener('click', async e => {
+    e.stopPropagation();
+    await navigator.clipboard.writeText(btn.dataset.code || '');
+    toast('Code copied');
   }));
   document.querySelectorAll('[data-note-layout]').forEach(btn => btn.addEventListener('click', () => {
     state.noteLayout = btn.dataset.noteLayout === 'list' ? 'list' : 'cards';
@@ -1327,7 +1351,7 @@ function renderEditorBlock(block) {
   if (block.type === 'quote') return `<div class="editor-block quote-editor-block" data-block="quote" data-block-id="${id}">${blockMoveControls()}<div class="block-row"><b>Quote</b><button type="button" class="icon-action" data-remove-block title="Remove block">×</button></div><textarea data-block-text placeholder="Quoted text">${esc(block.text || '')}</textarea></div>`;
   if (block.type === 'hr') return `<div class="editor-block hr-editor-block" data-block="hr" data-block-id="${id}">${blockMoveControls()}<div class="block-row"><b>Divider</b><button type="button" class="icon-action" data-remove-block title="Remove block">×</button></div><div class="editor-divider"></div></div>`;
   if (block.type === 'table') return `<div class="editor-block table-editor-block" data-block="table" data-block-id="${id}">${blockMoveControls()}<div class="block-row"><b>Table</b><div class="btn-row"><button type="button" class="btn ghost" data-add-table-row>Add row</button><button type="button" class="btn ghost" data-add-table-col>Add column</button><button type="button" class="icon-action" data-remove-block title="Remove block">×</button></div></div>${renderTableGrid(block.rows)}</div>`;
-  if (block.type === 'code') return `<div class="editor-block code-editor-block" data-block="code" data-block-id="${id}">${blockMoveControls()}<div class="block-row"><b>Code</b><div class="btn-row"><button type="button" class="btn ghost" data-expand-code-editor>Expand</button><button type="button" class="icon-action" data-remove-block title="Remove block">×</button></div></div><div class="code-edit-shell"><pre class="code-line-numbers" aria-hidden="true">1</pre><textarea data-block-code spellcheck="false" placeholder="Paste any code here">${esc(block.text || '')}</textarea></div></div>`;
+  if (block.type === 'code') return `<div class="editor-block code-editor-block" data-block="code" data-block-id="${id}">${blockMoveControls()}<div class="block-row"><b>Code</b><div class="btn-row"><button type="button" class="btn ghost" data-copy-code-editor>Copy</button><button type="button" class="btn ghost" data-expand-code-editor>Expand</button><button type="button" class="icon-action" data-remove-block title="Remove block">×</button></div></div><div class="code-edit-shell"><pre class="code-line-numbers" aria-hidden="true">1</pre><textarea data-block-code spellcheck="false" placeholder="Paste any code here">${esc(block.text || '')}</textarea></div></div>`;
   if (block.type === 'math') return `<div class="editor-block math-block" data-block="math" data-block-id="${id}">${blockMoveControls()}<div class="inline-block-heading">LaTeX math</div><textarea data-block-math spellcheck="false" placeholder="E = mc^2">${esc(block.text || '')}</textarea></div>`;
   if (block.type === 'secret') return `<div class="editor-block secret-editor-block" data-block="secret" data-block-id="${id}">${blockMoveControls()}<label class="field compact-field"><span>Secret label</span><input data-secret-label list="secretLabelSuggestions" value="${esc(block.label || '')}" placeholder="Password label, API key, token..."></label><datalist id="secretLabelSuggestions"><option value="Password"><option value="WordPress admin password"><option value="Token"><option value="API Key"><option value="Secret"><option value="Key"></datalist><label class="field compact-field"><span>Secret value</span><input data-secret-value type="password" value="${esc(block.value || '')}" placeholder="Paste a password or generate one"></label><button type="button" class="btn ghost" data-generate-secret>Generate</button><button type="button" class="icon-action" data-toggle-secret title="Reveal secret">👁</button><button type="button" class="icon-action" data-copy-inline-editor-secret title="Copy secret">⧉</button><button type="button" class="icon-action" data-remove-block title="Remove block">×</button></div>`;
   if (block.type === 'drawing') return `<div class="editor-block drawing-block" data-block="drawing" data-block-id="${id}">${blockMoveControls()}<div class="block-row"><b>Drawing</b><div class="btn-row"><button type="button" class="btn ghost" data-expand-drawing>Expand</button><button type="button" class="btn ghost" data-clear-drawing>Clear</button><button type="button" class="icon-action" data-remove-block title="Remove block">×</button></div></div><canvas width="1100" height="520" data-drawing-canvas></canvas><input type="hidden" data-drawing-data value="${esc(block.dataUrl || '')}"></div>`;
@@ -1402,6 +1426,11 @@ function bindBlockEditor(modal) {
     if (e.target.closest('[data-expand-code-editor]')) {
       const block = e.target.closest('[data-block]');
       openCodePreview(block.querySelector('[data-block-code]')?.value || '', 'Code');
+    }
+    if (e.target.closest('[data-copy-code-editor]')) {
+      const block = e.target.closest('[data-block]');
+      await navigator.clipboard.writeText(block.querySelector('[data-block-code]')?.value || '');
+      toast('Code copied');
     }
     if (e.target.closest('[data-add-table-row]')) {
       const block = e.target.closest('[data-block]');
