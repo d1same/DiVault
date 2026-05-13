@@ -1,4 +1,4 @@
-const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: 'notes:all', panel: '', settingsHtml: '', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), noteLayout: localStorage.getItem('divault_note_layout') || 'cards', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false };
+const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: 'notes:all', panel: '', settingsHtml: '', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), noteLayout: localStorage.getItem('divault_note_layout') || 'cards', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
 const app = document.querySelector('#app');
 
 function applyTheme() {
@@ -274,6 +274,7 @@ async function boot() {
   } catch (err) {
     return renderOfflineVault(err);
   }
+  state.desktop = Boolean(bootInfo.desktop);
   if (bootInfo.needsSetup) return renderSetup();
   try {
     const me = await api('/me');
@@ -287,16 +288,68 @@ async function boot() {
 }
 
 function renderSetup() {
+  const desktopChoice = state.desktop ? `<div class="onboarding-choice" role="group" aria-label="Desktop setup mode">
+      <button class="setup-choice ${state.setupMode === 'local' ? 'active' : ''}" type="button" data-setup-mode="local"><b>Standalone vault</b><span>Create a private local vault on this computer.</span></button>
+      <button class="setup-choice ${state.setupMode === 'server' ? 'active' : ''}" type="button" data-setup-mode="server"><b>Connect to server</b><span>Use an existing DiVault server so devices can sync through it.</span></button>
+    </div>` : '';
+  const localSetup = `<div class="setup-panel ${state.setupMode === 'local' ? '' : 'hidden'}" data-setup-panel="local">
+    <form class="stack" id="setupForm">
+      <label class="field"><span>Name</span><input name="name" autocomplete="name" required></label>
+      <label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required></label>
+      <label class="field"><span>Password</span><input name="password" type="password" autocomplete="new-password" minlength="10" required></label>
+      <label class="field"><span>Confirm password</span><input name="password_confirm" type="password" autocomplete="new-password" minlength="10" required></label>
+      <button class="btn primary">Create owner</button>
+    </form>
+    <p class="small muted">Standalone desktop vaults stay on this computer. Use server mode when you want multiple devices to sync.</p>
+  </div>`;
+  const serverSetup = state.desktop ? `<div class="setup-panel ${state.setupMode === 'server' ? '' : 'hidden'}" data-setup-panel="server">
+    <form class="stack" id="desktopServerForm">
+      <label class="field"><span>DiVault server URL</span><input name="server_url" type="url" placeholder="https://notes.example.com" autocomplete="url" required></label>
+      <button class="btn primary">Connect to server</button>
+    </form>
+    <p class="small muted">The desktop app will remember this URL and open it on future launches. Create your account on the server if it is new.</p>
+  </div>` : '';
+  app.innerHTML = authShell('Welcome to DiVault', state.desktop ? 'Choose how this desktop app should open.' : 'Create your owner account. Use a strong password.', `
+    ${desktopChoice}
+    <div class="card stack setup-theme"><h3>Color theme</h3>${themePresetPicker()}</div>
+    ${localSetup}
+    ${serverSetup}`);
+  bindThemeControls(document);
+  document.querySelectorAll('[data-setup-mode]').forEach(button => button.addEventListener('click', () => {
+    state.setupMode = button.dataset.setupMode;
+    renderSetup();
+  }));
+  document.querySelector('#desktopServerForm')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+      const res = await api('/desktop/server', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+      toast('Server saved');
+      window.location.href = res.server_url;
+    } catch (err) { toast(err.message); }
+  });
+  document.querySelector('#setupForm')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    if (data.password !== data.password_confirm) return toast('Passwords do not match');
+    await api('/setup', { method: 'POST', body: data });
+    toast('Owner created');
+    renderLogin();
+  });
+}
+
+function renderLegacySetup() {
   app.innerHTML = authShell('Create your owner account', 'This is stored inside /config. Use a strong password.', `
     <form class="stack" id="setupForm">
       <label class="field"><span>Name</span><input name="name" autocomplete="name" required></label>
       <label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required></label>
       <label class="field"><span>Password</span><input name="password" type="password" autocomplete="new-password" minlength="10" required></label>
+      <label class="field"><span>Confirm password</span><input name="password_confirm" type="password" autocomplete="new-password" minlength="10" required></label>
       <button class="btn primary">Create owner</button>
     </form>`);
   document.querySelector('#setupForm').addEventListener('submit', async e => {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(e.target));
+    if (data.password !== data.password_confirm) return toast('Passwords do not match');
     await api('/setup', { method: 'POST', body: data });
     toast('Owner created');
     renderLogin();
@@ -2447,10 +2500,11 @@ async function openSettings() {
         <div class="card"><h3>Users</h3>${users.users.map(u => `<div class="user-row"><span>${esc(u.email)}</span><span class="pill">${esc(u.role)}</span></div>`).join('') || '<p class="small muted">No users.</p>'}</div>
         <div class="card"><h3>Audit</h3>${audit.audit.slice(0,12).map(a => `<div class="audit-row"><span>${esc(a.action)}</span><span class="small muted">${esc(a.email || 'system')}</span></div>`).join('') || '<p class="small muted">No events yet.</p>'}</div>` : '';
   const avatarPreview = state.user.avatar_data ? `<img class="profile-avatar" src="${esc(state.user.avatar_data)}" alt="Current avatar">` : '<div class="profile-avatar initials">DV</div>';
+  const removeAvatarButton = state.user.avatar_data ? '<button class="btn ghost" id="removeAvatarBtn" type="button">Remove avatar</button>' : '';
   state.settingsHtml = `
     <div class="editor-grid">
       <div class="stack">
-        <div class="card stack"><h3>Mini profile</h3><div class="profile-row">${avatarPreview}<div><b>${esc(state.user.name)}</b><p class="small muted">${esc(state.user.email)} · ${esc(state.user.role)}</p></div></div><form id="profileForm" class="stack"><label class="field"><span>Name</span><input name="name" value="${esc(state.user.name)}" autocomplete="name"></label><label class="field"><span>Avatar</span><input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label><input type="hidden" name="avatar_data" value="${esc(state.user.avatar_data || '')}"><button class="btn primary">Save profile</button></form></div>
+        <div class="card stack"><h3>Mini profile</h3><div class="profile-row">${avatarPreview}<div><b>${esc(state.user.name)}</b><p class="small muted">${esc(state.user.email)} · ${esc(state.user.role)}</p></div></div><form id="profileForm" class="stack"><label class="field"><span>Name</span><input name="name" value="${esc(state.user.name)}" autocomplete="name"></label><label class="field"><span>Avatar</span><div class="avatar-controls"><input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">${removeAvatarButton}</div></label><input type="hidden" name="avatar_data" value="${esc(state.user.avatar_data || '')}"><button class="btn primary">Save profile</button></form></div>
         <div class="card stack"><h3>Change password</h3><form id="passwordForm" class="stack"><input name="current_password" type="password" placeholder="Current password" autocomplete="current-password"><input name="new_password" type="password" minlength="10" placeholder="New password" autocomplete="new-password"><input name="new_password_confirm" type="password" minlength="10" placeholder="Type new password again" autocomplete="new-password"><button class="btn">Update password</button></form></div>
         <div class="card stack"><h3>Appearance</h3><p class="muted small">Pick a comfortable preset. These include light, dark, neutral, cooler, and color-safe options.</p>${themePresetPicker()}</div>
         <div class="card stack"><h3>Sync</h3>${renderSyncSettings(syncManifest)}</div>
@@ -2478,9 +2532,28 @@ async function openSettings() {
     reader.onload = () => {
       modal.querySelector('input[name="avatar_data"]').value = reader.result || '';
       const preview = modal.querySelector('.profile-avatar');
-      if (preview?.tagName === 'IMG') preview.src = reader.result;
+      if (preview) {
+        const img = document.createElement('img');
+        img.className = 'profile-avatar';
+        img.alt = 'Current avatar';
+        img.src = reader.result || '';
+        preview.replaceWith(img);
+      }
     };
     reader.readAsDataURL(file);
+  });
+  modal.querySelector('#removeAvatarBtn')?.addEventListener('click', () => {
+    modal.querySelector('input[name="avatar_data"]').value = '';
+    const fileInput = modal.querySelector('#avatarFile');
+    if (fileInput) fileInput.value = '';
+    const preview = modal.querySelector('.profile-avatar');
+    if (preview) {
+      const initials = document.createElement('div');
+      initials.className = 'profile-avatar initials';
+      initials.textContent = 'DV';
+      preview.replaceWith(initials);
+    }
+    toast('Avatar will be removed when you save');
   });
   modal.querySelector('#profileForm')?.addEventListener('submit', async e => {
     e.preventDefault();

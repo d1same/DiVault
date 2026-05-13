@@ -37,6 +37,7 @@ final class App
         if ($method === 'GET' && $path === '/health') $this->json(['ok' => true]);
         if ($method === 'GET' && $path === '/bootstrap') $this->bootstrap();
         if ($method === 'POST' && $path === '/setup') $this->setup();
+        if ($method === 'POST' && $path === '/desktop/server') $this->saveDesktopServer();
         if ($method === 'POST' && $path === '/login/check') $this->loginCheck();
         if ($method === 'POST' && $path === '/login') $this->login();
         if ($method === 'POST' && $path === '/logout') $this->logout();
@@ -103,7 +104,7 @@ final class App
     private function bootstrap(): void
     {
         $count = (int) $this->db->query('SELECT COUNT(*) FROM users')->fetchColumn();
-        $this->json(['needsSetup' => $count === 0, 'appUrl' => Config::appUrl()]);
+        $this->json(['needsSetup' => $count === 0, 'appUrl' => Config::appUrl(), 'desktop' => Config::isDesktop()]);
     }
 
     private function setup(): void
@@ -114,6 +115,9 @@ final class App
             if ((int) $this->db->query('SELECT COUNT(*) FROM users')->fetchColumn() > 0) {
                 throw new RuntimeException('Setup already completed');
             }
+            if (($data['password_confirm'] ?? $data['password'] ?? '') !== ($data['password'] ?? '')) {
+                throw new RuntimeException('Passwords do not match');
+            }
             $id = $this->createUserRow($data['email'] ?? '', $data['name'] ?? 'Owner', $data['password'] ?? '', 'owner');
             $this->audit(null, 'setup.complete', 'user', $id);
             $this->db->commit();
@@ -122,6 +126,20 @@ final class App
             throw $e;
         }
         $this->json(['ok' => true]);
+    }
+
+    private function saveDesktopServer(): void
+    {
+        if (!Config::isDesktop()) throw new RuntimeException('Desktop server settings are only available in the desktop app');
+        $count = (int) $this->db->query('SELECT COUNT(*) FROM users')->fetchColumn();
+        if ($count > 0) throw new RuntimeException('Desktop server can only be set during first-run onboarding');
+        $data = $this->input();
+        $url = rtrim(trim((string)($data['server_url'] ?? '')), '/');
+        if ($url === '' || !preg_match('#^https?://#i', $url)) throw new RuntimeException('Enter a server URL that starts with http:// or https://');
+        if (!filter_var($url, FILTER_VALIDATE_URL)) throw new RuntimeException('Enter a valid server URL');
+        $file = Config::dir() . '/desktop-server.json';
+        file_put_contents($file, json_encode(['server_url' => $url], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        $this->json(['ok' => true, 'server_url' => $url]);
     }
 
     private function login(): void

@@ -25,11 +25,11 @@ fn main() {
 
     tauri::Builder::default()
         .setup(move |app| {
-            let url = if let Some(remote_url) = remote_url()? {
+            let config_dir = desktop_config_dir(app.handle())?;
+            let url = if let Some(remote_url) = remote_url(&config_dir)? {
                 remote_url
             } else {
                 let root = app_root(app.handle())?;
-                let config_dir = desktop_config_dir(app.handle())?;
                 ensure_config_dirs(&config_dir)?;
 
                 let child = start_php_server(&root, &config_dir)?;
@@ -57,9 +57,10 @@ fn main() {
         });
 }
 
-fn remote_url() -> Result<Option<Url>, Box<dyn std::error::Error>> {
-    let Ok(value) = env::var("DIVAULT_REMOTE_URL") else {
-        return Ok(None);
+fn remote_url(config_dir: &Path) -> Result<Option<Url>, Box<dyn std::error::Error>> {
+    let value = match env::var("DIVAULT_REMOTE_URL") {
+        Ok(value) => value,
+        Err(_) => desktop_server_url(config_dir)?.unwrap_or_default(),
     };
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -70,6 +71,18 @@ fn remote_url() -> Result<Option<Url>, Box<dyn std::error::Error>> {
         "http" | "https" => Ok(Some(url)),
         _ => Err("DIVAULT_REMOTE_URL must start with http:// or https://".into()),
     }
+}
+
+fn desktop_server_url(config_dir: &Path) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let file = config_dir.join("desktop-server.json");
+    if !file.is_file() {
+        return Ok(None);
+    }
+    let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(file)?)?;
+    Ok(value
+        .get("server_url")
+        .and_then(|server_url| server_url.as_str())
+        .map(str::to_string))
 }
 
 fn app_root(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -148,6 +161,7 @@ fn start_php_server(root: &Path, config_dir: &Path) -> Result<Child, Box<dyn std
         .current_dir(root)
         .env("APP_CONFIG_DIR", config_dir)
         .env("APP_URL", format!("http://{HOST}:{PORT}"))
+        .env("DIVAULT_DESKTOP", "true")
         .env("SECURE_COOKIES", "false")
         .env("TRUST_PROXY", "false")
         .stdin(Stdio::null())

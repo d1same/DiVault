@@ -22,6 +22,11 @@ final class Config
         return filter_var(getenv('TRUST_PROXY') ?: 'false', FILTER_VALIDATE_BOOL);
     }
 
+    public static function isDesktop(): bool
+    {
+        return filter_var(getenv('DIVAULT_DESKTOP') ?: 'false', FILTER_VALIDATE_BOOL);
+    }
+
     public static function aiReviewApiToken(): string
     {
         return trim(getenv('AI_REVIEW_API_TOKEN') ?: '');
