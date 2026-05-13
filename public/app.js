@@ -2523,7 +2523,7 @@ async function openSettings() {
         <div class="card"><h3>Audit</h3>${audit.audit.slice(0,12).map(a => `<div class="audit-row"><span>${esc(a.action)}</span><span class="small muted">${esc(a.email || 'system')}</span></div>`).join('') || '<p class="small muted">No events yet.</p>'}</div>` : '';
   const avatarPreview = state.user.avatar_data ? `<img class="profile-avatar" src="${esc(state.user.avatar_data)}" alt="Current avatar">` : '<div class="profile-avatar initials">DV</div>';
   const removeAvatarButton = state.user.avatar_data ? '<button class="btn ghost" id="removeAvatarBtn" type="button">Remove avatar</button>' : '';
-  const desktopServerCard = state.desktop && isAdmin ? `<div class="card stack"><h3>Desktop server</h3><p class="muted small">Point this desktop app at a hosted DiVault server on the next launch. Leave standalone users on the local vault unless they intentionally want server sync.</p><form id="desktopServerSettingsForm" class="stack"><label class="field"><span>Server URL</span><input name="server_url" type="url" value="${esc(desktopServer.server_url || '')}" placeholder="https://notes.example.com" autocomplete="url" required></label><button class="btn">Use server on next launch</button></form><p class="small muted">Restart DiVault after saving. To return to standalone local vault, remove <code>desktop-server.json</code> from the desktop app data folder.</p></div>` : '';
+  const desktopServerCard = state.desktop && isAdmin ? `<div class="card stack"><h3>Desktop mode</h3><p class="muted small">Choose whether this desktop app starts its standalone local vault or opens a hosted DiVault server on launch.</p><div class="inline-note-blocks"><div class="inline-note ${desktopServer.server_url ? '' : 'active'}"><b>Standalone vault</b><span>Private local vault on this computer.</span></div><div class="inline-note ${desktopServer.server_url ? 'active' : ''}"><b>Connect to server</b><span>${desktopServer.server_url ? esc(desktopServer.server_url) : 'Use one shared server for desktop, Android, and browser sync.'}</span></div></div><form id="desktopServerSettingsForm" class="stack"><label class="field"><span>Server URL</span><input name="server_url" type="url" value="${esc(desktopServer.server_url || '')}" placeholder="https://notes.example.com" autocomplete="url" required></label><div class="btn-row"><button class="btn primary">Use server on next launch</button>${desktopServer.server_url ? '<button class="btn ghost" id="desktopStandaloneBtn" type="button">Use standalone on next launch</button>' : ''}</div></form><p class="small muted">Restart DiVault after changing desktop mode. Server mode opens that URL directly; standalone mode starts the bundled local vault.</p></div>` : '';
   state.settingsHtml = `
     <div class="editor-grid">
       <div class="stack">
@@ -2606,7 +2606,16 @@ async function openSettings() {
       const result = await api('/desktop/server', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
       toast('Desktop server saved. Restart DiVault to use it.');
       e.target.querySelector('input[name="server_url"]').value = result.server_url || '';
+      openSettings();
     }, 'Desktop server update failed');
+  });
+  modal.querySelector('#desktopStandaloneBtn')?.addEventListener('click', async () => {
+    if (!await confirmDialog({ title: 'Use standalone desktop vault?', message: 'DiVault will clear the saved server URL and start the local standalone vault on the next launch.', confirmText: 'Use standalone' })) return;
+    await runUserAction(async () => {
+      await api('/desktop/server', { method: 'DELETE' });
+      toast('Standalone mode saved. Restart DiVault to use it.');
+      openSettings();
+    }, 'Desktop mode update failed');
   });
   modal.querySelector('#emergencySnapshotBtn').addEventListener('click', async () => {
     const passphrase = await promptDialog({ title: 'Emergency snapshot passphrase', message: 'Create a passphrase. Keep it safe; it is required for offline unlock.', type: 'password', required: true });

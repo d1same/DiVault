@@ -51,6 +51,7 @@ final class App
         if ($method === 'GET' && $path === '/me') $this->json(['user' => $this->publicUser($user)]);
         if ($method === 'GET' && $path === '/desktop/server') $this->desktopServer($user);
         if ($method === 'POST' && $path === '/desktop/server') $this->saveDesktopServer($user);
+        if ($method === 'DELETE' && $path === '/desktop/server') $this->clearDesktopServer($user);
         if ($method === 'POST' && $path === '/profile') $this->updateProfile($user);
         if ($method === 'GET' && $path === '/sessions') $this->sessions($user);
         if ($method === 'DELETE' && preg_match('#^/sessions/(\d+)$#', $path, $m)) $this->revokeSession($user, (int)$m[1]);
@@ -154,6 +155,15 @@ final class App
         $file = Config::dir() . '/desktop-server.json';
         file_put_contents($file, json_encode(['server_url' => $url], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         $this->json(['ok' => true, 'server_url' => $url]);
+    }
+
+    private function clearDesktopServer(array $user): void
+    {
+        $this->requireAdmin($user);
+        if (!Config::isDesktop()) throw new RuntimeException('Desktop server settings are only available in the desktop app');
+        $file = Config::dir() . '/desktop-server.json';
+        if (is_file($file) && !unlink($file)) throw new RuntimeException('Could not clear desktop server settings');
+        $this->json(['ok' => true, 'server_url' => '']);
     }
 
     private function desktopServerUrl(): string

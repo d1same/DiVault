@@ -813,6 +813,9 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
 .details-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
 .editor-sync { margin-right: auto; }
 .inline-note-blocks { display: grid; gap: 10px; padding: 0 12px; }
+.inline-note { display: grid; gap: 3px; border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 10px 12px; background: var(--surface); color: var(--text); }
+.inline-note span { color: var(--text-soft); font-size: .86rem; }
+.inline-note.active { border-color: color-mix(in srgb, var(--primary) 45%, var(--border-soft)); background: color-mix(in srgb, var(--primary) 8%, var(--surface-card)); }
 .inline-hint { margin: 0; }
 .inline-block-group { display: grid; gap: 8px; border: 1px solid var(--border-soft); border-radius: 0; padding: 12px; background: var(--surface-card); }
 .inline-block-heading { color: var(--muted); font-size: .72rem; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; }
