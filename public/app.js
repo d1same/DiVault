@@ -300,6 +300,7 @@ function renderSetup() {
       <label class="field"><span>Confirm password</span><input name="password_confirm" type="password" autocomplete="new-password" minlength="10" required></label>
       <button class="btn primary">Create owner</button>
     </form>
+    <details class="details-panel"><summary>Restore from backup</summary><form class="stack inline-note-blocks" id="setupRestoreForm"><p class="small muted">Use this on a fresh install to restore a DiVault full backup ZIP before creating a new owner account.</p><label class="field"><span>Backup ZIP</span><input name="backup" type="file" accept=".zip,application/zip" required></label><label class="field"><span>Backup passphrase</span><input name="passphrase" type="password" placeholder="Leave blank if none"></label><button class="btn danger">Restore backup</button></form></details>
     <p class="small muted">Standalone vaults stay on this computer. Connect to a server when you want multiple devices to sync.</p>
   </div>`;
   const serverSetup = state.desktop ? `<div class="setup-panel ${state.setupMode === 'server' ? '' : 'hidden'}" data-setup-panel="server">
@@ -334,6 +335,16 @@ function renderSetup() {
     await api('/setup', { method: 'POST', body: data });
     toast('Owner created');
     renderLogin();
+  });
+  document.querySelector('#setupRestoreForm')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    const form = new FormData(e.target);
+    if (!form.get('backup')?.name) return toast('Choose a backup ZIP first');
+    try {
+      const res = await api('/setup/restore', { method: 'POST', body: form });
+      toast(res.message || 'Backup restored');
+      setTimeout(() => window.location.reload(), 800);
+    } catch (err) { toast(err.message); }
   });
 }
 
@@ -2496,13 +2507,14 @@ async function openSettings() {
   state.editingNote = false;
   renderApp();
   const isAdmin = canAdminSettings();
-  const [users, audit, sessions, backups, syncManifest, aiIntegration] = await Promise.all([
+  const [users, audit, sessions, backups, syncManifest, aiIntegration, desktopServer] = await Promise.all([
     isAdmin ? api('/users').catch(() => ({ users: [] })) : { users: [] },
     isAdmin ? api('/audit').catch(() => ({ audit: [] })) : { audit: [] },
     api('/sessions').catch(() => ({ sessions: [] })),
     isAdmin ? api('/backups').catch(() => ({ backups: [], pending_restore: false })) : { backups: [], pending_restore: false },
     api('/sync/manifest').catch(() => null),
-    isAdmin ? api('/integrations/ai/status').catch(() => null) : null
+    isAdmin ? api('/integrations/ai/status').catch(() => null) : null,
+    state.desktop && isAdmin ? api('/desktop/server').catch(() => ({ server_url: '' })) : { server_url: '' }
   ]);
   const adminDataCards = isAdmin ? `<div class="card stack"><h3>Import / export</h3><div class="btn-row"><a class="btn" href="/api/export">Export JSON</a><button class="btn" id="backupBtn">Create full backup</button></div><p class="small muted">Optional backup passphrases encrypt backups. Keep the passphrase; encrypted backups cannot be restored without it.</p><label class="field"><span>Import JSON notes</span><textarea id="importJson" placeholder='{"notes":[{"title":"Imported","body":"Hello"}]}'></textarea></label><button class="btn" id="importBtn">Import</button></div>
         <div class="card stack"><h3>Backups</h3>${backups.pending_restore ? '<p class="pill secret">Restore pending. Restart container to apply.</p>' : ''}<div class="btn-row"><input id="restoreUpload" type="file" accept=".zip,application/zip"><button class="btn danger" id="uploadRestoreBtn">Upload restore ZIP</button></div>${backups.backups.map(b => `<div class="file-row"><span>${esc(b.file)}<br><span class="small muted">${Math.ceil(Number(b.size) / 1024)} KB</span></span><span class="btn-row"><a class="btn" href="/api/backups/${esc(b.file)}">Download</a><button class="btn danger" data-restore="${esc(b.file)}">Schedule restore</button></span></div>`).join('') || '<p class="small muted">No backups yet.</p>'}</div>` : '';
@@ -2511,12 +2523,14 @@ async function openSettings() {
         <div class="card"><h3>Audit</h3>${audit.audit.slice(0,12).map(a => `<div class="audit-row"><span>${esc(a.action)}</span><span class="small muted">${esc(a.email || 'system')}</span></div>`).join('') || '<p class="small muted">No events yet.</p>'}</div>` : '';
   const avatarPreview = state.user.avatar_data ? `<img class="profile-avatar" src="${esc(state.user.avatar_data)}" alt="Current avatar">` : '<div class="profile-avatar initials">DV</div>';
   const removeAvatarButton = state.user.avatar_data ? '<button class="btn ghost" id="removeAvatarBtn" type="button">Remove avatar</button>' : '';
+  const desktopServerCard = state.desktop && isAdmin ? `<div class="card stack"><h3>Desktop server</h3><p class="muted small">Point this desktop app at a hosted DiVault server on the next launch. Leave standalone users on the local vault unless they intentionally want server sync.</p><form id="desktopServerSettingsForm" class="stack"><label class="field"><span>Server URL</span><input name="server_url" type="url" value="${esc(desktopServer.server_url || '')}" placeholder="https://notes.example.com" autocomplete="url" required></label><button class="btn">Use server on next launch</button></form><p class="small muted">Restart DiVault after saving. To return to standalone local vault, remove <code>desktop-server.json</code> from the desktop app data folder.</p></div>` : '';
   state.settingsHtml = `
     <div class="editor-grid">
       <div class="stack">
         <div class="card stack"><h3>Mini profile</h3><div class="profile-row">${avatarPreview}<div><b>${esc(state.user.name)}</b><p class="small muted">${esc(state.user.email)} · ${esc(state.user.role)}</p></div></div><form id="profileForm" class="stack"><label class="field"><span>Name</span><input name="name" value="${esc(state.user.name)}" autocomplete="name"></label><label class="field"><span>Avatar</span><div class="avatar-controls"><input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">${removeAvatarButton}</div></label><input type="hidden" name="avatar_data" value="${esc(state.user.avatar_data || '')}"><button class="btn primary">Save profile</button></form></div>
         <div class="card stack"><h3>Change password</h3><form id="passwordForm" class="stack"><input name="current_password" type="password" placeholder="Current password" autocomplete="current-password"><input name="new_password" type="password" minlength="10" placeholder="New password" autocomplete="new-password"><input name="new_password_confirm" type="password" minlength="10" placeholder="Type new password again" autocomplete="new-password"><button class="btn">Update password</button></form></div>
         <div class="card stack"><h3>Appearance</h3><p class="muted small">Pick a comfortable preset. These include light, dark, neutral, cooler, and color-safe options.</p>${themePresetPicker()}</div>
+        ${desktopServerCard}
         <div class="card stack"><h3>Sync</h3>${renderSyncSettings(syncManifest)}</div>
         ${isAdmin ? `<div class="card stack"><h3>AI review API</h3>${renderAiIntegrationSettings(aiIntegration)}</div>` : ''}
         <div class="card stack"><h3>Emergency offline snapshot</h3><p class="muted small">Create or update an encrypted localStorage snapshot for offline access. Keep the passphrase; it is required to unlock the snapshot.</p><button class="btn" id="emergencySnapshotBtn">Create/update encrypted snapshot</button><p class="small muted">Pending offline notes remain unencrypted local-only drafts until synced.</p></div>
@@ -2585,6 +2599,14 @@ async function openSettings() {
       e.target.reset();
       toast('Password updated');
     }, 'Password update failed');
+  });
+  modal.querySelector('#desktopServerSettingsForm')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    await runUserAction(async () => {
+      const result = await api('/desktop/server', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+      toast('Desktop server saved. Restart DiVault to use it.');
+      e.target.querySelector('input[name="server_url"]').value = result.server_url || '';
+    }, 'Desktop server update failed');
   });
   modal.querySelector('#emergencySnapshotBtn').addEventListener('click', async () => {
     const passphrase = await promptDialog({ title: 'Emergency snapshot passphrase', message: 'Create a passphrase. Keep it safe; it is required for offline unlock.', type: 'password', required: true });

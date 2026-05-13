@@ -37,7 +37,8 @@ final class App
         if ($method === 'GET' && $path === '/health') $this->json(['ok' => true]);
         if ($method === 'GET' && $path === '/bootstrap') $this->bootstrap();
         if ($method === 'POST' && $path === '/setup') $this->setup();
-        if ($method === 'POST' && $path === '/desktop/server') $this->saveDesktopServer();
+        if ($method === 'POST' && $path === '/setup/restore' && $this->needsSetup()) $this->setupRestoreUpload();
+        if ($method === 'POST' && $path === '/desktop/server' && $this->needsSetup()) $this->saveDesktopServer();
         if ($method === 'POST' && $path === '/login/check') $this->loginCheck();
         if ($method === 'POST' && $path === '/login') $this->login();
         if ($method === 'POST' && $path === '/logout') $this->logout();
@@ -48,6 +49,8 @@ final class App
             $this->requireCsrf();
         }
         if ($method === 'GET' && $path === '/me') $this->json(['user' => $this->publicUser($user)]);
+        if ($method === 'GET' && $path === '/desktop/server') $this->desktopServer($user);
+        if ($method === 'POST' && $path === '/desktop/server') $this->saveDesktopServer($user);
         if ($method === 'POST' && $path === '/profile') $this->updateProfile($user);
         if ($method === 'GET' && $path === '/sessions') $this->sessions($user);
         if ($method === 'DELETE' && preg_match('#^/sessions/(\d+)$#', $path, $m)) $this->revokeSession($user, (int)$m[1]);
@@ -103,8 +106,12 @@ final class App
 
     private function bootstrap(): void
     {
-        $count = (int) $this->db->query('SELECT COUNT(*) FROM users')->fetchColumn();
-        $this->json(['needsSetup' => $count === 0, 'appUrl' => Config::appUrl(), 'desktop' => Config::isDesktop()]);
+        $this->json(['needsSetup' => $this->needsSetup(), 'appUrl' => Config::appUrl(), 'desktop' => Config::isDesktop()]);
+    }
+
+    private function needsSetup(): bool
+    {
+        return (int) $this->db->query('SELECT COUNT(*) FROM users')->fetchColumn() === 0;
     }
 
     private function setup(): void
@@ -128,11 +135,18 @@ final class App
         $this->json(['ok' => true]);
     }
 
-    private function saveDesktopServer(): void
+    private function desktopServer(array $user): void
+    {
+        $this->requireAdmin($user);
+        if (!Config::isDesktop()) throw new RuntimeException('Desktop server settings are only available in the desktop app');
+        $this->json(['server_url' => $this->desktopServerUrl()]);
+    }
+
+    private function saveDesktopServer(?array $user = null): void
     {
         if (!Config::isDesktop()) throw new RuntimeException('Desktop server settings are only available in the desktop app');
-        $count = (int) $this->db->query('SELECT COUNT(*) FROM users')->fetchColumn();
-        if ($count > 0) throw new RuntimeException('Desktop server can only be set during first-run onboarding');
+        if ($user) $this->requireAdmin($user);
+        if (!$user && !$this->needsSetup()) throw new RuntimeException('Sign in to update desktop server settings');
         $data = $this->input();
         $url = rtrim(trim((string)($data['server_url'] ?? '')), '/');
         if ($url === '' || !preg_match('#^https?://#i', $url)) throw new RuntimeException('Enter a server URL that starts with http:// or https://');
@@ -140,6 +154,26 @@ final class App
         $file = Config::dir() . '/desktop-server.json';
         file_put_contents($file, json_encode(['server_url' => $url], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         $this->json(['ok' => true, 'server_url' => $url]);
+    }
+
+    private function desktopServerUrl(): string
+    {
+        $file = Config::dir() . '/desktop-server.json';
+        if (!is_file($file)) return '';
+        $data = json_decode((string)file_get_contents($file), true) ?: [];
+        return is_string($data['server_url'] ?? null) ? (string)$data['server_url'] : '';
+    }
+
+    private function setupRestoreUpload(): void
+    {
+        if (empty($_FILES['backup'])) throw new RuntimeException('No backup uploaded');
+        $file = $_FILES['backup'];
+        if (($file['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) throw new RuntimeException('Upload failed');
+        if (($file['size'] ?? 0) <= 0 || (int)$file['size'] > 200 * 1024 * 1024) throw new RuntimeException('Invalid backup size');
+        $passphrase = (string)($_POST['passphrase'] ?? '');
+        $this->validateBackupZip($file['tmp_name'], $passphrase);
+        $this->applyBackupZip($file['tmp_name'], $passphrase);
+        $this->json(['ok' => true, 'message' => 'Backup restored. Reload DiVault and sign in with the restored owner account.']);
     }
 
     private function login(): void
@@ -1203,6 +1237,54 @@ final class App
         }
         if (file_put_contents($path, $passphrase) === false) throw new RuntimeException('Unable to write restore passphrase');
         @chmod($path, 0600);
+    }
+
+    private function applyBackupZip(string $path, string $passphrase = ''): void
+    {
+        $zip = new ZipArchive();
+        if ($zip->open($path) !== true) throw new RuntimeException('Invalid backup ZIP');
+        if ($passphrase !== '') $zip->setPassword($passphrase);
+        $configDir = Config::dir();
+        foreach (['files', 'keys'] as $dir) {
+            if (!is_dir($configDir . '/' . $dir) && !mkdir($configDir . '/' . $dir, 0775, true)) {
+                $zip->close();
+                throw new RuntimeException('Unable to prepare restore directory');
+            }
+        }
+        $db = $zip->getFromName('app.sqlite');
+        if ($db === false) {
+            $zip->close();
+            throw new RuntimeException('Unable to read backup database');
+        }
+        if (file_put_contents($configDir . '/app.sqlite', $db) === false) {
+            $zip->close();
+            throw new RuntimeException('Unable to restore database');
+        }
+        $key = $zip->getFromName('keys/master.key');
+        if ($key !== false) {
+            if (file_put_contents($configDir . '/keys/master.key', $key) === false) {
+                $zip->close();
+                throw new RuntimeException('Unable to restore encryption key');
+            }
+            @chmod($configDir . '/keys/master.key', 0600);
+        }
+        foreach (glob($configDir . '/files/*') ?: [] as $oldFile) {
+            if (is_file($oldFile)) @unlink($oldFile);
+        }
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $entry = $zip->getNameIndex($i);
+            if (!is_string($entry) || !preg_match('#^files/[^/]+$#', $entry)) continue;
+            $content = $zip->getFromIndex($i);
+            if ($content === false) {
+                $zip->close();
+                throw new RuntimeException('Unable to restore file attachment');
+            }
+            if (file_put_contents($configDir . '/' . $entry, $content) === false) {
+                $zip->close();
+                throw new RuntimeException('Unable to restore file attachment');
+            }
+        }
+        $zip->close();
     }
 
     private function downloadBackup(array $user, string $name): void
