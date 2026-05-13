@@ -193,7 +193,9 @@ try {
   Set-Content -LiteralPath $tmpFile.FullName -Value "Smoke file preview" -NoNewline
   $sessionCookie = ($session.Cookies.GetCookies($BaseUrl) | Where-Object { $_.Name -eq "divault_session" } | Select-Object -First 1).Value
   $cookieHeader = "divault_session=$sessionCookie; divault_csrf=$csrf"
-  $curlOutput = & curl.exe -fsS -X POST "$BaseUrl/api/notes/$($note.id)/files" -H "X-CSRF-Token: $csrf" -H "Cookie: $cookieHeader" -F "file=@$($tmpFile.FullName);type=text/plain"
+  $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+  if (-not $curl) { $curl = Get-Command curl -ErrorAction Stop }
+  $curlOutput = & $curl.Source -fsS -X POST "$BaseUrl/api/notes/$($note.id)/files" -H "X-CSRF-Token: $csrf" -H "Cookie: $cookieHeader" -F "file=@$($tmpFile.FullName);type=text/plain"
   if ($LASTEXITCODE -ne 0) { throw "File upload failed: $curlOutput" }
   $details = Invoke-Json -Method Get -Path "/api/notes/$($note.id)" -Session $session
   if ($details.files.Count -lt 1) { throw "File upload failed" }

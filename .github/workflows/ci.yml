@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  web-docker:
+    name: Web and Docker smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check public/app.js
+          node --check public/sw.js
+
+      - name: Validate Docker Compose
+        run: docker compose config --quiet
+
+      - name: Build and start Docker app
+        run: docker compose up -d --build --force-recreate --remove-orphans
+
+      - name: Wait for container health
+        shell: pwsh
+        run: |
+          $deadline = (Get-Date).AddSeconds(90)
+          do {
+            $status = docker inspect --format '{{.State.Health.Status}}' divault-notes
+            if ($status -eq 'healthy') { 'healthy'; exit 0 }
+            Start-Sleep -Seconds 2
+          } while ((Get-Date) -lt $deadline)
+          throw "Container did not become healthy. Last status: $status"
+
+      - name: Run API smoke suite
+        shell: pwsh
+        run: ./scripts/smoke.ps1
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Stop Docker app
+        if: always()
+        run: docker compose down -v --remove-orphans
+
+  desktop-windows:
+    name: Windows desktop build
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_sqlite, zip
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check Rust build
+        working-directory: src-tauri
+        run: cargo check
+
+      - name: Build desktop installers
+        run: npm run desktop:build
+
+      - name: Smoke test desktop executable
+        shell: pwsh
+        run: ./scripts/desktop-smoke.ps1
+
+      - name: Upload desktop installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: divault-windows-installers
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
