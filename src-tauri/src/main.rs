@@ -13,6 +13,9 @@ use std::{
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 const HOST: &str = "127.0.0.1";
 const PORT: u16 = 3444;
 
@@ -26,7 +29,7 @@ fn main() {
                 remote_url
             } else {
                 let root = app_root(app.handle())?;
-                let config_dir = desktop_config_dir(&root)?;
+                let config_dir = desktop_config_dir(app.handle())?;
                 ensure_config_dirs(&config_dir)?;
 
                 let child = start_php_server(&root, &config_dir)?;
@@ -86,11 +89,11 @@ fn app_root(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Error
     Err("DiVault web resources were not found".into())
 }
 
-fn desktop_config_dir(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn desktop_config_dir(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
     if let Ok(path) = env::var("DIVAULT_DESKTOP_CONFIG") {
         return Ok(PathBuf::from(path));
     }
-    Ok(root.join("desktop-data"))
+    Ok(app.path().app_data_dir()?)
 }
 
 fn ensure_config_dirs(config_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -103,12 +106,17 @@ fn ensure_config_dirs(config_dir: &Path) -> Result<(), Box<dyn std::error::Error
 fn start_php_server(root: &Path, config_dir: &Path) -> Result<Child, Box<dyn std::error::Error>> {
     ensure_port_available()?;
 
-    let php = env::var("DIVAULT_PHP_BIN").unwrap_or_else(|_| "php".to_string());
+    let php = php_runtime(root);
+    let php_dir = php.parent().map(Path::to_path_buf);
     let public_dir = root.join("public");
     let router = public_dir.join("index.php");
     let addr = format!("{HOST}:{PORT}");
 
-    let mut child = Command::new(php)
+    let mut command = Command::new(&php);
+    if let Some(dir) = php_dir {
+        command.arg("-c").arg(dir);
+    }
+    command
         .arg("-S")
         .arg(addr)
         .arg("-t")
@@ -121,13 +129,49 @@ fn start_php_server(root: &Path, config_dir: &Path) -> Result<Child, Box<dyn std
         .env("TRUST_PROXY", "false")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+
+    let mut child = command
         .spawn()
-        .map_err(|err| format!("failed to start PHP. Install PHP or set DIVAULT_PHP_BIN. {err}"))?;
+        .map_err(|err| format!("failed to start DiVault's bundled PHP runtime. Set DIVAULT_PHP_BIN only if you want to use a custom PHP build. Runtime: {}. {err}", php.display()))?;
 
     wait_for_server(&mut child)?;
 
     Ok(child)
+}
+
+fn php_runtime(root: &Path) -> PathBuf {
+    if let Ok(path) = env::var("DIVAULT_PHP_BIN") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        for dir in [root.join("php"), root.join("src-tauri").join("resources").join("php")] {
+            let bundled_php = dir.join("php.exe");
+            if bundled_php.is_file() {
+                return bundled_php;
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        for dir in [root.join("php"), root.join("src-tauri").join("resources").join("php")] {
+            let bundled_php = dir.join("php");
+            if bundled_php.is_file() {
+                return bundled_php;
+            }
+        }
+    }
+
+    PathBuf::from("php")
 }
 
 fn ensure_port_available() -> Result<(), Box<dyn std::error::Error>> {

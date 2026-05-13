@@ -4,6 +4,7 @@
 config/
 desktop-data/
 src-tauri/target/
+src-tauri/resources/php/
 graphify-out/
 .playwright-mcp/
 node_modules/

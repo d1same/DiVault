@@ -130,6 +130,22 @@ function confirmDialog({ title, message, confirmText = 'Continue' }) {
   });
 }
 
+function alertDialog({ title, message, confirmText = 'OK' }) {
+  return new Promise(resolve => {
+    const modal = document.createElement('div');
+    modal.className = 'editor confirm-dialog';
+    modal.innerHTML = `<section class="editor-panel small-panel">
+      <div class="topbar"><div><h2>${esc(title)}</h2><p class="muted small">${esc(message)}</p></div><button class="btn ghost" type="button" data-close>Close</button></div>
+      <div class="btn-row"><button class="btn primary" type="button" data-confirm>${esc(confirmText)}</button></div>
+    </section>`;
+    document.body.appendChild(modal);
+    setupAccessibleModal(modal, '[data-confirm]');
+    const remove = modal.remove.bind(modal);
+    modal.remove = () => { remove(); resolve(true); };
+    modal.querySelector('[data-confirm]').addEventListener('click', () => modal.remove());
+  });
+}
+
 async function runUserAction(action, fallback = 'Action failed') {
   try {
     return await action();
@@ -2417,12 +2433,13 @@ async function openSettings() {
   state.editingNote = false;
   renderApp();
   const isAdmin = canAdminSettings();
-  const [users, audit, sessions, backups, syncManifest] = await Promise.all([
+  const [users, audit, sessions, backups, syncManifest, aiIntegration] = await Promise.all([
     isAdmin ? api('/users').catch(() => ({ users: [] })) : { users: [] },
     isAdmin ? api('/audit').catch(() => ({ audit: [] })) : { audit: [] },
     api('/sessions').catch(() => ({ sessions: [] })),
     isAdmin ? api('/backups').catch(() => ({ backups: [], pending_restore: false })) : { backups: [], pending_restore: false },
-    api('/sync/manifest').catch(() => null)
+    api('/sync/manifest').catch(() => null),
+    isAdmin ? api('/integrations/ai/status').catch(() => null) : null
   ]);
   const adminDataCards = isAdmin ? `<div class="card stack"><h3>Import / export</h3><div class="btn-row"><a class="btn" href="/api/export">Export JSON</a><button class="btn" id="backupBtn">Create full backup</button></div><p class="small muted">Optional backup passphrases encrypt backups. Keep the passphrase; encrypted backups cannot be restored without it.</p><label class="field"><span>Import JSON notes</span><textarea id="importJson" placeholder='{"notes":[{"title":"Imported","body":"Hello"}]}'></textarea></label><button class="btn" id="importBtn">Import</button></div>
         <div class="card stack"><h3>Backups</h3>${backups.pending_restore ? '<p class="pill secret">Restore pending. Restart container to apply.</p>' : ''}<div class="btn-row"><input id="restoreUpload" type="file" accept=".zip,application/zip"><button class="btn danger" id="uploadRestoreBtn">Upload restore ZIP</button></div>${backups.backups.map(b => `<div class="file-row"><span>${esc(b.file)}<br><span class="small muted">${Math.ceil(Number(b.size) / 1024)} KB</span></span><span class="btn-row"><a class="btn" href="/api/backups/${esc(b.file)}">Download</a><button class="btn danger" data-restore="${esc(b.file)}">Schedule restore</button></span></div>`).join('') || '<p class="small muted">No backups yet.</p>'}</div>` : '';
@@ -2437,6 +2454,7 @@ async function openSettings() {
         <div class="card stack"><h3>Change password</h3><form id="passwordForm" class="stack"><input name="current_password" type="password" placeholder="Current password" autocomplete="current-password"><input name="new_password" type="password" minlength="10" placeholder="New password" autocomplete="new-password"><input name="new_password_confirm" type="password" minlength="10" placeholder="Type new password again" autocomplete="new-password"><button class="btn">Update password</button></form></div>
         <div class="card stack"><h3>Appearance</h3><p class="muted small">Pick a comfortable preset. These include light, dark, neutral, cooler, and color-safe options.</p>${themePresetPicker()}</div>
         <div class="card stack"><h3>Sync</h3>${renderSyncSettings(syncManifest)}</div>
+        ${isAdmin ? `<div class="card stack"><h3>AI review API</h3>${renderAiIntegrationSettings(aiIntegration)}</div>` : ''}
         <div class="card stack"><h3>Emergency offline snapshot</h3><p class="muted small">Create or update an encrypted localStorage snapshot for offline access. Keep the passphrase; it is required to unlock the snapshot.</p><button class="btn" id="emergencySnapshotBtn">Create/update encrypted snapshot</button><p class="small muted">Pending offline notes remain unencrypted local-only drafts until synced.</p></div>
         <div class="card stack"><h3>Two-factor authentication</h3><p class="muted small">Use an authenticator app. Save recovery codes somewhere safe.</p><div class="btn-row"><button class="btn" id="start2fa">Start 2FA setup</button><button class="btn" id="regenRecovery">New recovery codes</button></div><div id="twofa"></div></div>
         ${adminDataCards}
@@ -2504,6 +2522,30 @@ async function openSettings() {
   modal.querySelector('#copyServerUrlBtn')?.addEventListener('click', async () => {
     await navigator.clipboard.writeText(location.origin);
     toast('Server URL copied');
+  });
+  modal.querySelector('#enableAiApiBtn')?.addEventListener('click', async () => {
+    await runUserAction(async () => {
+      const result = await api('/integrations/ai/enable', { method: 'POST', body: {} });
+      if (result.token) {
+        await navigator.clipboard.writeText(result.token);
+        await alertDialog({ title: 'AI API enabled', message: 'The API token was copied to your clipboard. Save it now; DiVault will not show this same token again.' });
+      } else {
+        toast('AI API is enabled by server config');
+      }
+      openSettings();
+    }, 'AI API enable failed');
+  });
+  modal.querySelector('#disableAiApiBtn')?.addEventListener('click', async () => {
+    if (!await confirmDialog({ title: 'Disable AI API', message: 'Disable the AI review API token for this DiVault instance?', confirmText: 'Disable' })) return;
+    await runUserAction(async () => {
+      await api('/integrations/ai/disable', { method: 'POST', body: {} });
+      toast('AI API disabled');
+      openSettings();
+    }, 'AI API disable failed');
+  });
+  modal.querySelector('#copyAiEndpointBtn')?.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(aiIntegration?.endpoint || `${location.origin}/api/integrations/ai/review-notes`);
+    toast('AI endpoint copied');
   });
   modal.querySelector('#start2fa').addEventListener('click', async () => {
     const currentPassword = await promptDialog({ title: 'Current password', message: 'Enter your current password to start 2FA setup.', type: 'password', required: true });
@@ -2587,6 +2629,17 @@ function renderSyncSettings(manifest) {
     <div class="btn-row"><button class="btn" type="button" id="checkSyncBtn">Check sync</button><button class="btn ghost" type="button" id="copyServerUrlBtn">Copy server URL</button></div>
     <div class="btn-row sync-capabilities">${capabilities}</div>
     <p class="small muted">Desktop synced mode should launch with <code>DIVAULT_REMOTE_URL=${esc(origin)}</code>. Local-only desktop mode is intentionally separate and will not share data until merge sync is added.</p>`;
+}
+
+function renderAiIntegrationSettings(status) {
+  if (!status) return '<p class="small muted">AI API status is unavailable.</p>';
+  const endpoint = status.endpoint || `${location.origin}/api/integrations/ai/review-notes`;
+  const enabled = status.enabled === true;
+  return `<p class="muted small">Let an AI tool add review notes directly into DiVault.</p>
+    <div class="file-row"><span>Status<br><span class="small muted">${enabled ? `Enabled (${esc(status.source || 'local')})` : 'Disabled'}</span></span><span class="pill">${enabled ? 'on' : 'off'}</span></div>
+    <div class="file-row"><span>Endpoint<br><span class="small muted">${esc(endpoint)}</span></span><button class="btn ghost" type="button" id="copyAiEndpointBtn">Copy URL</button></div>
+    <div class="btn-row"><button class="btn" type="button" id="enableAiApiBtn">${enabled ? 'Regenerate token' : 'Enable API'}</button>${enabled && status.can_disable !== false ? '<button class="btn danger" type="button" id="disableAiApiBtn">Disable</button>' : ''}</div>
+    <p class="small muted">Use header <code>X-DiVault-AI-Token</code>. Save the token when you enable or regenerate it.</p>`;
 }
 
 function showRecoveryCodes(modal, codes) {

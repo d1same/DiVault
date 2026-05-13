@@ -25,12 +25,12 @@ For production, put it behind HTTPS with Pangolin, Nginx Proxy Manager, Caddy, o
 Download the Windows installer from GitHub Releases and run the `.exe` setup file:
 
 ```text
-DiVault_0.1.0_x64-setup.exe
+DiVault_*_x64-setup.exe
 ```
 
 The `.msi` installer is also available for Windows users who prefer MSI packages.
 
-For synced use, run the Docker server first and point the desktop app to that same server URL. Local-only desktop mode is still experimental and currently requires PHP installed.
+The desktop app works standalone and includes its own local runtime. For syncing across devices, run a DiVault server and point the desktop app to that same server URL.
 
 ## Features
 
@@ -126,7 +126,7 @@ If you create an encrypted backup ZIP, store the backup passphrase outside DiVau
 
 Most Windows users should install DiVault by running the release `.exe` installer. You do not need Node, Rust, or the source code when using the installer.
 
-Developer builds use Tauri. In local vault mode, the desktop app starts a local PHP server at `http://127.0.0.1:3444`, opens DiVault in a native window, and stores local desktop data under `desktop-data/` by default.
+Developer builds use Tauri. In local vault mode, the desktop app starts the bundled PHP runtime at `http://127.0.0.1:3444`, opens DiVault in a native window, and stores local desktop data in the current Windows user app-data folder by default.
 
 For cross-device sync, point the desktop app at the same Docker/Pangolin DiVault URL used by phones, tablets, Android devices, and browsers. In that mode the desktop app opens the remote server directly instead of creating an isolated local SQLite vault.
 
@@ -134,7 +134,7 @@ Developer requirements:
 
 - Node.js and npm
 - Rust/Cargo
-- PHP available on `PATH`, or set `DIVAULT_PHP_BIN` to the PHP executable path
+- PHP available on `PATH` only if you are building a new installer; release installers include PHP
 
 Run the desktop app in development:
 
@@ -163,7 +163,7 @@ Remote synced desktop mode:
 powershell -ExecutionPolicy Bypass -File scripts\desktop-dev.ps1 -RemoteUrl http://localhost:3443
 ```
 
-Local desktop mode is still useful for a private offline-only vault, but it does not sync to the Docker server unless you explicitly run against the same remote URL. The product direction is server-authoritative sync: every platform should target one DiVault server when you want the same data everywhere.
+Local desktop mode is useful for a private standalone vault. To share the same notes with phones or other computers, connect the desktop app to your DiVault server URL instead of using a separate local vault.
 
 ## Sync Between Devices
 
@@ -192,6 +192,20 @@ Phones, Android wrappers, desktop wrappers, PWAs, and future native clients shou
 ## AI Review Notes API
 
 External AI tools can create review notes without browser cookies or CSRF by using a dedicated API token.
+
+Docker/server API URL:
+
+```text
+https://notes.example.com/api/integrations/ai/review-notes
+```
+
+Windows desktop local API URL:
+
+```text
+http://127.0.0.1:3444/api/integrations/ai/review-notes
+```
+
+The desktop app must be running for the local API to be available. In local desktop mode, open Settings, enable the AI review API, and save the token that DiVault copies to your clipboard. You can disable or regenerate it later from Settings.
 
 Configure the server:
 

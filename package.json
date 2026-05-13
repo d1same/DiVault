@@ -1,11 +1,11 @@
 {
   "name": "divault-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "desktop:build": "powershell -ExecutionPolicy Bypass -File scripts/prepare-desktop-runtime.ps1 && tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.4"

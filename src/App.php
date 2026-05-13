@@ -54,6 +54,9 @@ final class App
         if ($method === 'GET' && $path === '/sync/pull') $this->syncPull($user);
         if ($method === 'POST' && $path === '/sync/push') $this->syncPush($user);
         if ($method === 'GET' && preg_match('#^/sync/files/(\d+)$#', $path, $m)) $this->downloadFile($user, (int)$m[1]);
+        if ($method === 'GET' && $path === '/integrations/ai/status') $this->aiReviewStatus($user);
+        if ($method === 'POST' && $path === '/integrations/ai/enable') $this->enableAiReviewApi($user);
+        if ($method === 'POST' && $path === '/integrations/ai/disable') $this->disableAiReviewApi($user);
         if ($method === 'GET' && $path === '/categories') $this->categories($user);
         if ($method === 'POST' && $path === '/categories') $this->createCategory($user);
         if ($method === 'PUT' && preg_match('#^/categories/(\d+)$#', $path, $m)) $this->updateCategory($user, (int)$m[1]);
@@ -727,6 +730,44 @@ final class App
         $this->json(['ok' => true, 'id' => $id, 'note' => $this->note($id)]);
     }
 
+    private function aiReviewStatus(array $user): void
+    {
+        $this->requireAdmin($user);
+        $envToken = Config::aiReviewApiToken();
+        $fileToken = $this->aiReviewFileToken();
+        $enabled = $envToken !== '' || $fileToken !== '';
+        $this->json([
+            'enabled' => $enabled,
+            'source' => $envToken !== '' ? 'environment' : ($fileToken !== '' ? 'local' : 'disabled'),
+            'can_disable' => $envToken === '',
+            'endpoint' => $this->origin() . '/api/integrations/ai/review-notes',
+            'token_hint' => $enabled ? 'Use the token you saved when enabling the API. Regenerate if you need a new one.' : '',
+        ]);
+    }
+
+    private function enableAiReviewApi(array $user): void
+    {
+        $this->requireAdmin($user);
+        $envToken = Config::aiReviewApiToken();
+        if ($envToken !== '') {
+            $this->json(['enabled' => true, 'source' => 'environment', 'token' => null, 'endpoint' => $this->origin() . '/api/integrations/ai/review-notes']);
+        }
+        $token = bin2hex(random_bytes(32));
+        file_put_contents($this->aiReviewTokenPath(), $token . "\n");
+        $this->audit((int)$user['id'], 'integration.ai_review_enabled', 'integration', null);
+        $this->json(['enabled' => true, 'source' => 'local', 'token' => $token, 'endpoint' => $this->origin() . '/api/integrations/ai/review-notes']);
+    }
+
+    private function disableAiReviewApi(array $user): void
+    {
+        $this->requireAdmin($user);
+        if (Config::aiReviewApiToken() !== '') throw new RuntimeException('AI API is configured by environment variable');
+        $path = $this->aiReviewTokenPath();
+        if (is_file($path)) unlink($path);
+        $this->audit((int)$user['id'], 'integration.ai_review_disabled', 'integration', null);
+        $this->json(['enabled' => false]);
+    }
+
     private function deleteNote(array $user, int $id): void
     {
         $this->requireEditor($user);
@@ -1231,7 +1272,7 @@ final class App
 
     private function requireAiReviewUser(): array
     {
-        $configuredToken = Config::aiReviewApiToken();
+        $configuredToken = $this->configuredAiReviewToken();
         if ($configuredToken === '') throw new RuntimeException('AI review API is not configured');
         $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
         $provided = '';
@@ -1249,6 +1290,25 @@ final class App
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$user) throw new RuntimeException('AI review user not found');
         return $user;
+    }
+
+    private function configuredAiReviewToken(): string
+    {
+        $envToken = Config::aiReviewApiToken();
+        if ($envToken !== '') return $envToken;
+        return $this->aiReviewFileToken();
+    }
+
+    private function aiReviewFileToken(): string
+    {
+        $path = $this->aiReviewTokenPath();
+        if (!is_file($path)) return '';
+        return trim((string)file_get_contents($path));
+    }
+
+    private function aiReviewTokenPath(): string
+    {
+        return Config::dir() . '/ai-review-api-token.txt';
     }
 
     private function requireCsrf(): void
@@ -1351,6 +1411,15 @@ final class App
     {
         echo json_encode($data);
         exit;
+    }
+
+    private function origin(): string
+    {
+        if (empty($_SERVER['HTTP_HOST'])) return Config::appUrl() ?: 'http://localhost';
+        $forwardedProto = Config::trustProxy() ? strtolower(trim(explode(',', $_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')[0])) : '';
+        $scheme = in_array($forwardedProto, ['http', 'https'], true) ? $forwardedProto : ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http');
+        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        return $scheme . '://' . $host;
     }
 
     private function ip(): string
