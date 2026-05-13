@@ -20,6 +20,7 @@ import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import java.nio.charset.StandardCharsets;
@@ -77,6 +78,13 @@ public class MainActivity extends Activity {
         toolbar.setPadding(dp(6), dp(4), dp(6), dp(4));
         toolbar.setBackgroundColor(Color.rgb(31, 41, 55));
 
+        TextView title = new TextView(this);
+        title.setText(R.string.app_name);
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(18);
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        toolbar.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f));
         toolbar.addView(toolbarButton(R.string.refresh, view -> reloadServer()));
         toolbar.addView(toolbarButton(R.string.server, view -> promptForServerUrl()));
         toolbar.addView(toolbarButton(R.string.lock, view -> showAppLockOptions()));
@@ -102,7 +110,10 @@ public class MainActivity extends Activity {
         button.setTextColor(Color.WHITE);
         button.setBackgroundColor(Color.TRANSPARENT);
         button.setOnClickListener(listener);
-        button.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setPadding(dp(6), dp(6), dp(6), dp(6));
+        button.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.9f));
         return button;
     }
 
