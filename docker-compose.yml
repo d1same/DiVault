@@ -1,0 +1,15 @@
+services:
+  notes:
+    build: .
+    container_name: divault-notes
+    ports:
+      - "3443:3443"
+    volumes:
+      - ./config:/config
+    environment:
+      APP_URL: "https://notes.example.com"
+      APP_CONFIG_DIR: "/config"
+      TRUST_PROXY: "${TRUST_PROXY:-false}"
+      SECURE_COOKIES: "${SECURE_COOKIES:-false}"
+      TZ: "America/New_York"
+    restart: unless-stopped
