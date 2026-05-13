@@ -10,8 +10,8 @@ android {
         applicationId 'com.divault.mobile'
         minSdk 23
         targetSdk 35
-        versionCode 3
-        versionName '0.1.7'
+        versionCode 4
+        versionName '0.1.8'
     }
 
     compileOptions {
