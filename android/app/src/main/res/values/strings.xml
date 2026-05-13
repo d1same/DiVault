@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DiVault</string>
+    <string name="clear_server_url">Clear server URL</string>
+    <string name="server_url_title">Server URL</string>
+    <string name="server_url_message">Enter the http or https URL for your DiVault server.</string>
+    <string name="server_url_hint">https://example.com</string>
+    <string name="invalid_server_url">Enter a valid http or https URL.</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="choose_file">Choose file</string>
+    <string name="file_chooser_unavailable">No file picker is available.</string>
+</resources>

@@ -2,7 +2,7 @@
 
 DiVault is a simple self-hosted vault for notes, client docs, files, scripts, and sensitive information.
 
-Run it with Docker, open it in your browser, or install the Windows desktop app. Phones, desktops, and future mobile apps can all use the same DiVault server so your notes stay in one place.
+Run it with Docker, open it in your browser, install the Windows desktop app, or build the Android client. Phones, desktops, and mobile apps can all use the same DiVault server so your notes stay in one place.
 
 ## Quick Install
 
@@ -38,6 +38,12 @@ The `.msi` installer is also available for Windows users who prefer MSI packages
 
 The desktop app works standalone and includes its own local runtime. For syncing across devices, run a DiVault server and point the desktop app to that same server URL.
 
+### Android
+
+The Android client lives in `android/`. Open that folder in Android Studio, build the app, then enter your DiVault server URL on first launch.
+
+Android is a server-connected client. It does not create a separate local vault; login, uploads, and sync all use the configured DiVault server.
+
 ## Features
 
 - Notes, quick notes, archive, and recycle bin
@@ -46,6 +52,7 @@ The desktop app works standalone and includes its own local runtime. For syncing
 - Sensitive values are hidden and encrypted
 - Multi-user login with roles and optional 2FA
 - Browser PWA and Windows desktop app
+- Android WebView client scaffold
 - Backup, export, import, and audit log
 - AI review-note REST API
 
@@ -194,6 +201,18 @@ Platform-neutral sync API foundation:
 Current push support is intentionally conservative: note create/update/archive/recycle/restore are supported first. Attachments, assets, categories, and full conflict UI remain future phases.
 
 Phones, Android wrappers, desktop wrappers, PWAs, and future native clients should all use the same Docker/Pangolin DiVault server and this shared sync contract rather than platform-specific sync paths.
+
+## Android App
+
+The Android project is intentionally small and native:
+
+- First launch asks for the DiVault server URL.
+- The URL is saved on the device.
+- The app opens DiVault in a WebView with JavaScript, DOM storage, and file uploads enabled.
+- Back navigation goes back inside DiVault before closing the app.
+- `Clear server URL` lets you switch servers.
+
+Build it by opening `android/` in Android Studio. Android Studio should use JDK 17 or newer for Android Gradle Plugin 8.7.3.
 
 ## AI Review Notes API
 
