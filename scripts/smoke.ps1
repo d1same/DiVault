@@ -1,7 +1,8 @@
 param(
   [string]$BaseUrl = $(if ($env:BASE_URL) { $env:BASE_URL } else { "http://localhost:3443" }),
   [string]$Email = $(if ($env:EMAIL) { $env:EMAIL } else { "owner@example.com" }),
-  [string]$Password = $(if ($env:PASSWORD) { $env:PASSWORD } else { "StrongPass123!" })
+  [string]$Password = $(if ($env:PASSWORD) { $env:PASSWORD } else { "StrongPass123!" }),
+  [string]$AiReviewApiToken = $(if ($env:AI_REVIEW_API_TOKEN) { $env:AI_REVIEW_API_TOKEN } else { "" })
 )
 
 $ErrorActionPreference = "Stop"
@@ -112,12 +113,32 @@ function Remove-SmokeResource {
   }
 }
 
+function Invoke-AiReviewNote {
+  param(
+    [string]$Token,
+    [string]$RunId,
+    [int]$ClientId
+  )
+  $body = @{
+    source = "smoke-ai"
+    review = @{
+      title = "$RunId AI review"
+      severity = "info"
+      body = "Automated review note created by smoke test."
+      client_id = $ClientId
+      findings = @(@{ location = "scripts/smoke.ps1"; message = "AI review endpoint accepted a finding." })
+    }
+  } | ConvertTo-Json -Depth 8
+  Invoke-RestMethod -Uri "$BaseUrl/api/integrations/ai/review-notes" -Method Post -Headers @{ "X-DiVault-AI-Token" = $Token } -ContentType "application/json" -Body $body
+}
+
 $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 $runId = "smoke-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())-$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
 $client = $null
 $asset = $null
 $passwordAsset = $null
 $note = $null
+$aiReviewNote = $null
 $noteCategory = $null
 $csrf = $null
 $tmpFile = $null
@@ -179,6 +200,11 @@ try {
   if (-not $movedNote.id) { throw "Note category assignment failed" }
   $categoryNotes = Invoke-Json -Method Get -Path "/api/notes?view=all&category_id=$($noteCategory.id)&q=$runId" -Session $session
   if ($categoryNotes.notes.Count -lt 1) { throw "Dynamic note category filter failed" }
+
+  if ($AiReviewApiToken) {
+    $aiReviewNote = Invoke-AiReviewNote -Token $AiReviewApiToken -RunId $runId -ClientId $client.id
+    if (-not $aiReviewNote.id -or $aiReviewNote.note.tags -notmatch "ai-review") { throw "AI review note API failed" }
+  }
 
   Invoke-Json -Method Post -Path "/api/notes/$($note.id)/archive" -Session $session -Csrf $csrf -Body @{} | Out-Null
   $archivedNotes = Invoke-Json -Method Get -Path "/api/notes?view=archive&q=$runId" -Session $session
@@ -286,6 +312,7 @@ try {
     ok = $true
     user = $login.user.email
     noteId = $note.id
+    aiReviewNoteId = $(if ($aiReviewNote) { $aiReviewNote.id } else { $null })
     clientId = $client.id
     backup = $backup.file
     syncWatermark = $syncManifest.watermark
@@ -296,6 +323,7 @@ try {
     if ($tmpFile -and (Test-Path -LiteralPath $tmpFile.FullName)) { Remove-Item -LiteralPath $tmpFile.FullName -Force }
     if ($encryptedBackupZip -and (Test-Path -LiteralPath $encryptedBackupZip)) { Remove-Item -LiteralPath $encryptedBackupZip -Force }
     if ($note -and $note.id) { $cleanup["note"] = Remove-SmokeResource -Path "/api/notes/$($note.id)/permanent" -Session $session -Csrf $csrf }
+    if ($aiReviewNote -and $aiReviewNote.id) { $cleanup["aiReviewNote"] = Remove-SmokeResource -Path "/api/notes/$($aiReviewNote.id)/permanent" -Session $session -Csrf $csrf }
     if ($noteCategory -and $noteCategory.id) { $cleanup["noteCategory"] = Remove-SmokeResource -Path "/api/categories/$($noteCategory.id)" -Session $session -Csrf $csrf }
     if ($passwordAsset -and $passwordAsset.id) { $cleanup["passwordAsset"] = Remove-SmokeResource -Path "/api/assets/$($passwordAsset.id)" -Session $session -Csrf $csrf }
     if ($asset -and $asset.id) { $cleanup["asset"] = Remove-SmokeResource -Path "/api/assets/$($asset.id)" -Session $session -Csrf $csrf }

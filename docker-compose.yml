@@ -11,5 +11,7 @@ services:
       APP_CONFIG_DIR: "/config"
       TRUST_PROXY: "${TRUST_PROXY:-false}"
       SECURE_COOKIES: "${SECURE_COOKIES:-false}"
+      AI_REVIEW_API_TOKEN: "${AI_REVIEW_API_TOKEN:-}"
+      AI_REVIEW_USER_EMAIL: "${AI_REVIEW_USER_EMAIL:-}"
       TZ: "America/New_York"
     restart: unless-stopped

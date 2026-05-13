@@ -22,6 +22,16 @@ final class Config
         return filter_var(getenv('TRUST_PROXY') ?: 'false', FILTER_VALIDATE_BOOL);
     }
 
+    public static function aiReviewApiToken(): string
+    {
+        return trim(getenv('AI_REVIEW_API_TOKEN') ?: '');
+    }
+
+    public static function aiReviewUserEmail(): string
+    {
+        return strtolower(trim(getenv('AI_REVIEW_USER_EMAIL') ?: ''));
+    }
+
     public static function ensureDirs(): void
     {
         foreach (['', '/files', '/backups', '/exports', '/imports', '/keys', '/logs', '/tmp'] as $path) {

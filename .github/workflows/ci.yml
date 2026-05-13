@@ -13,6 +13,8 @@ jobs:
   web-docker:
     name: Web and Docker smoke
     runs-on: ubuntu-latest
+    env:
+      AI_REVIEW_API_TOKEN: ci-ai-review-token
     steps:
       - name: Checkout
         uses: actions/checkout@v4

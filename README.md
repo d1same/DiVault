@@ -40,6 +40,7 @@ The desktop app is useful today as a native wrapper, but PHP bundling and full l
 - Login rate limiting
 - Session listing and revocation
 - Passkeys/WebAuthn-ready schema and UI placeholder
+- Token-protected REST integration for AI-generated review notes
 - Fast notes that default to the virtual `All` view with an inline editor
 - Optional note insert tools for username, secret, URL, checklist, file, and code blocks
 - Code block copy/download actions for PowerShell, HTML, CSS, JavaScript, PHP, SQL, Bash, JSON, and plain text
@@ -76,6 +77,8 @@ services:
       APP_CONFIG_DIR: "/config"
       TRUST_PROXY: "true"
       SECURE_COOKIES: "true"
+      AI_REVIEW_API_TOKEN: "replace-with-a-long-random-token"
+      AI_REVIEW_USER_EMAIL: "owner@example.com"
       TZ: "America/New_York"
     restart: unless-stopped
 ```
@@ -201,6 +204,42 @@ Platform-neutral sync API foundation:
 Current push support is intentionally conservative: note create/update/archive/recycle/restore are supported first. Attachments, assets, categories, and full conflict UI remain future phases.
 
 Phones, Android wrappers, desktop wrappers, PWAs, and future native clients should all use the same Docker/Pangolin DiVault server and this shared sync contract rather than platform-specific sync paths.
+
+## AI Review Notes API
+
+External AI tools can create review notes without browser cookies or CSRF by using a dedicated API token.
+
+Configure the server:
+
+```text
+AI_REVIEW_API_TOKEN=use-a-long-random-token
+AI_REVIEW_USER_EMAIL=owner@example.com
+```
+
+`AI_REVIEW_API_TOKEN` enables the endpoint. `AI_REVIEW_USER_EMAIL` is optional; when omitted, DiVault attributes the note to the first enabled owner/admin/editor account.
+
+Create a review note:
+
+```bash
+curl -X POST "https://notes.example.com/api/integrations/ai/review-notes" \
+  -H "X-DiVault-AI-Token: $AI_REVIEW_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source": "my-ai-reviewer",
+    "review": {
+      "title": "Weekly infrastructure review",
+      "severity": "info",
+      "body": "Summarized changes and follow-up items.",
+      "findings": [
+        { "location": "server-01", "message": "Patch window should be scheduled." }
+      ]
+    }
+  }'
+```
+
+The endpoint creates a normal DiVault note in `All` with type `review`, tags including `ai-review`, and an audit entry. It also accepts `client_id` inside `review` when the AI note should be attached to an existing client record.
+
+`Authorization: Bearer ...` is also accepted when your reverse proxy forwards that header to PHP, but `X-DiVault-AI-Token` is the most reliable option through Apache and common proxy setups.
 
 ## Emergency Device Recovery
 

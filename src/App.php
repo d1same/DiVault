@@ -40,6 +40,7 @@ final class App
         if ($method === 'POST' && $path === '/login/check') $this->loginCheck();
         if ($method === 'POST' && $path === '/login') $this->login();
         if ($method === 'POST' && $path === '/logout') $this->logout();
+        if ($method === 'POST' && $path === '/integrations/ai/review-notes') $this->createAiReviewNote();
 
         $user = $this->requireUser();
         if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
@@ -672,6 +673,60 @@ final class App
         $this->json(['id' => $id]);
     }
 
+    private function createAiReviewNote(): void
+    {
+        $user = $this->requireAiReviewUser();
+        $this->requireEditor($user);
+        $data = $this->input();
+        $review = $data['review'] ?? $data;
+        if (!is_array($review)) throw new RuntimeException('Review payload required');
+
+        $summary = trim((string)($review['summary'] ?? $review['title'] ?? 'AI review note')) ?: 'AI review note';
+        $source = trim((string)($review['source'] ?? $data['source'] ?? 'AI')) ?: 'AI';
+        $severity = trim((string)($review['severity'] ?? 'info')) ?: 'info';
+        $body = trim((string)($review['body'] ?? $review['notes'] ?? $review['content'] ?? ''));
+        $findings = $review['findings'] ?? [];
+        if (!is_array($findings)) $findings = [];
+        if ($body === '' && count($findings) === 0) throw new RuntimeException('Review body or findings required');
+
+        $lines = [
+            'Source: ' . $source,
+            'Severity: ' . $severity,
+            'Created: ' . gmdate('c'),
+            '',
+        ];
+        if ($body !== '') {
+            $lines[] = $body;
+            $lines[] = '';
+        }
+        if (count($findings) > 0) {
+            $lines[] = 'Findings:';
+            foreach ($findings as $finding) {
+                if (is_array($finding)) {
+                    $text = trim((string)($finding['message'] ?? $finding['summary'] ?? $finding['title'] ?? ''));
+                    $location = trim((string)($finding['location'] ?? $finding['file'] ?? ''));
+                    $lines[] = '- ' . ($location !== '' ? $location . ': ' : '') . ($text !== '' ? $text : json_encode($finding));
+                } else {
+                    $lines[] = '- ' . trim((string)$finding);
+                }
+            }
+        }
+
+        $tags = trim((string)($review['tags'] ?? $data['tags'] ?? ''));
+        $tagParts = array_filter(array_map('trim', explode(',', $tags)));
+        foreach (['ai-review', strtolower(preg_replace('/[^a-z0-9]+/i', '-', $source)) ?: 'ai'] as $tag) {
+            if (!in_array($tag, $tagParts, true)) $tagParts[] = $tag;
+        }
+
+        $clientId = !empty($review['client_id']) ? (int)$review['client_id'] : (!empty($data['client_id']) ? (int)$data['client_id'] : null);
+        $title = '[AI Review] ' . substr($summary, 0, 180);
+        $stmt = $this->db->prepare('INSERT INTO notes (user_id, client_id, title, body, type, section, tags) VALUES (?, ?, ?, ?, ?, ?, ?)');
+        $stmt->execute([(int)$user['id'], $clientId, $title, trim(implode("\n", $lines)), 'review', 'All', implode(', ', $tagParts)]);
+        $id = (int)$this->db->lastInsertId();
+        $this->audit((int)$user['id'], 'integration.ai_review_note_created', 'note', $id);
+        $this->json(['ok' => true, 'id' => $id, 'note' => $this->note($id)]);
+    }
+
     private function deleteNote(array $user, int $id): void
     {
         $this->requireEditor($user);
@@ -1171,6 +1226,28 @@ final class App
         $stmt->execute([hash('sha256', $token)]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$user) throw new RuntimeException('Authentication required');
+        return $user;
+    }
+
+    private function requireAiReviewUser(): array
+    {
+        $configuredToken = Config::aiReviewApiToken();
+        if ($configuredToken === '') throw new RuntimeException('AI review API is not configured');
+        $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+        $provided = '';
+        if (preg_match('/^Bearer\s+(.+)$/i', $header, $m)) $provided = trim($m[1]);
+        if ($provided === '') $provided = trim($_SERVER['HTTP_X_DIVAULT_AI_TOKEN'] ?? '');
+        if ($provided === '' || !hash_equals($configuredToken, $provided)) throw new RuntimeException('AI review API token required');
+
+        $email = Config::aiReviewUserEmail();
+        if ($email !== '') {
+            $stmt = $this->db->prepare('SELECT * FROM users WHERE email = ? AND disabled = 0');
+            $stmt->execute([$email]);
+        } else {
+            $stmt = $this->db->query("SELECT * FROM users WHERE disabled = 0 AND role IN ('owner', 'admin', 'editor') ORDER BY CASE role WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 ELSE 3 END, id LIMIT 1");
+        }
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$user) throw new RuntimeException('AI review user not found');
         return $user;
     }
 
