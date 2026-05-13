@@ -114,7 +114,7 @@ PHP
 fi
 
 if [ "${SKIP_CONFIG_CHOWN:-false}" != "true" ]; then
-  for path in /config/app.sqlite /config/files /config/backups /config/exports /config/imports /config/keys /config/logs /config/tmp; do
+  for path in /config /config/app.sqlite /config/files /config/backups /config/exports /config/imports /config/keys /config/logs /config/tmp; do
     if [ -e "$path" ]; then
       chown -R www-data:www-data "$path"
     fi
