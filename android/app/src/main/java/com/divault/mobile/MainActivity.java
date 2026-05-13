@@ -45,6 +45,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setTitle(R.string.app_name);
         preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         handleShareIntent(getIntent());
         buildLayout();
@@ -84,7 +85,8 @@ public class MainActivity extends Activity {
         title.setTextSize(18);
         title.setGravity(Gravity.CENTER_VERTICAL);
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        toolbar.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f));
+        title.setSingleLine(true);
+        toolbar.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.8f));
         toolbar.addView(toolbarButton(R.string.refresh, view -> reloadServer()));
         toolbar.addView(toolbarButton(R.string.server, view -> promptForServerUrl()));
         toolbar.addView(toolbarButton(R.string.lock, view -> showAppLockOptions()));
@@ -113,7 +115,7 @@ public class MainActivity extends Activity {
         button.setMinWidth(0);
         button.setMinimumWidth(0);
         button.setPadding(dp(6), dp(6), dp(6), dp(6));
-        button.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.9f));
+        button.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.8f));
         return button;
     }
 
