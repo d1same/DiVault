@@ -83,6 +83,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Prepare desktop runtime
+        shell: pwsh
+        run: ./scripts/prepare-desktop-runtime.ps1
+
       - name: Check Rust build
         working-directory: src-tauri
         run: cargo check
