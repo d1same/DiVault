@@ -274,6 +274,7 @@ button { cursor: pointer; }
   border-radius: 0;
   box-shadow: none;
 }
+.auth-card { width: min(94vw, 560px); }
 .loading-card {
   display: grid;
   gap: 18px;
@@ -348,10 +349,13 @@ button { cursor: pointer; }
   .loading-card::before, .loading-bar span { animation: none; transform: none; }
 }
 .auth-card .brand {
+  align-items: center;
   margin-bottom: 26px;
   padding-bottom: 18px;
   border-bottom: 1px solid var(--border-soft);
 }
+.auth-card .brand-mark { flex: 0 0 auto; }
+.auth-card .brand h1 { font-size: clamp(1.85rem, 4.4vw, 2.35rem); max-width: 12ch; }
 .auth-card form {
   padding: 20px;
   border: 1px solid var(--border-soft);
@@ -367,6 +371,7 @@ button { cursor: pointer; }
 .setup-panel.hidden { display: none; }
 .setup-theme { margin-bottom: 14px; }
 .auth-card .setup-theme { padding: 16px; }
+.auth-card .setup-theme .theme-presets { grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); }
 .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
 .brand-mark { width: 42px; height: 42px; border-radius: var(--radius-lg); background: var(--text); display: grid; place-items: center; color: var(--bg); font: 800 .8rem/1 Sora, Inter, sans-serif; letter-spacing: -.03em; }
 .brand-mark img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
@@ -890,6 +895,8 @@ body.resizing-note-pane { cursor: col-resize; user-select: none; }
   body.sidebar-collapsed .sidebar-collapse { display: none; }
   .sidebar .brand { margin-bottom: 0; }
   .sidebar .brand-mark { width: 40px; height: 40px; border-radius: 10px; }
+  .onboarding-choice { grid-template-columns: 1fr; }
+  .auth-card .brand h1 { max-width: none; }
   .sidebar .brand h2 { font-size: 1.05rem; }
   .sidebar .nav,
   .sidebar-footer { display: none; }

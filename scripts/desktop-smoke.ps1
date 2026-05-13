@@ -58,12 +58,12 @@ try {
     }
 
     if (-not $RemoteUrl) {
-        $scriptResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:3444/app.js?v=100' -TimeoutSec 5
+        $scriptResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:3444/app.js?v=101' -TimeoutSec 5
         if ($scriptResponse.Content -notmatch 'const state') {
             throw 'Desktop app.js did not return JavaScript; static asset routing is broken.'
         }
 
-        $styleResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:3444/styles.css?v=100' -TimeoutSec 5
+        $styleResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:3444/styles.css?v=101' -TimeoutSec 5
         if ($styleResponse.Content -notmatch 'loading-progress') {
             throw 'Desktop styles.css did not return the app stylesheet; static asset routing is broken.'
         }

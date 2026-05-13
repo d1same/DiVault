@@ -289,7 +289,7 @@ async function boot() {
 
 function renderSetup() {
   const desktopChoice = state.desktop ? `<div class="onboarding-choice" role="group" aria-label="Desktop setup mode">
-      <button class="setup-choice ${state.setupMode === 'local' ? 'active' : ''}" type="button" data-setup-mode="local"><b>Standalone vault</b><span>Create a private local vault on this computer.</span></button>
+      <button class="setup-choice ${state.setupMode === 'local' ? 'active' : ''}" type="button" data-setup-mode="local"><b>Standalone vault</b><span>Create a private vault on this computer.</span></button>
       <button class="setup-choice ${state.setupMode === 'server' ? 'active' : ''}" type="button" data-setup-mode="server"><b>Connect to server</b><span>Use an existing DiVault server so devices can sync through it.</span></button>
     </div>` : '';
   const localSetup = `<div class="setup-panel ${state.setupMode === 'local' ? '' : 'hidden'}" data-setup-panel="local">
@@ -300,16 +300,16 @@ function renderSetup() {
       <label class="field"><span>Confirm password</span><input name="password_confirm" type="password" autocomplete="new-password" minlength="10" required></label>
       <button class="btn primary">Create owner</button>
     </form>
-    <p class="small muted">Standalone desktop vaults stay on this computer. Use server mode when you want multiple devices to sync.</p>
+    <p class="small muted">Standalone vaults stay on this computer. Connect to a server when you want multiple devices to sync.</p>
   </div>`;
   const serverSetup = state.desktop ? `<div class="setup-panel ${state.setupMode === 'server' ? '' : 'hidden'}" data-setup-panel="server">
     <form class="stack" id="desktopServerForm">
       <label class="field"><span>DiVault server URL</span><input name="server_url" type="url" placeholder="https://notes.example.com" autocomplete="url" required></label>
       <button class="btn primary">Connect to server</button>
     </form>
-    <p class="small muted">The desktop app will remember this URL and open it on future launches. Create your account on the server if it is new.</p>
+    <p class="small muted">The desktop app will remember this URL and open it on future launches. Create your account on that server if it is new.</p>
   </div>` : '';
-  app.innerHTML = authShell('Welcome to DiVault', state.desktop ? 'Choose how this desktop app should open.' : 'Create your owner account. Use a strong password.', `
+  app.innerHTML = authShell(state.desktop ? 'Set up DiVault' : 'Create your owner account', state.desktop ? 'Choose standalone local use or connect to your server.' : 'Use a strong password. You will type it twice.', `
     ${desktopChoice}
     <div class="card stack setup-theme"><h3>Color theme</h3>${themePresetPicker()}</div>
     ${localSetup}
@@ -328,25 +328,6 @@ function renderSetup() {
     } catch (err) { toast(err.message); }
   });
   document.querySelector('#setupForm')?.addEventListener('submit', async e => {
-    e.preventDefault();
-    const data = Object.fromEntries(new FormData(e.target));
-    if (data.password !== data.password_confirm) return toast('Passwords do not match');
-    await api('/setup', { method: 'POST', body: data });
-    toast('Owner created');
-    renderLogin();
-  });
-}
-
-function renderLegacySetup() {
-  app.innerHTML = authShell('Create your owner account', 'This is stored inside /config. Use a strong password.', `
-    <form class="stack" id="setupForm">
-      <label class="field"><span>Name</span><input name="name" autocomplete="name" required></label>
-      <label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required></label>
-      <label class="field"><span>Password</span><input name="password" type="password" autocomplete="new-password" minlength="10" required></label>
-      <label class="field"><span>Confirm password</span><input name="password_confirm" type="password" autocomplete="new-password" minlength="10" required></label>
-      <button class="btn primary">Create owner</button>
-    </form>`);
-  document.querySelector('#setupForm').addEventListener('submit', async e => {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(e.target));
     if (data.password !== data.password_confirm) return toast('Passwords do not match');
@@ -2701,7 +2682,7 @@ function renderSyncSettings(manifest) {
     <div class="file-row"><span>Signed in as<br><span class="small muted">${esc(manifest.user?.email || state.user.email)}</span></span><span class="pill">${esc(manifest.server_time || '')}</span></div>
     <div class="btn-row"><button class="btn" type="button" id="checkSyncBtn">Check sync</button><button class="btn ghost" type="button" id="copyServerUrlBtn">Copy server URL</button></div>
     <div class="btn-row sync-capabilities">${capabilities}</div>
-    <p class="small muted">Desktop synced mode should launch with <code>DIVAULT_REMOTE_URL=${esc(origin)}</code>. Local-only desktop mode is intentionally separate and will not share data until merge sync is added.</p>`;
+    <p class="small muted">Use this same server URL when setting up desktop or Android clients. Standalone desktop vaults are intentionally separate until merge sync is added.</p>`;
 }
 
 function renderAiIntegrationSettings(status) {
