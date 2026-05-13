@@ -1,14 +1,14 @@
 # DiVault
 
-DiVault is an all-in-one self-hosted notepad, quick-capture inbox, client documentation, file, script, and sensitive-note vault app.
+DiVault is a simple self-hosted vault for notes, client docs, files, scripts, and sensitive information.
 
-It is designed for Unraid/Pangolin-style hosting with one persistent `/config` directory, SQLite, and no separate database container.
+Run it with Docker, open it in your browser, or install the Windows desktop app. Phones, desktops, and future mobile apps can all use the same DiVault server so your notes stay in one place.
 
-## Install
+## Quick Install
 
 ### Docker Compose
 
-Clone the project, then start DiVault with Docker Compose:
+Start the server with Docker Compose:
 
 ```bash
 git clone https://github.com/d1same/DiVault.git
@@ -16,52 +16,34 @@ cd DiVault
 docker compose up -d --build
 ```
 
-Open `http://localhost:3443`, create the owner account, then put it behind HTTPS for production.
+Open `http://localhost:3443` and create the owner account.
 
-### Desktop Preview
+For production, put it behind HTTPS with Pangolin, Nginx Proxy Manager, Caddy, or another reverse proxy.
 
-Windows desktop installers are published on the GitHub Releases page when available. The desktop app can run in two modes:
+### Windows Desktop
 
-- Remote synced mode: point it at an existing DiVault server with `DIVAULT_REMOTE_URL=https://notes.example.com`.
-- Local vault mode: runs the bundled DiVault web app locally, but currently requires PHP installed or `DIVAULT_PHP_BIN` set.
+Download the Windows installer from GitHub Releases and run the `.exe` setup file:
 
-The desktop app is useful today as a native wrapper, but PHP bundling and full local-to-server merge sync are still roadmap items.
+```text
+DiVault_0.1.0_x64-setup.exe
+```
 
-## Current Features
+The `.msi` installer is also available for Windows users who prefer MSI packages.
 
-- Single Docker container
-- Persistent `/config` layout
-- SQLite database at `/config/app.sqlite`
-- Mobile-friendly PWA shell
-- Multi-user login with roles
-- Owner/admin user management
-- TOTP 2FA setup, verification, and recovery codes
-- CSRF protection for mutating API requests
-- Login rate limiting
-- Session listing and revocation
-- Passkeys/WebAuthn-ready schema and UI placeholder
-- Token-protected REST integration for AI-generated review notes
-- Fast notes that default to the virtual `All` view with an inline editor
-- Optional note insert tools for username, secret, URL, checklist, file, and code blocks
-- Code block copy/download actions for PowerShell, HTML, CSS, JavaScript, PHP, SQL, Bash, JSON, and plain text
-- User-created note categories and subcategories; no fixed note folders beyond `All`
-- Drag/drop note movement from `All` into custom categories/subcategories
-- Archive and Recycle bin as note actions/views, with restore, permanent delete, and empty-recycle support
-- Custom documentation categories for structured records
-- Optional client records
-- Tags, categories, and note version history
-- File/photo/document attachments under `/config/files`
-- Auto-detection of sensitive lines like `password:`, `token:`, `api key:`, and `🔒 Password:`
-- Encrypted sensitive values using `/config/keys/master.key`
-- Eye/copy reveal controls with audit logging
-- Audit log for login, note, file, secret, export, import, and backup activity
-- Optional Tauri desktop app that runs the same PHP/SQLite DiVault app in a native window
-- JSON export and import
-- Full backup ZIP containing SQLite database, files, and encryption key, with optional ZIP passphrase protection when enabled by the backup flow
-- Backup listing, retention pruning, and safe scheduled restore on next container restart
-- Repeatable API smoke test script at `scripts/smoke.ps1`
+For synced use, run the Docker server first and point the desktop app to that same server URL. Local-only desktop mode is still experimental and currently requires PHP installed.
 
-## Docker Compose
+## Features
+
+- Notes, quick notes, archive, and recycle bin
+- Client documentation and custom categories
+- File/photo/document attachments
+- Sensitive values are hidden and encrypted
+- Multi-user login with roles and optional 2FA
+- Browser PWA and Windows desktop app
+- Backup, export, import, and audit log
+- AI review-note REST API
+
+## Docker Compose Example
 
 ```yaml
 services:
@@ -142,11 +124,13 @@ If you create an encrypted backup ZIP, store the backup passphrase outside DiVau
 
 ## Desktop App
 
-DiVault can also run as a local Tauri desktop app. The desktop app starts a local PHP server at `http://127.0.0.1:3444`, opens DiVault in a native window, and stores its local desktop data under `desktop-data/` by default.
+Most Windows users should install DiVault by running the release `.exe` installer. You do not need Node, Rust, or the source code when using the installer.
+
+Developer builds use Tauri. In local vault mode, the desktop app starts a local PHP server at `http://127.0.0.1:3444`, opens DiVault in a native window, and stores local desktop data under `desktop-data/` by default.
 
 For cross-device sync, point the desktop app at the same Docker/Pangolin DiVault URL used by phones, tablets, Android devices, and browsers. In that mode the desktop app opens the remote server directly instead of creating an isolated local SQLite vault.
 
-Requirements:
+Developer requirements:
 
 - Node.js and npm
 - Rust/Cargo
