@@ -274,6 +274,79 @@ button { cursor: pointer; }
   border-radius: 0;
   box-shadow: none;
 }
+.loading-card {
+  display: grid;
+  gap: 18px;
+  justify-items: center;
+  width: min(90vw, 380px);
+  padding: 34px 30px 30px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+  border-radius: var(--radius-xl);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--surface-glass) 94%, transparent), color-mix(in srgb, var(--surface-soft) 68%, transparent)),
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--primary) 12%, transparent), transparent 46%);
+  box-shadow: 0 24px 80px rgba(15,23,42,.12), var(--shadow);
+  text-align: center;
+}
+.loading-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--primary) 8%, transparent), transparent);
+  transform: translateX(-100%);
+  animation: loading-sheen 2.6s ease-in-out infinite;
+}
+.loading-mark {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xl);
+  background: var(--text);
+  color: var(--bg);
+  font: 800 .9rem/1 Sora, Inter, sans-serif;
+  letter-spacing: -.04em;
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--text) 18%, transparent);
+}
+.loading-copy { display: grid; gap: 6px; }
+.loading-eyebrow {
+  margin: 0;
+  color: var(--primary);
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.loading-copy h1 { font-size: clamp(1.45rem, 5vw, 2rem); }
+.loading-copy p:not(.loading-eyebrow) { margin: 0; color: var(--muted); font-weight: 600; }
+.loading-bar {
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 74%, transparent);
+}
+.loading-bar span {
+  display: block;
+  width: 42%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--primary), color-mix(in srgb, var(--terminal-accent) 70%, var(--primary)));
+  animation: loading-progress 1.35s ease-in-out infinite;
+}
+@keyframes loading-progress {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(250%); }
+}
+@keyframes loading-sheen {
+  0%, 30% { transform: translateX(-100%); }
+  70%, 100% { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-card::before, .loading-bar span { animation: none; transform: none; }
+}
 .auth-card .brand {
   margin-bottom: 26px;
   padding-bottom: 18px;
