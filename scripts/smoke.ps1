@@ -302,3 +302,5 @@ try {
     if ($client -and $client.id) { $cleanup["client"] = Remove-SmokeResource -Path "/api/clients/$($client.id)" -Session $session -Csrf $csrf }
   }
 }
+
+exit 0
