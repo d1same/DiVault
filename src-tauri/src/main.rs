@@ -73,17 +73,38 @@ fn remote_url() -> Result<Option<Url>, Box<dyn std::error::Error>> {
 }
 
 fn app_root(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let dev_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or("could not resolve project root")?;
-    if dev_root.join("public/index.php").is_file() {
-        return Ok(dev_root);
+    #[cfg(debug_assertions)]
+    {
+        let dev_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or("could not resolve project root")?;
+        if dev_root.join("public/index.php").is_file() {
+            return Ok(dev_root);
+        }
     }
 
-    let resource_dir = app.path().resource_dir()?;
-    if resource_dir.join("public/index.php").is_file() {
-        return Ok(resource_dir);
+    let mut resource_dirs = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        resource_dirs.push(resource_dir);
+    }
+    if let Ok(exe) = env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            resource_dirs.push(exe_dir.join("resources"));
+        }
+    }
+
+    for resource_dir in resource_dirs {
+        if resource_dir.join("public/index.php").is_file() {
+            return Ok(resource_dir);
+        }
+
+        if let Some(install_dir) = resource_dir.parent() {
+            let bundled_root = install_dir.join("_up_");
+            if bundled_root.join("public/index.php").is_file() {
+                return Ok(bundled_root);
+            }
+        }
     }
 
     Err("DiVault web resources were not found".into())
@@ -97,7 +118,9 @@ fn desktop_config_dir(app: &tauri::AppHandle) -> Result<PathBuf, Box<dyn std::er
 }
 
 fn ensure_config_dirs(config_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    for path in ["", "files", "backups", "exports", "imports", "keys", "logs", "tmp"] {
+    for path in [
+        "", "files", "backups", "exports", "imports", "keys", "logs", "tmp",
+    ] {
         std::fs::create_dir_all(config_dir.join(path))?;
     }
     Ok(())
@@ -153,7 +176,15 @@ fn php_runtime(root: &Path) -> PathBuf {
 
     #[cfg(windows)]
     {
-        for dir in [root.join("php"), root.join("src-tauri").join("resources").join("php")] {
+        let mut dirs = vec![
+            root.join("php"),
+            root.join("src-tauri").join("resources").join("php"),
+        ];
+        if let Some(install_dir) = root.parent() {
+            dirs.push(install_dir.join("resources").join("php"));
+        }
+
+        for dir in dirs {
             let bundled_php = dir.join("php.exe");
             if bundled_php.is_file() {
                 return bundled_php;
@@ -163,7 +194,15 @@ fn php_runtime(root: &Path) -> PathBuf {
 
     #[cfg(not(windows))]
     {
-        for dir in [root.join("php"), root.join("src-tauri").join("resources").join("php")] {
+        let mut dirs = vec![
+            root.join("php"),
+            root.join("src-tauri").join("resources").join("php"),
+        ];
+        if let Some(install_dir) = root.parent() {
+            dirs.push(install_dir.join("resources").join("php"));
+        }
+
+        for dir in dirs {
             let bundled_php = dir.join("php");
             if bundled_php.is_file() {
                 return bundled_php;
@@ -184,7 +223,10 @@ fn wait_for_server(child: &mut Child) -> Result<(), Box<dyn std::error::Error>> 
     let deadline = Instant::now() + Duration::from_secs(12);
     while Instant::now() < deadline {
         if let Some(status) = child.try_wait()? {
-            return Err(format!("DiVault local PHP server exited before startup completed: {status}").into());
+            return Err(format!(
+                "DiVault local PHP server exited before startup completed: {status}"
+            )
+            .into());
         }
 
         if TcpStream::connect((HOST, PORT)).is_ok() {
