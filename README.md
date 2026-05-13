@@ -18,6 +18,12 @@ docker compose up -d --build
 
 Open `http://localhost:3443` and create the owner account.
 
+Prebuilt image for Unraid or Docker templates:
+
+```text
+ghcr.io/d1same/divault:latest
+```
+
 For production, put it behind HTTPS with Pangolin, Nginx Proxy Manager, Caddy, or another reverse proxy.
 
 ### Windows Desktop
@@ -48,7 +54,7 @@ The desktop app works standalone and includes its own local runtime. For syncing
 ```yaml
 services:
   notes:
-    build: .
+    image: ghcr.io/d1same/divault:latest
     container_name: divault-notes
     ports:
       - "3443:3443"
