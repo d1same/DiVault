@@ -1178,12 +1178,67 @@ final class App
         $data = $this->input();
         if (empty($data['notes']) || !is_array($data['notes'])) throw new RuntimeException('Import JSON must contain notes array');
         $count = 0;
+        $categoryCount = 0;
         foreach ($data['notes'] as $note) {
-            $this->db->prepare('INSERT INTO notes (user_id, title, body, type, section, category, tags) VALUES (?, ?, ?, ?, ?, ?, ?)')->execute([(int)$user['id'], $note['title'] ?? 'Imported note', $note['body'] ?? '', $note['type'] ?? 'text', $note['section'] ?? 'Imported', $note['category'] ?? null, $note['tags'] ?? null]);
+            $categoryId = $this->importCategoryPath($note['category_path'] ?? ($note['category'] ?? null), $categoryCount);
+            $category = $note['category'] ?? null;
+            if (is_array($note['category_path'] ?? null) && count($note['category_path']) > 0) {
+                $category = end($note['category_path']);
+            }
+            $createdAt = $this->cleanImportedDate($note['created_at'] ?? null);
+            $updatedAt = $this->cleanImportedDate($note['updated_at'] ?? null) ?: $createdAt;
+            $tags = $note['tags'] ?? null;
+            if (is_array($tags)) $tags = implode(', ', array_filter(array_map('trim', $tags)));
+            $this->db->prepare('INSERT INTO notes (user_id, title, body, type, section, category_id, category, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))')->execute([
+                (int)$user['id'],
+                trim((string)($note['title'] ?? '')) ?: 'Imported note',
+                (string)($note['body'] ?? ''),
+                trim((string)($note['type'] ?? 'text')) ?: 'text',
+                trim((string)($note['section'] ?? 'All')) ?: 'All',
+                $categoryId,
+                $category,
+                $tags,
+                $createdAt,
+                $updatedAt,
+            ]);
             $count++;
         }
         $this->audit((int)$user['id'], 'import.completed', 'import', null);
-        $this->json(['imported' => $count]);
+        $this->json(['imported' => $count, 'categories_created' => $categoryCount]);
+    }
+
+    private function importCategoryPath($path, int &$created): ?int
+    {
+        if ($path === null || $path === '') return null;
+        $parts = is_array($path) ? $path : explode('/', (string)$path);
+        $parentId = null;
+        $lastId = null;
+        foreach ($parts as $part) {
+            $name = trim((string)$part);
+            if ($name === '') continue;
+            $stmt = $this->db->prepare('SELECT id FROM asset_categories WHERE name = ?');
+            $stmt->execute([$name]);
+            $existing = $stmt->fetchColumn();
+            if ($existing) {
+                $lastId = (int)$existing;
+                $parentId = $lastId;
+                continue;
+            }
+            $slug = $this->slugify($name);
+            $insert = $this->db->prepare('INSERT INTO asset_categories (parent_id, name, slug) VALUES (?, ?, ?)');
+            $insert->execute([$parentId, $name, $slug]);
+            $lastId = (int)$this->db->lastInsertId();
+            $parentId = $lastId;
+            $created++;
+        }
+        return $lastId;
+    }
+
+    private function cleanImportedDate($value): ?string
+    {
+        if (!is_string($value) || trim($value) === '') return null;
+        $time = strtotime($value);
+        return $time ? gmdate('Y-m-d H:i:s', $time) : null;
     }
 
     private function backup(array $user): void

@@ -145,6 +145,12 @@ If you create an encrypted backup ZIP, store the backup passphrase outside DiVau
 6. Review later and drag/drop into your own categories or subcategories.
 7. Use Archive or Recycle bin actions when a note is no longer active.
 
+## Joplin Markdown Import
+
+Export Joplin notebooks as `MD - Markdown + Front Matter`, then import them from `Settings` > `Import / export` > `Import Markdown folder`. DiVault reads the Markdown files locally in the browser, imports them directly, and maps subfolders to categories.
+
+The importer keeps note titles, Markdown bodies, tags, and created/updated timestamps. Generated exports and import JSON contain full note contents, so treat them like sensitive backups and keep them out of source control.
+
 ## Desktop App
 
 Most Windows users should install DiVault by running the release `.exe` installer. You do not need Node, Rust, or the source code when using the installer.

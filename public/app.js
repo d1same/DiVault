@@ -50,6 +50,56 @@ const toast = message => {
   setTimeout(() => el.remove(), 2600);
 };
 
+function cleanFrontMatterValue(value = '') {
+  const trimmed = String(value).trim();
+  if (trimmed.length >= 2) {
+    const first = trimmed[0];
+    const last = trimmed[trimmed.length - 1];
+    if ((first === "'" && last === "'") || (first === '"' && last === '"')) return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function markdownFileTitle(fileName) {
+  return fileName.replace(/\.md$/i, '') || 'Imported note';
+}
+
+async function buildMarkdownImportPayload(files) {
+  const markdownFiles = [...files].filter(file => file.name.toLowerCase().endsWith('.md'));
+  if (!markdownFiles.length) throw new Error('Choose one or more Markdown files');
+  const notes = [];
+  for (const file of markdownFiles) {
+    const raw = await file.text();
+    const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+    const meta = {};
+    let body = raw;
+    if (match) {
+      body = match[2];
+      match[1].split(/\r?\n/).forEach(line => {
+        const field = line.match(/^([^:]+):\s*(.*)$/);
+        if (field) meta[field[1].trim()] = cleanFrontMatterValue(field[2]);
+      });
+    }
+    const sourcePath = file.webkitRelativePath || file.name;
+    const pathParts = sourcePath.split('/').filter(Boolean);
+    if (pathParts.length > 2) pathParts.shift();
+    pathParts.pop();
+    notes.push({
+      title: meta.title || markdownFileTitle(file.name),
+      body: body.trim(),
+      type: 'text',
+      section: 'All',
+      category_path: pathParts,
+      tags: meta.tags ? meta.tags.split(',').map(tag => tag.trim()).filter(Boolean) : [],
+      created_at: meta.created || null,
+      updated_at: meta.updated || null,
+      source: 'markdown-front-matter',
+      source_file: sourcePath
+    });
+  }
+  return { source: 'markdown-front-matter', generated_at: new Date().toISOString(), notes };
+}
+
 function setupAccessibleModal(modal, initialFocusSelector = '[data-close], button, input, textarea, select, a[href]') {
   const previousFocus = document.activeElement;
   const panel = modal.querySelector('.editor-panel') || modal;
@@ -2518,7 +2568,7 @@ async function openSettings() {
     isAdmin ? api('/integrations/ai/status').catch(() => null) : null,
     state.desktop && isAdmin ? api('/desktop/server').catch(() => ({ server_url: '' })) : { server_url: '' }
   ]);
-  const adminDataCards = isAdmin ? `<div class="card stack"><h3>Import / export</h3><div class="btn-row"><a class="btn" href="/api/export">Export JSON</a><button class="btn" id="backupBtn">Create full backup</button></div><p class="small muted">Optional backup passphrases encrypt backups. Keep the passphrase; encrypted backups cannot be restored without it.</p><label class="field"><span>Import JSON notes</span><textarea id="importJson" placeholder='{"notes":[{"title":"Imported","body":"Hello"}]}'></textarea></label><button class="btn" id="importBtn">Import</button></div>
+  const adminDataCards = isAdmin ? `<div class="card stack"><h3>Import / export</h3><div class="btn-row"><a class="btn" href="/api/export">Export JSON</a><button class="btn" id="backupBtn">Create full backup</button></div><p class="small muted">Optional backup passphrases encrypt backups. Keep the passphrase; encrypted backups cannot be restored without it.</p><label class="field"><span>Import Markdown notes</span><input id="markdownImportFiles" type="file" accept=".md,text/markdown" multiple></label><label class="field"><span>Import Markdown folder</span><input id="markdownImportFolder" type="file" accept=".md,text/markdown" webkitdirectory multiple></label><button class="btn" id="importMarkdownBtn">Import Markdown</button><p class="small muted">Markdown files are read locally in this browser and imported directly. Folder imports map subfolders to categories.</p><label class="field"><span>Import JSON notes</span><textarea id="importJson" placeholder='{"notes":[{"title":"Imported","body":"Hello"}]}'></textarea></label><button class="btn" id="importBtn">Import JSON</button></div>
         <div class="card stack"><h3>Backups</h3>${backups.pending_restore ? '<p class="pill secret">Restore pending. Restart container to apply.</p>' : ''}<div class="btn-row"><input id="restoreUpload" type="file" accept=".zip,application/zip"><button class="btn danger" id="uploadRestoreBtn">Upload restore ZIP</button></div>${backups.backups.map(b => `<div class="file-row"><span>${esc(b.file)}<br><span class="small muted">${Math.ceil(Number(b.size) / 1024)} KB</span></span><span class="btn-row"><a class="btn" href="/api/backups/${esc(b.file)}">Download</a><button class="btn danger" data-restore="${esc(b.file)}">Schedule restore</button></span></div>`).join('') || '<p class="small muted">No backups yet.</p>'}</div>` : '';
   const adminSidebarCards = isAdmin ? `<div class="card stack"><h3>Add user</h3><form id="userForm" class="stack"><input name="name" placeholder="Name"><input name="email" type="email" placeholder="Email"><input name="password" type="password" minlength="10" placeholder="Temporary password"><select name="role"><option>editor</option><option>viewer</option><option>admin</option></select><button class="btn">Create user</button></form></div>
         <div class="card"><h3>Users</h3>${users.users.map(u => `<div class="user-row"><span>${esc(u.email)}</span><span class="pill">${esc(u.role)}</span></div>`).join('') || '<p class="small muted">No users.</p>'}</div>
@@ -2731,7 +2781,22 @@ async function openSettings() {
       const json = JSON.parse(modal.querySelector('#importJson').value || '{}');
       const res = await api('/import', { method: 'POST', body: json });
       toast(`Imported ${res.imported} notes`);
+      await loadAll();
+      renderApp();
     }, 'Import failed');
+  });
+  modal.querySelector('#importMarkdownBtn')?.addEventListener('click', async () => {
+    await runUserAction(async () => {
+      const files = [
+        ...modal.querySelector('#markdownImportFiles').files,
+        ...modal.querySelector('#markdownImportFolder').files
+      ];
+      const payload = await buildMarkdownImportPayload(files);
+      const res = await api('/import', { method: 'POST', body: payload });
+      toast(`Imported ${res.imported} Markdown notes`);
+      await loadAll();
+      renderApp();
+    }, 'Markdown import failed');
   });
   modal.querySelector('#userForm')?.addEventListener('submit', async e => {
     e.preventDefault();
