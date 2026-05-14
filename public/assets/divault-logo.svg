@@ -1,7 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <rect width="1024" height="1024" rx="28" fill="#020202"/>
-  <path fill="#fff" d="M160 154 244 231 169 264z"/>
-  <path fill="#fff" d="M171 288 256 247 392 505 337 591z"/>
-  <path fill="#fff" fill-rule="evenodd" d="M265 154h214c124 0 226 101 226 226S603 606 479 606h-56l-32-70h88c85 0 154-69 154-156s-69-156-154-156H307zM482 224c78 0 142 70 142 156s-64 156-142 156h-42l-29-70h70c43 0 79-39 79-86s-36-86-79-86H349l-42-70z"/>
-  <path fill="#fff" d="M418 602 509 736 714 380h88L509 865 356 641z"/>
+  <defs>
+    <linearGradient id="bg" x1="176" y1="116" x2="850" y2="916" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#18181b"/>
+      <stop offset="1" stop-color="#020202"/>
+    </linearGradient>
+    <linearGradient id="pencil" x1="569" y1="719" x2="823" y2="465" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#fde68a"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="112" fill="url(#bg)"/>
+  <path d="M274 220h340l150 150v420H274z" fill="#0f0f12" stroke="#34343a" stroke-width="22"/>
+  <path d="M614 220v150h150" fill="none" stroke="#34343a" stroke-width="22" stroke-linejoin="round"/>
+  <text x="512" y="628" fill="#f7f7f8" font-family="Aptos Display, Segoe UI, Arial, sans-serif" font-size="340" font-weight="800" letter-spacing="-28" text-anchor="middle">DV</text>
+  <g transform="rotate(-43 690 677)">
+    <rect x="538" y="642" width="282" height="70" rx="22" fill="url(#pencil)"/>
+    <rect x="538" y="642" width="58" height="70" rx="20" fill="#fff3c4"/>
+    <path d="M820 642l78 35-78 35z" fill="#f5f5f4"/>
+    <path d="M873 677l25-12v24z" fill="#18181b"/>
+  </g>
 </svg>
