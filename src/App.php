@@ -518,7 +518,16 @@ final class App
         if (!empty($_GET['has_file'])) $where[] = 'EXISTS (SELECT 1 FROM files f WHERE f.note_id = n.id)';
         if (!empty($_GET['has_secret'])) $where[] = 'EXISTS (SELECT 1 FROM note_secrets s WHERE s.note_id = n.id)';
         if (!empty($_GET['has_code'])) $where[] = "n.body LIKE '%```%'";
-        $sql = 'SELECT n.*, ac.name AS category_name, ac.slug AS category_slug, c.name AS client_name, (SELECT COUNT(*) FROM files f WHERE f.note_id = n.id) AS file_count, (SELECT COUNT(*) FROM note_secrets s WHERE s.note_id = n.id) AS secret_count FROM notes n LEFT JOIN asset_categories ac ON ac.id = n.category_id LEFT JOIN clients c ON c.id = n.client_id WHERE ' . implode(' AND ', $where) . ' ORDER BY n.pinned DESC, n.updated_at DESC LIMIT 200';
+        $sort = $_GET['sort'] ?? 'updated_desc';
+        $order = match ($sort) {
+            'updated_asc' => 'n.pinned DESC, n.updated_at ASC, n.id ASC',
+            'created_desc' => 'n.pinned DESC, n.created_at DESC, n.id DESC',
+            'created_asc' => 'n.pinned DESC, n.created_at ASC, n.id ASC',
+            'title_asc' => 'n.pinned DESC, lower(n.title) ASC, n.updated_at DESC',
+            'title_desc' => 'n.pinned DESC, lower(n.title) DESC, n.updated_at DESC',
+            default => 'n.pinned DESC, n.updated_at DESC, n.id DESC',
+        };
+        $sql = 'SELECT n.*, ac.name AS category_name, ac.slug AS category_slug, c.name AS client_name, (SELECT COUNT(*) FROM files f WHERE f.note_id = n.id) AS file_count, (SELECT COUNT(*) FROM note_secrets s WHERE s.note_id = n.id) AS secret_count FROM notes n LEFT JOIN asset_categories ac ON ac.id = n.category_id LEFT JOIN clients c ON c.id = n.client_id WHERE ' . implode(' AND ', $where) . ' ORDER BY ' . $order . ' LIMIT 200';
         $stmt = $this->db->prepare($sql);
         $stmt->execute($args);
         $this->json(['notes' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
