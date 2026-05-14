@@ -243,7 +243,7 @@
 
 
 * { box-sizing: border-box; }
-html, body, .app-shell { max-width: 100%; overflow-x: hidden; }
+html, body, .app-shell { max-width: 100%; overflow-x: clip; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 body {
   margin: 0;
@@ -259,6 +259,8 @@ button { cursor: pointer; }
 .app-shell:has(.auth-card), .app-shell:has(.loading-card) {
   display: grid;
   place-items: center;
+  width: 100%;
+  min-width: 0;
   padding: 28px;
   background:
     radial-gradient(circle at 18% 12%, color-mix(in srgb, var(--primary) 16%, transparent), transparent 32%),
@@ -267,7 +269,8 @@ button { cursor: pointer; }
 }
 .loading-card, .auth-card {
   position: relative;
-  width: min(94vw, 460px);
+  width: min(100%, 460px);
+  min-width: 0;
   margin: 0 auto;
   padding: 20px 4px;
   background: transparent;
@@ -275,7 +278,7 @@ button { cursor: pointer; }
   border-radius: 0;
   box-shadow: none;
 }
-.auth-card { width: min(94vw, 560px); }
+.auth-card { width: min(100%, 560px); }
 .loading-card {
   display: grid;
   gap: 18px;
@@ -912,6 +915,11 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .onboarding-choice { grid-template-columns: 1fr; }
   .auth-card .brand h1 { max-width: none; }
   .sidebar .brand h2 { font-size: 1.05rem; }
+  .app-shell:has(.auth-card), .app-shell:has(.loading-card) { min-height: 100svh; padding: 18px 12px; place-items: start center; }
+  .auth-card, .loading-card { width: 100%; max-width: calc(100vw - 24px); padding-inline: 0; }
+  .auth-card .brand { align-items: flex-start; gap: 10px; margin-bottom: 18px; padding-bottom: 14px; }
+  .auth-card .brand h1 { font-size: clamp(1.65rem, 9vw, 2rem); overflow-wrap: anywhere; }
+  .auth-card form { width: 100%; padding: 16px; border-radius: var(--radius-lg); }
   .sidebar .nav,
   .sidebar-footer { display: none; }
   .sidebar.open {
