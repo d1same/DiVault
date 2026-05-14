@@ -309,12 +309,13 @@ button { cursor: pointer; }
   display: grid;
   place-items: center;
   border-radius: var(--radius-xl);
-  background: var(--text);
+  background: transparent;
   color: var(--bg);
   font: 800 .9rem/1 Sora, Inter, sans-serif;
   letter-spacing: -.04em;
   box-shadow: 0 14px 34px color-mix(in srgb, var(--text) 18%, transparent);
 }
+.loading-mark img { width: 100%; height: 100%; display: block; border-radius: inherit; }
 .loading-copy { display: grid; gap: 6px; }
 .loading-eyebrow {
   margin: 0;
@@ -377,7 +378,7 @@ button { cursor: pointer; }
 .auth-card .setup-theme { padding: 16px; }
 .auth-card .setup-theme .theme-presets { grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); }
 .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
-.brand-mark { width: 42px; height: 42px; border-radius: var(--radius-lg); background: var(--text); display: grid; place-items: center; color: var(--bg); font: 800 .8rem/1 Sora, Inter, sans-serif; letter-spacing: -.03em; }
+.brand-mark { width: 42px; height: 42px; border-radius: var(--radius-lg); background: transparent; display: grid; place-items: center; color: var(--bg); font: 800 .8rem/1 Sora, Inter, sans-serif; letter-spacing: -.03em; }
 .brand-mark img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
 .menu-toggle { display: none; margin-left: auto; width: 44px; height: 44px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); font-size: 1.1rem; font-weight: 900; }
 h1, h2, h3 { line-height: 1.1; margin: 0; }

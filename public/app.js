@@ -41,6 +41,7 @@ function getCookie(name) {
 }
 
 const esc = value => String(value ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const brandMark = (alt = 'DiVault') => `<img src="/assets/icon.svg" alt="${esc(alt)}">`;
 const toast = message => {
   const el = document.createElement('div');
   el.className = 'toast';
@@ -384,7 +385,7 @@ function renderLogin() {
 
 function authShell(title, subtitle, body) {
   return `<section class="auth-card">
-    <div class="brand"><div class="brand-mark">DV</div><div><h1>${title}</h1><p class="muted">${subtitle}</p></div></div>
+    <div class="brand"><div class="brand-mark">${brandMark()}</div><div><h1>${title}</h1><p class="muted">${subtitle}</p></div></div>
     ${body}
   </section>`;
 }
@@ -521,7 +522,7 @@ function renderOfflineVault(err, unlockedSnapshot = null) {
   const pending = loadPendingNotes();
   const notes = unlockedSnapshot?.notes || [];
   app.innerHTML = `<section class="offline-shell">
-    <div class="brand"><div class="brand-mark">DV</div><div><h1>DiVault Offline</h1><p class="muted">Server is unreachable. You can still export this device's last synced snapshot or capture a local pending note.</p></div></div>
+    <div class="brand"><div class="brand-mark">${brandMark()}</div><div><h1>DiVault Offline</h1><p class="muted">Server is unreachable. You can still export this device's last synced snapshot or capture a local pending note.</p></div></div>
     <div class="card stack">
       <div class="btn-row"><button class="btn primary" id="retryOnline">Retry server</button><button class="btn" id="downloadSnapshot">Download emergency JSON</button></div>
       <p class="small muted">Encrypted local snapshot: ${snapshot?.saved_at ? esc(new Date(snapshot.saved_at).toLocaleString()) : 'none on this device'}. Pending offline notes: ${pending.length}.</p>
@@ -669,7 +670,7 @@ function renderApp() {
   const panelOpen = Boolean(state.panel);
   app.innerHTML = `<div class="layout">
     <aside class="sidebar">
-      <div class="brand"><div class="brand-mark">${state.user.avatar_data ? `<img src="${esc(state.user.avatar_data)}" alt="">` : 'DV'}</div><div class="brand-text"><h2>DiVault</h2><div class="small muted">${esc(state.user.name)} · ${esc(state.user.role)}</div></div><button class="sidebar-collapse" id="sidebarCollapse" type="button" aria-label="Collapse sidebar" title="Collapse sidebar">‹</button><button class="menu-toggle" id="menuToggle" type="button" aria-label="Open navigation" aria-expanded="false">☰</button></div>
+      <div class="brand"><div class="brand-mark">${state.user.avatar_data ? `<img src="${esc(state.user.avatar_data)}" alt="">` : brandMark()}</div><div class="brand-text"><h2>DiVault</h2><div class="small muted">${esc(state.user.name)} · ${esc(state.user.role)}</div></div><button class="sidebar-collapse" id="sidebarCollapse" type="button" aria-label="Collapse sidebar" title="Collapse sidebar">‹</button><button class="menu-toggle" id="menuToggle" type="button" aria-label="Open navigation" aria-expanded="false">☰</button></div>
       <nav class="nav">${renderNavGroups()}</nav>
       <div class="sidebar-footer">
         <button class="sync-pill sidebar-sync" data-sync-status type="button" id="syncBtn">${esc(syncLabel())}</button>
@@ -2521,7 +2522,7 @@ async function openSettings() {
   const adminSidebarCards = isAdmin ? `<div class="card stack"><h3>Add user</h3><form id="userForm" class="stack"><input name="name" placeholder="Name"><input name="email" type="email" placeholder="Email"><input name="password" type="password" minlength="10" placeholder="Temporary password"><select name="role"><option>editor</option><option>viewer</option><option>admin</option></select><button class="btn">Create user</button></form></div>
         <div class="card"><h3>Users</h3>${users.users.map(u => `<div class="user-row"><span>${esc(u.email)}</span><span class="pill">${esc(u.role)}</span></div>`).join('') || '<p class="small muted">No users.</p>'}</div>
         <div class="card"><h3>Audit</h3>${audit.audit.slice(0,12).map(a => `<div class="audit-row"><span>${esc(a.action)}</span><span class="small muted">${esc(a.email || 'system')}</span></div>`).join('') || '<p class="small muted">No events yet.</p>'}</div>` : '';
-  const avatarPreview = state.user.avatar_data ? `<img class="profile-avatar" src="${esc(state.user.avatar_data)}" alt="Current avatar">` : '<div class="profile-avatar initials">DV</div>';
+  const avatarPreview = state.user.avatar_data ? `<img class="profile-avatar" src="${esc(state.user.avatar_data)}" alt="Current avatar">` : `<img class="profile-avatar" src="/assets/icon.svg" alt="DiVault">`;
   const removeAvatarButton = state.user.avatar_data ? '<button class="btn ghost" id="removeAvatarBtn" type="button">Remove avatar</button>' : '';
   const desktopServerCard = state.desktop && isAdmin ? `<div class="card stack"><h3>Desktop mode</h3><p class="muted small">Choose whether this desktop app starts its standalone local vault or opens a hosted DiVault server on launch.</p><div class="inline-note-blocks"><div class="inline-note ${desktopServer.server_url ? '' : 'active'}"><b>Standalone vault</b><span>Private local vault on this computer.</span></div><div class="inline-note ${desktopServer.server_url ? 'active' : ''}"><b>Connect to server</b><span>${desktopServer.server_url ? esc(desktopServer.server_url) : 'Use one shared server for desktop, Android, and browser sync.'}</span></div></div><form id="desktopServerSettingsForm" class="stack"><label class="field"><span>Server URL</span><input name="server_url" type="url" value="${esc(desktopServer.server_url || '')}" placeholder="https://notes.example.com" autocomplete="url" required></label><div class="btn-row"><button class="btn primary">Use server on next launch</button>${desktopServer.server_url ? '<button class="btn ghost" id="desktopStandaloneBtn" type="button">Use standalone on next launch</button>' : ''}</div></form><p class="small muted">Restart DiVault after changing desktop mode. Server mode opens that URL directly; standalone mode starts the bundled local vault.</p></div>` : '';
   state.settingsHtml = `
@@ -2572,10 +2573,11 @@ async function openSettings() {
     if (fileInput) fileInput.value = '';
     const preview = modal.querySelector('.profile-avatar');
     if (preview) {
-      const initials = document.createElement('div');
-      initials.className = 'profile-avatar initials';
-      initials.textContent = 'DV';
-      preview.replaceWith(initials);
+      const logo = document.createElement('img');
+      logo.className = 'profile-avatar';
+      logo.src = '/assets/icon.svg';
+      logo.alt = 'DiVault';
+      preview.replaceWith(logo);
     }
     toast('Avatar will be removed when you save');
   });
