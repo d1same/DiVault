@@ -2,7 +2,7 @@
 
 Android client for `com.divault.mobile`. It is a WebView wrapper for an existing DiVault server, so Android uses the same synced notes as your browser and desktop clients.
 
-The app keeps Android status and navigation bars visible, so phone system controls remain accessible and DiVault does not render behind them.
+The app keeps Android status and navigation bars visible, so phone system controls remain accessible. DiVault applies native safe-area padding around the WebView so content does not render behind the top status bar or bottom navigation bar.
 
 ## Open
 

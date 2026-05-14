@@ -219,7 +219,7 @@ The Android project is intentionally small and server-connected:
 - First launch asks for your DiVault server URL.
 - The saved server URL is stored on the device.
 - DiVault opens in a WebView with JavaScript, DOM storage, and file uploads enabled.
-- Android status and navigation bars stay visible, so system controls remain accessible.
+- Android status and navigation bars stay visible, and DiVault adds native safe-area padding so content does not render behind them.
 - If the saved server is unavailable, Android shows retry and change-server actions.
 - Android share intents can send text into DiVault after you are signed in.
 - Android system Back sends DiVault to the background instead of navigating WebView history.
