@@ -151,6 +151,8 @@ Most Windows users should install DiVault by running the release `.exe` installe
 
 Developer builds use Tauri. In local vault mode, the desktop app starts the bundled PHP runtime at `http://127.0.0.1:3444`, opens DiVault in a native window, and stores local desktop data in the current Windows user app-data folder by default.
 
+Desktop Settings shows the local data folder path so Windows users can quickly find standalone vault data, backups, logs, and configuration files.
+
 For cross-device sync, point the desktop app at the same Docker/Pangolin DiVault URL used by phones, tablets, Android devices, and browsers. In that mode the desktop app opens the remote server directly instead of creating an isolated local SQLite vault.
 
 Developer requirements:
@@ -223,6 +225,7 @@ The Android project is intentionally small and server-connected:
 - If the saved server is unavailable, Android shows retry and change-server actions.
 - Android share intents can send text into DiVault after you are signed in.
 - Android system Back sends DiVault to the background instead of navigating WebView history.
+- Android Settings includes a Change server action when opened inside the Android app.
 
 Release APKs are signed with the project Android release key configured in GitHub Actions secrets. Debug APKs are for development only and may not update cleanly across machines.
 

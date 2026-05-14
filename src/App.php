@@ -143,7 +143,7 @@ final class App
     {
         $this->requireAdmin($user);
         if (!Config::isDesktop()) throw new RuntimeException('Desktop server settings are only available in the desktop app');
-        $this->json(['server_url' => $this->desktopServerUrl()]);
+        $this->json(['server_url' => $this->desktopServerUrl(), 'config_dir' => Config::dir()]);
     }
 
     private function saveDesktopServer(?array $user = null): void

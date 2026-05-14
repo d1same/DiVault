@@ -24,6 +24,8 @@ The Android app is online-first. Use the browser PWA cache for limited offline v
 
 Android share intents can send text into DiVault after you are signed in to the configured server.
 
+When DiVault Settings is opened inside the Android app, it includes a native `Change server` action for updating the saved Android server URL.
+
 ## System Back Button
 
 Android's system Back button sends DiVault to the background instead of stepping backward through WebView history. Use DiVault's in-app Back controls when you want to leave an editor or return to the note list.
