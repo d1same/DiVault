@@ -64,6 +64,39 @@ function markdownFileTitle(fileName) {
   return fileName.replace(/\.md$/i, '') || 'Imported note';
 }
 
+function formatDateTime(value) {
+  if (!value) return 'unknown time';
+  const normalized = String(value).includes('T') ? String(value) : String(value).replace(' ', 'T') + 'Z';
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function deviceNameFromUserAgent(userAgent = '') {
+  const ua = String(userAgent);
+  const browser = ua.includes('Edg/') ? 'Edge' : ua.includes('Chrome/') ? 'Chrome' : ua.includes('Firefox/') ? 'Firefox' : ua.includes('Safari/') ? 'Safari' : 'Browser';
+  const os = ua.includes('Android') ? 'Android' : ua.includes('Windows') ? 'Windows' : ua.includes('iPhone') || ua.includes('iPad') ? 'iOS' : ua.includes('Mac OS X') ? 'macOS' : ua.includes('Linux') ? 'Linux' : 'Unknown device';
+  return `${browser} on ${os}`;
+}
+
+function groupedSessionsHtml(sessions = []) {
+  const groups = new Map();
+  sessions.forEach(session => {
+    const ip = session.ip || 'unknown IP';
+    const device = deviceNameFromUserAgent(session.user_agent);
+    const key = `${ip}|${device}`;
+    const group = groups.get(key) || { ip, device, sessions: [], latest: session.created_at };
+    group.sessions.push(session);
+    if (String(session.created_at || '') > String(group.latest || '')) group.latest = session.created_at;
+    groups.set(key, group);
+  });
+  return [...groups.values()].map(group => `<div class="user-row"><span><b>${esc(group.device)}</b><br><span class="small muted">${esc(group.ip)} · ${formatDateTime(group.latest)}${group.sessions.length > 1 ? ` · ${group.sessions.length} sessions` : ''}</span></span><button class="btn danger" data-session-ids="${esc(group.sessions.map(s => s.id).join(','))}">Revoke</button></div>`).join('') || '<p class="small muted">No active sessions.</p>';
+}
+
+function auditRowsHtml(auditRows = []) {
+  return auditRows.slice(0, 12).map(a => `<div class="audit-row"><span>${esc(a.action)}<br><span class="small muted">${formatDateTime(a.created_at)}</span></span><span class="small muted">${esc(a.email || 'system')}${a.ip ? `<br>${esc(a.ip)}` : ''}</span></div>`).join('') || '<p class="small muted">No events yet.</p>';
+}
+
 async function buildMarkdownImportPayload(files) {
   const markdownFiles = [...files].filter(file => file.name.toLowerCase().endsWith('.md'));
   if (!markdownFiles.length) throw new Error('Choose one or more Markdown files');
@@ -2572,7 +2605,7 @@ async function openSettings() {
         <div class="card stack"><h3>Backups</h3>${backups.pending_restore ? '<p class="pill secret">Restore pending. Restart container to apply.</p>' : ''}<div class="btn-row"><input id="restoreUpload" type="file" accept=".zip,application/zip"><button class="btn danger" id="uploadRestoreBtn">Upload restore ZIP</button></div>${backups.backups.map(b => `<div class="file-row"><span>${esc(b.file)}<br><span class="small muted">${Math.ceil(Number(b.size) / 1024)} KB</span></span><span class="btn-row"><a class="btn" href="/api/backups/${esc(b.file)}">Download</a><button class="btn danger" data-restore="${esc(b.file)}">Schedule restore</button></span></div>`).join('') || '<p class="small muted">No backups yet.</p>'}</div>` : '';
   const adminSidebarCards = isAdmin ? `<div class="card stack"><h3>Add user</h3><form id="userForm" class="stack"><input name="name" placeholder="Name"><input name="email" type="email" placeholder="Email"><input name="password" type="password" minlength="10" placeholder="Temporary password"><select name="role"><option>editor</option><option>viewer</option><option>admin</option></select><button class="btn">Create user</button></form></div>
         <div class="card"><h3>Users</h3>${users.users.map(u => `<div class="user-row"><span>${esc(u.email)}</span><span class="pill">${esc(u.role)}</span></div>`).join('') || '<p class="small muted">No users.</p>'}</div>
-        <div class="card"><h3>Audit</h3>${audit.audit.slice(0,12).map(a => `<div class="audit-row"><span>${esc(a.action)}</span><span class="small muted">${esc(a.email || 'system')}</span></div>`).join('') || '<p class="small muted">No events yet.</p>'}</div>` : '';
+        <div class="card"><h3>Audit</h3>${auditRowsHtml(audit.audit)}</div>` : '';
   const avatarPreview = state.user.avatar_data ? `<img class="profile-avatar" src="${esc(state.user.avatar_data)}" alt="Current avatar">` : `<img class="profile-avatar" src="/assets/divault-logo.svg" alt="DiVault">`;
   const removeAvatarButton = state.user.avatar_data ? '<button class="btn ghost" id="removeAvatarBtn" type="button">Remove avatar</button>' : '';
   const desktopServerCard = state.desktop && isAdmin ? `<div class="card stack"><h3>Desktop mode</h3><p class="muted small">Choose whether this desktop app starts its standalone local vault or opens a hosted DiVault server on launch.</p><div class="inline-note-blocks"><div class="inline-note ${desktopServer.server_url ? '' : 'active'}"><b>Standalone vault</b><span>Private local vault on this computer.</span></div><div class="inline-note ${desktopServer.server_url ? 'active' : ''}"><b>Connect to server</b><span>${desktopServer.server_url ? esc(desktopServer.server_url) : 'Use one shared server for desktop, Android, and browser sync.'}</span></div></div><form id="desktopServerSettingsForm" class="stack"><label class="field"><span>Server URL</span><input name="server_url" type="url" value="${esc(desktopServer.server_url || '')}" placeholder="https://notes.example.com" autocomplete="url" required></label><div class="btn-row"><button class="btn primary">Use server on next launch</button>${desktopServer.server_url ? '<button class="btn ghost" id="desktopStandaloneBtn" type="button">Use standalone on next launch</button>' : ''}</div></form>${desktopServer.config_dir ? `<div class="file-row"><span>Local data folder<br><span class="small muted">${esc(desktopServer.config_dir)}</span></span><button class="btn ghost" id="copyDesktopDataFolderBtn" type="button">Copy path</button></div>` : ''}<p class="small muted">Restart DiVault after changing desktop mode. Server mode opens that URL directly; standalone mode starts the bundled local vault.</p></div>` : '';
@@ -2597,7 +2630,7 @@ async function openSettings() {
       </div>
       <aside class="stack">
         ${adminSidebarCards}
-        <div class="card"><h3>Sessions</h3>${sessions.sessions.map(s => `<div class="user-row"><span>${esc(s.ip || 'unknown')}<br><span class="small muted">${esc(s.created_at)}</span></span><button class="btn danger" data-session="${s.id}">Revoke</button></div>`).join('') || '<p class="small muted">No active sessions.</p>'}</div>
+        <div class="card"><h3>Sessions</h3>${groupedSessionsHtml(sessions.sessions)}</div>
       </aside>
     </div>`;
   renderApp();
@@ -2807,6 +2840,12 @@ async function openSettings() {
   modal.querySelectorAll('[data-session]').forEach(btn => btn.addEventListener('click', async () => {
     await api(`/sessions/${btn.dataset.session}`, { method: 'DELETE' });
     toast('Session revoked');
+    openSettings();
+  }));
+  modal.querySelectorAll('[data-session-ids]').forEach(btn => btn.addEventListener('click', async () => {
+    const ids = btn.dataset.sessionIds.split(',').filter(Boolean);
+    await Promise.all(ids.map(id => api(`/sessions/${id}`, { method: 'DELETE' })));
+    toast(ids.length > 1 ? 'Sessions revoked' : 'Session revoked');
     openSettings();
   }));
   modal.querySelectorAll('[data-restore]').forEach(btn => btn.addEventListener('click', async () => {
