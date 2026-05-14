@@ -4,10 +4,9 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
-import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
@@ -17,25 +16,14 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.Button;
 import android.widget.EditText;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 import android.widget.Toast;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.SecureRandom;
 import java.util.ArrayList;
 
 public class MainActivity extends Activity {
     private static final String PREFS_NAME = "divault_mobile";
     private static final String PREF_SERVER_URL = "server_url";
-    private static final String PREF_LAST_MODE = "last_mode";
-    private static final String PREF_PIN_SALT = "pin_salt";
-    private static final String PREF_PIN_HASH = "pin_hash";
-    private static final String MODE_LOCAL = "local";
-    private static final String MODE_SERVER = "server";
     private static final int FILE_CHOOSER_REQUEST = 1001;
 
     private SharedPreferences preferences;
@@ -44,7 +32,6 @@ public class MainActivity extends Activity {
     private String pendingShareTitle;
     private String pendingShareBody;
     private boolean shareAttempted;
-    private String currentMode = MODE_LOCAL;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -52,14 +39,16 @@ public class MainActivity extends Activity {
         setTitle(R.string.app_name);
         preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         handleShareIntent(getIntent());
-        buildLayout();
+        buildWebView();
         configureWebView();
+        applyFullscreen();
+        loadConfiguredServer();
+    }
 
-        if (hasPin()) {
-            promptUnlock();
-        } else {
-            loadConfiguredServer();
-        }
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) applyFullscreen();
     }
 
     @Override
@@ -67,61 +56,27 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleShareIntent(intent);
-        if (webView != null) {
-            injectPendingShare();
-        }
+        injectPendingShare();
     }
 
-    private void buildLayout() {
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setBackgroundColor(Color.WHITE);
-
-        LinearLayout toolbar = new LinearLayout(this);
-        toolbar.setOrientation(LinearLayout.HORIZONTAL);
-        toolbar.setGravity(Gravity.CENTER_VERTICAL);
-        toolbar.setPadding(dp(6), dp(4), dp(6), dp(4));
-        toolbar.setBackgroundColor(Color.rgb(31, 41, 55));
-
-        TextView title = new TextView(this);
-        title.setText(R.string.app_name);
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(18);
-        title.setGravity(Gravity.CENTER_VERTICAL);
-        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        title.setSingleLine(true);
-        toolbar.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.8f));
-        toolbar.addView(toolbarButton(R.string.refresh, view -> reloadServer()));
-        toolbar.addView(toolbarButton(R.string.local, view -> loadLocalVault()));
-        toolbar.addView(toolbarButton(R.string.server, view -> promptForServerUrl()));
-        toolbar.addView(toolbarButton(R.string.lock, view -> showAppLockOptions()));
-        layout.addView(toolbar, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        ));
-
+    private void buildWebView() {
         webView = new WebView(this);
-        layout.addView(webView, new LinearLayout.LayoutParams(
+        webView.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f
+                ViewGroup.LayoutParams.MATCH_PARENT
         ));
-
-        setContentView(layout);
+        setContentView(webView);
     }
 
-    private Button toolbarButton(int label, android.view.View.OnClickListener listener) {
-        Button button = new Button(this);
-        button.setText(label);
-        button.setAllCaps(false);
-        button.setTextColor(Color.WHITE);
-        button.setBackgroundColor(Color.TRANSPARENT);
-        button.setOnClickListener(listener);
-        button.setMinWidth(0);
-        button.setMinimumWidth(0);
-        button.setPadding(dp(6), dp(6), dp(6), dp(6));
-        button.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.8f));
-        return button;
+    private void applyFullscreen() {
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        );
     }
 
     private void configureWebView() {
@@ -137,6 +92,7 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 injectPendingShare();
+                applyFullscreen();
             }
 
             @Override
@@ -188,23 +144,16 @@ public class MainActivity extends Activity {
 
     private void loadConfiguredServer() {
         String savedUrl = preferences.getString(PREF_SERVER_URL, null);
-        String lastMode = preferences.getString(PREF_LAST_MODE, MODE_LOCAL);
-        if (MODE_SERVER.equals(lastMode) && isValidServerUrl(savedUrl)) {
-            currentMode = MODE_SERVER;
+        if (isValidServerUrl(savedUrl)) {
             webView.loadUrl(savedUrl);
         } else {
-            loadLocalVault();
+            promptForServerUrl();
         }
     }
 
     private void reloadServer() {
-        if (MODE_LOCAL.equals(currentMode)) {
-            loadLocalVault();
-            return;
-        }
         String savedUrl = preferences.getString(PREF_SERVER_URL, null);
         if (isValidServerUrl(savedUrl)) {
-            currentMode = MODE_SERVER;
             webView.loadUrl(savedUrl);
         } else {
             promptForServerUrl();
@@ -233,15 +182,12 @@ public class MainActivity extends Activity {
                 input.setError(getString(R.string.invalid_server_url));
                 return;
             }
-            preferences.edit()
-                    .putString(PREF_SERVER_URL, url)
-                    .putString(PREF_LAST_MODE, MODE_SERVER)
-                    .apply();
-            currentMode = MODE_SERVER;
+            preferences.edit().putString(PREF_SERVER_URL, url).apply();
             webView.loadUrl(url);
             dialog.dismiss();
         }));
 
+        dialog.setOnDismissListener(activeDialog -> applyFullscreen());
         dialog.show();
     }
 
@@ -254,110 +200,10 @@ public class MainActivity extends Activity {
     }
 
     private boolean isValidServerUrl(String url) {
-        if (url == null) {
-            return false;
-        }
-
+        if (url == null) return false;
         Uri uri = Uri.parse(url.trim());
         String scheme = uri.getScheme();
         return uri.getHost() != null && ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme));
-    }
-
-    private void showAppLockOptions() {
-        if (!hasPin()) {
-            promptSetPin();
-            return;
-        }
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.app_lock_title)
-                .setItems(new CharSequence[]{getString(R.string.lock_now), getString(R.string.change_pin), getString(R.string.remove_pin)}, (dialog, which) -> {
-                    if (which == 0) promptUnlock();
-                    if (which == 1) promptVerifyPin(() -> promptSetPin());
-                    if (which == 2) promptVerifyPin(() -> {
-                        preferences.edit().remove(PREF_PIN_SALT).remove(PREF_PIN_HASH).apply();
-                        Toast.makeText(this, R.string.pin_removed, Toast.LENGTH_SHORT).show();
-                    });
-                })
-                .show();
-    }
-
-    private void promptSetPin() {
-        promptForPin(getString(R.string.new_pin), pin -> {
-            if (!pin.matches("\\d{4,}")) {
-                Toast.makeText(this, R.string.invalid_pin, Toast.LENGTH_SHORT).show();
-                return;
-            }
-            String salt = randomHex(16);
-            preferences.edit()
-                    .putString(PREF_PIN_SALT, salt)
-                    .putString(PREF_PIN_HASH, hashPin(salt, pin))
-                    .apply();
-            Toast.makeText(this, R.string.pin_enabled, Toast.LENGTH_SHORT).show();
-        });
-    }
-
-    private void promptUnlock() {
-        webView.loadUrl("about:blank");
-        promptVerifyPin(this::loadConfiguredServer);
-    }
-
-    private void promptVerifyPin(Runnable onSuccess) {
-        promptForPin(getString(R.string.enter_pin), pin -> {
-            if (!verifyPin(pin)) {
-                Toast.makeText(this, R.string.wrong_pin, Toast.LENGTH_SHORT).show();
-                promptVerifyPin(onSuccess);
-                return;
-            }
-            onSuccess.run();
-        });
-    }
-
-    private void promptForPin(String title, PinCallback callback) {
-        EditText input = new EditText(this);
-        input.setSingleLine(true);
-        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-        input.setPadding(dp(16), dp(8), dp(16), dp(8));
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle(title)
-                .setView(input)
-                .setPositiveButton(R.string.save, null)
-                .setNegativeButton(R.string.cancel, null)
-                .create();
-        dialog.setOnShowListener(activeDialog -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
-            callback.onPin(input.getText().toString());
-            dialog.dismiss();
-        }));
-        dialog.show();
-    }
-
-    private boolean hasPin() {
-        return preferences.contains(PREF_PIN_SALT) && preferences.contains(PREF_PIN_HASH);
-    }
-
-    private boolean verifyPin(String pin) {
-        String salt = preferences.getString(PREF_PIN_SALT, "");
-        String expected = preferences.getString(PREF_PIN_HASH, "");
-        return expected.equals(hashPin(salt, pin));
-    }
-
-    private String hashPin(String salt, String pin) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest((salt + ":" + pin).getBytes(StandardCharsets.UTF_8));
-            StringBuilder builder = new StringBuilder();
-            for (byte value : hash) builder.append(String.format("%02x", value));
-            return builder.toString();
-        } catch (Exception exception) {
-            return "";
-        }
-    }
-
-    private String randomHex(int bytes) {
-        byte[] values = new byte[bytes];
-        new SecureRandom().nextBytes(values);
-        StringBuilder builder = new StringBuilder();
-        for (byte value : values) builder.append(String.format("%02x", value));
-        return builder.toString();
     }
 
     private void handleShareIntent(Intent intent) {
@@ -373,21 +219,6 @@ public class MainActivity extends Activity {
     private void injectPendingShare() {
         if (pendingShareBody == null || shareAttempted || webView == null) return;
         shareAttempted = true;
-        if (MODE_LOCAL.equals(currentMode)) {
-            String js = "if(window.DiVaultLocal){window.DiVaultLocal.addSharedNote("
-                    + jsString(pendingShareTitle) + "," + jsString(pendingShareBody) + ");'ok'}else{'fail'}";
-            webView.evaluateJavascript(js, result -> {
-                if (result != null && result.contains("ok")) {
-                    Toast.makeText(this, R.string.shared_note_saved, Toast.LENGTH_SHORT).show();
-                } else {
-                    Toast.makeText(this, R.string.shared_note_failed, Toast.LENGTH_LONG).show();
-                }
-                pendingShareTitle = null;
-                pendingShareBody = null;
-                shareAttempted = false;
-            });
-            return;
-        }
         String js = "(async function(){try{"
                 + "const c=Object.fromEntries(document.cookie.split('; ').filter(Boolean).map(x=>x.split('=')));"
                 + "const csrf=decodeURIComponent(c.divault_csrf||c.qv_csrf||'');"
@@ -412,28 +243,10 @@ public class MainActivity extends Activity {
     }
 
     private void showOfflinePage() {
-        String html = "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
-                + "<style>body{font-family:sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#f9fafb}.card{padding:28px;max-width:420px}button{padding:12px 16px;margin:6px;border:0;border-radius:10px;background:#4f46e5;color:white;font-weight:700}</style>"
-                + "</head><body><div class='card'><h1>" + getString(R.string.server_unavailable) + "</h1><p>DiVault could not reach the saved server.</p><button onclick='DiVaultAndroid.localVault()'>" + getString(R.string.open_local_vault) + "</button><button onclick='DiVaultAndroid.retry()'>" + getString(R.string.retry) + "</button><button onclick='DiVaultAndroid.changeServer()'>" + getString(R.string.change_server) + "</button></div></body></html>";
+        String html = "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1,viewport-fit=cover'>"
+                + "<style>body{font-family:Inter,system-ui,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;background:#f6f7fb;color:#111827}.card{padding:28px;max-width:420px}button{padding:12px 16px;margin:6px;border:0;border-radius:8px;background:#635bff;color:white;font-weight:800}h1{letter-spacing:-.04em}.muted{color:#64748b}</style>"
+                + "</head><body><div class='card'><h1>" + getString(R.string.server_unavailable) + "</h1><p class='muted'>DiVault could not reach the saved server.</p><button onclick='DiVaultAndroid.retry()'>" + getString(R.string.retry) + "</button><button onclick='DiVaultAndroid.changeServer()'>" + getString(R.string.change_server) + "</button></div></body></html>";
         webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null);
-    }
-
-    private void loadLocalVault() {
-        currentMode = MODE_LOCAL;
-        preferences.edit().putString(PREF_LAST_MODE, MODE_LOCAL).apply();
-        webView.loadDataWithBaseURL("https://local.divault/", localVaultHtml(), "text/html", "UTF-8", null);
-    }
-
-    private String localVaultHtml() {
-        return """
-                <!doctype html>
-                <html><head><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>DiVault Local</title>
-                <style>
-                :root{color-scheme:light;--bg:#f6f7fb;--surface:#ffffff;--surface-card:rgba(255,255,255,.9);--surface-soft:#eef2ff;--text:#111827;--text-soft:#334155;--muted:#64748b;--border:#e2e8f0;--border-soft:rgba(226,232,240,.9);--field-bg:#ffffff;--input-focus:#c7d2fe;--primary:#635bff;--primary-dark:#4f46e5;--danger:#dc2626;--danger-bg:#fee2e2;--secret-bg:#fef3c7;--secret-text:#92400e;--button-bg:#e2e8f0;--button-text:#0f172a;--radius-md:6px;--radius-lg:8px;--radius-xl:10px;--shadow:0 1px 0 rgba(15,23,42,.05)}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 18% 12%,rgba(99,91,255,.12),transparent 32%),linear-gradient(135deg,var(--bg),#eef2ff);color:var(--text);font:16px/1.5 Inter,system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh}.wrap{padding:18px;max-width:820px;margin:0 auto}.hero{display:flex;align-items:center;gap:12px;margin-bottom:16px}.logo{width:46px;height:46px;border-radius:var(--radius-lg);background:#020202;display:grid;place-items:center;color:#fff;font-weight:900;letter-spacing:-.06em;box-shadow:0 14px 34px rgba(15,23,42,.18)}.title{font-family:Inter,system-ui,sans-serif;font-size:24px;font-weight:850;letter-spacing:-.04em}.muted{color:var(--muted);font-size:13px}.card{background:var(--surface-card);border:1px solid var(--border-soft);border-radius:var(--radius-xl);padding:14px;box-shadow:0 20px 60px rgba(15,23,42,.08),var(--shadow)}.backup{border:1px solid #fde68a;background:var(--secret-bg);color:var(--secret-text);border-radius:var(--radius-lg);padding:12px;margin:8px 0 12px;font-size:13px;font-weight:700;line-height:1.45}.bar{display:flex;gap:8px;margin:12px 0;position:sticky;top:0;background:linear-gradient(var(--surface),rgba(255,255,255,.9));padding:10px 0;z-index:2}button,input,textarea{font:inherit}button{border:0;border-radius:var(--radius-lg);background:var(--button-bg);color:var(--button-text);font-weight:800;padding:11px 13px}button.primary{background:var(--primary);color:#fff}button.danger{background:var(--danger-bg);color:var(--danger)}input,textarea{width:100%;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--field-bg);color:var(--text);padding:12px 14px;margin:6px 0;outline:none}input:focus,textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--input-focus)}textarea{min-height:180px;resize:vertical}.note{padding:14px;border:1px solid var(--border-soft);border-radius:var(--radius-lg);margin:9px 0;background:var(--surface)}.note h3{margin:0 0 6px;color:var(--text);font-size:13px;letter-spacing:.02em;text-transform:uppercase}.note p{margin:0;color:var(--text-soft);white-space:pre-wrap}.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.hidden{display:none}.empty{padding:28px;text-align:center;color:var(--muted)}
-                </style></head><body><main class="wrap"><section class="hero"><div class="logo">DV</div><div><div class="title">DiVault Local</div><div class="muted">Standalone notes stored on this device.</div></div></section><section class="card"><div class="backup">Local notes stay only on this Android device. Use Export before uninstalling, switching phones, or clearing app data.</div><div class="bar"><button class="primary" onclick="newNote()">New note</button><button onclick="exportNotes()">Export</button><button onclick="importNotes()">Import</button><input id="file" class="hidden" type="file" accept="application/json" onchange="readImport(event)"></div><input id="search" placeholder="Search local notes" oninput="render()"><div id="editor" class="hidden"><input id="title" placeholder="Title"><textarea id="body" placeholder="Write a secure local note..."></textarea><div class="row"><button class="primary" onclick="saveNote()">Save</button><button onclick="closeEditor()">Cancel</button><button id="deleteBtn" class="danger hidden" onclick="deleteNote()">Delete</button></div></div><div id="list"></div></section></main><script>
-                const KEY='divault.local.notes.v1';let notes=JSON.parse(localStorage.getItem(KEY)||'[]');let active=null;const $=id=>document.getElementById(id);function persist(){localStorage.setItem(KEY,JSON.stringify(notes));}function esc(s){return String(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}function render(){const q=$('search').value.toLowerCase();const filtered=notes.filter(n=>(n.title+' '+n.body).toLowerCase().includes(q)).sort((a,b)=>b.updated-a.updated);$('list').innerHTML=filtered.length?filtered.map(n=>`<article class="note" onclick="editNote('${n.id}')"><h3>${esc(n.title||'Untitled')}</h3><p>${esc((n.body||'').slice(0,220))}</p><div class="muted">${new Date(n.updated).toLocaleString()}</div></article>`).join(''):'<div class="empty">No local notes yet.</div>';}function newNote(){active=null;$('title').value='';$('body').value='';$('deleteBtn').classList.add('hidden');$('editor').classList.remove('hidden');$('title').focus();}function editNote(id){const n=notes.find(x=>x.id===id);if(!n)return;active=id;$('title').value=n.title||'';$('body').value=n.body||'';$('deleteBtn').classList.remove('hidden');$('editor').classList.remove('hidden');}function saveNote(){const now=Date.now();const data={id:active||String(now)+Math.random().toString(16).slice(2),title:$('title').value.trim()||'Untitled',body:$('body').value,updated:now};notes=active?notes.map(n=>n.id===active?data:n):[data,...notes];persist();closeEditor();render();}function deleteNote(){if(!active||!confirm('Delete this local note?'))return;notes=notes.filter(n=>n.id!==active);persist();closeEditor();render();}function closeEditor(){$('editor').classList.add('hidden');active=null;}function exportNotes(){const blob=new Blob([JSON.stringify({exported_at:new Date().toISOString(),notes},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='divault-local-notes.json';a.click();URL.revokeObjectURL(a.href);}function importNotes(){$('file').click();}function readImport(e){const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const data=JSON.parse(r.result);const incoming=Array.isArray(data)?data:data.notes;if(!Array.isArray(incoming))throw new Error();const byId=new Map(notes.map(n=>[n.id,n]));incoming.forEach(n=>{if(n&&n.id)byId.set(n.id,{id:String(n.id),title:String(n.title||'Untitled'),body:String(n.body||''),updated:Number(n.updated)||Date.now()});});notes=[...byId.values()];persist();render();alert('Import complete.');}catch(_){alert('Import failed. Choose a DiVault local JSON export.');}};r.readAsText(f);}window.DiVaultLocal={addSharedNote(title,body){notes=[{id:String(Date.now())+Math.random().toString(16).slice(2),title:title||'Shared to DiVault',body:body||'',updated:Date.now()},...notes];persist();render();}};render();
-                </script></body></html>
-                """;
     }
 
     @Override
@@ -450,9 +263,7 @@ public class MainActivity extends Activity {
                 ArrayList<Uri> uris = new ArrayList<>();
                 for (int index = 0; index < data.getClipData().getItemCount(); index++) {
                     Uri uri = data.getClipData().getItemAt(index).getUri();
-                    if (uri != null) {
-                        uris.add(uri);
-                    }
+                    if (uri != null) uris.add(uri);
                 }
                 results = uris.toArray(new Uri[0]);
             } else if (data.getData() != null) {
@@ -479,18 +290,12 @@ public class MainActivity extends Activity {
             fileUploadCallback.onReceiveValue(null);
             fileUploadCallback = null;
         }
-        if (webView != null) {
-            webView.destroy();
-        }
+        if (webView != null) webView.destroy();
         super.onDestroy();
     }
 
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density);
-    }
-
-    private interface PinCallback {
-        void onPin(String pin);
     }
 
     private final class Bridge {
@@ -502,11 +307,6 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void changeServer() {
             runOnUiThread(() -> promptForServerUrl());
-        }
-
-        @JavascriptInterface
-        public void localVault() {
-            runOnUiThread(() -> loadLocalVault());
         }
     }
 }

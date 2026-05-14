@@ -50,9 +50,9 @@ Download the signed Android APK from GitHub Releases:
 DiVault_*_android-signed.apk
 ```
 
-The Android app opens a standalone local vault by default. Local notes stay on that Android device and can be exported/imported as JSON. Use the `Server` button when you want to connect to a Docker/Pangolin DiVault server for shared synced data.
+The Android app is a fullscreen WebView client for your DiVault server. On first launch, enter your Docker/Pangolin DiVault URL, then Android uses that same synced server data as your browser and desktop clients.
 
-If you installed an older debug APK, Android may reject the signed APK as an update because the signing certificate changed. Export any local notes first, uninstall the debug APK once, then install the signed APK. Future signed APK releases should update normally.
+If you installed an older debug APK, Android may reject the signed APK as an update because the signing certificate changed. Uninstall the debug APK once, then install the signed APK. Future signed APK releases should update normally.
 
 ## Features
 
@@ -62,7 +62,7 @@ If you installed an older debug APK, Android may reject the signed APK as an upd
 - Sensitive values are hidden and encrypted
 - Multi-user login with roles and optional 2FA
 - Browser PWA and Windows desktop app
-- Android WebView client scaffold
+- Fullscreen Android WebView client
 - Backup, export, import, and audit log
 - AI review-note REST API
 
@@ -214,15 +214,14 @@ Phones, Android wrappers, desktop wrappers, PWAs, and future native clients shou
 
 ## Android App
 
-The Android project is intentionally small and native:
+The Android project is intentionally small and server-connected:
 
-- First launch opens the local standalone vault.
-- Local notes are stored on-device and can be exported/imported as JSON.
-- The `Server` button opens a DiVault server URL for synced server-backed use.
-- The server URL is saved on the device.
-- Server mode opens DiVault in a WebView with JavaScript, DOM storage, and file uploads enabled.
+- First launch asks for your DiVault server URL.
+- The saved server URL is stored on the device.
+- DiVault opens fullscreen in a WebView with JavaScript, DOM storage, and file uploads enabled.
+- If the saved server is unavailable, Android shows retry and change-server actions.
+- Android share intents can send text into DiVault after you are signed in.
 - Back navigation goes back inside DiVault before closing the app.
-- `Local` returns to standalone local notes.
 
 Release APKs are signed with the project Android release key configured in GitHub Actions secrets. Debug APKs are for development only and may not update cleanly across machines.
 

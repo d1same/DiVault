@@ -45,6 +45,7 @@ final class App
         if ($method === 'POST' && $path === '/integrations/ai/review-notes') $this->createAiReviewNote();
 
         $user = $this->requireUser();
+        $this->applyRetentionPolicy();
         if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
             $this->requireCsrf();
         }
@@ -58,6 +59,8 @@ final class App
         if ($method === 'GET' && $path === '/sync/manifest') $this->syncManifest($user);
         if ($method === 'GET' && $path === '/sync/pull') $this->syncPull($user);
         if ($method === 'POST' && $path === '/sync/push') $this->syncPush($user);
+        if ($method === 'GET' && $path === '/retention-settings') $this->retentionSettings($user);
+        if ($method === 'POST' && $path === '/retention-settings') $this->saveRetentionSettings($user);
         if ($method === 'GET' && preg_match('#^/sync/files/(\d+)$#', $path, $m)) $this->downloadFile($user, (int)$m[1]);
         if ($method === 'GET' && $path === '/integrations/ai/status') $this->aiReviewStatus($user);
         if ($method === 'POST' && $path === '/integrations/ai/enable') $this->enableAiReviewApi($user);
@@ -417,6 +420,7 @@ final class App
 
         if ($current) {
             $this->db->prepare('INSERT INTO note_versions (note_id, user_id, title, body) VALUES (?, ?, ?, ?)')->execute([$id, (int)$user['id'], $current['title'], $current['body']]);
+            $this->pruneNoteVersions($id);
             $stmt = $this->db->prepare('UPDATE notes SET title=?, body=?, type=?, section=?, category_id=?, category=?, tags=?, client_id=?, pinned=?, archived=?, deleted=?, updated_at=CURRENT_TIMESTAMP WHERE id=?');
             $stmt->execute([$fields['title'], $fields['body'], $fields['type'], $fields['section'], $fields['category_id'], $fields['category'], $fields['tags'], $fields['client_id'], $fields['pinned'], $fields['archived'], $fields['deleted'], $id]);
             $this->db->prepare('DELETE FROM note_secrets WHERE note_id = ?')->execute([$id]);
@@ -716,6 +720,7 @@ final class App
             if ($id > 0) {
                 $old = $this->note($id);
                 $this->db->prepare('INSERT INTO note_versions (note_id, user_id, title, body) VALUES (?, ?, ?, ?)')->execute([$id, (int)$user['id'], $old['title'], $old['body']]);
+                $this->pruneNoteVersions($id);
                 $stmt = $this->db->prepare('UPDATE notes SET title=?, body=?, type=?, section=?, category_id=?, category=?, tags=?, client_id=?, pinned=?, archived=?, deleted=0, updated_at=CURRENT_TIMESTAMP WHERE id=?');
                 $stmt->execute([$title, $parsed['body'], $type, $section, $categoryId, $category, $tags, $clientId, $pinned, $archived, $id]);
                 $this->db->prepare('DELETE FROM note_secrets WHERE note_id = ?')->execute([$id]);
@@ -830,6 +835,26 @@ final class App
         $this->json(['enabled' => false]);
     }
 
+    private function retentionSettings(array $user): void
+    {
+        $this->requireAdmin($user);
+        $this->json(['settings' => $this->retentionPolicy()]);
+    }
+
+    private function saveRetentionSettings(array $user): void
+    {
+        $this->requireAdmin($user);
+        $data = $this->input();
+        $versionLimit = $this->boundedInt($data['version_limit'] ?? 3, 0, 100);
+        $trashDays = $this->boundedInt($data['trash_days'] ?? 30, 1, 3650);
+        $this->setAppSetting('version_limit', (string)$versionLimit);
+        $this->setAppSetting('trash_days', (string)$trashDays);
+        $this->pruneAllNoteVersions();
+        $this->pruneTrashByPolicy();
+        $this->audit((int)$user['id'], 'settings.retention_updated', 'settings', null);
+        $this->json(['ok' => true, 'settings' => $this->retentionPolicy()]);
+    }
+
     private function deleteNote(array $user, int $id): void
     {
         $this->requireEditor($user);
@@ -849,6 +874,7 @@ final class App
         $this->db->beginTransaction();
         try {
             $this->db->prepare('INSERT INTO note_versions (note_id, user_id, title, body) VALUES (?, ?, ?, ?)')->execute([$noteId, (int)$user['id'], $note['title'], $note['body']]);
+            $this->pruneNoteVersions($noteId);
             $this->db->prepare('UPDATE notes SET title = ?, body = ?, deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$version['title'], $version['body'], $noteId]);
             $this->audit((int)$user['id'], 'note.version_restored', 'note', $noteId);
             $this->db->commit();
@@ -902,6 +928,66 @@ final class App
         $this->db->exec('DELETE FROM notes WHERE deleted = 1');
         $this->audit((int)$user['id'], 'note.trash_emptied', 'note', null);
         $this->json(['ok' => true]);
+    }
+
+    private function retentionPolicy(): array
+    {
+        return [
+            'version_limit' => $this->settingInt('version_limit', 3, 0, 100),
+            'trash_days' => $this->settingInt('trash_days', 30, 1, 3650),
+        ];
+    }
+
+    private function settingInt(string $key, int $default, int $min, int $max): int
+    {
+        $stmt = $this->db->prepare('SELECT value FROM app_settings WHERE key = ?');
+        $stmt->execute([$key]);
+        $value = $stmt->fetchColumn();
+        return $this->boundedInt($value === false ? $default : $value, $min, $max);
+    }
+
+    private function setAppSetting(string $key, string $value): void
+    {
+        $stmt = $this->db->prepare('INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP');
+        $stmt->execute([$key, $value]);
+    }
+
+    private function boundedInt($value, int $min, int $max): int
+    {
+        $number = filter_var($value, FILTER_VALIDATE_INT);
+        if ($number === false) throw new RuntimeException('Retention settings must be whole numbers');
+        return max($min, min($max, (int)$number));
+    }
+
+    private function applyRetentionPolicy(): void
+    {
+        $this->pruneTrashByPolicy();
+    }
+
+    private function pruneTrashByPolicy(): void
+    {
+        $days = $this->settingInt('trash_days', 30, 1, 3650);
+        $stmt = $this->db->prepare('DELETE FROM notes WHERE deleted = 1 AND updated_at < datetime(\'now\', ?)');
+        $stmt->execute(['-' . $days . ' days']);
+    }
+
+    private function pruneNoteVersions(int $noteId): void
+    {
+        $limit = $this->settingInt('version_limit', 3, 0, 100);
+        if ($limit === 0) {
+            $this->db->prepare('DELETE FROM note_versions WHERE note_id = ?')->execute([$noteId]);
+            return;
+        }
+        $stmt = $this->db->prepare('DELETE FROM note_versions WHERE note_id = ? AND id NOT IN (SELECT id FROM note_versions WHERE note_id = ? ORDER BY id DESC LIMIT ?)');
+        $stmt->execute([$noteId, $noteId, $limit]);
+    }
+
+    private function pruneAllNoteVersions(): void
+    {
+        $ids = $this->db->query('SELECT DISTINCT note_id FROM note_versions')->fetchAll(PDO::FETCH_COLUMN);
+        foreach ($ids as $id) {
+            $this->pruneNoteVersions((int)$id);
+        }
     }
 
     private function uploadFile(array $user, int $noteId): void

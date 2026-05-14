@@ -831,6 +831,8 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
 .version-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
 .version-preview { display: grid; gap: 8px; margin: 8px 0; padding: 10px; border: 1px solid var(--border-soft); border-radius: 0; background: var(--surface); }
 .version-preview .note-read-body { padding: 8px; border: 1px solid var(--border-soft); border-radius: 0; background: var(--field-bg); }
+.settings-inline-input { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; text-align: right; color: var(--text); }
+.settings-inline-input input { width: 64px; min-height: 34px; padding: 6px 8px; text-align: center; }
 .secret-row, .file-row, .audit-row, .user-row {
   display: flex;
   justify-content: space-between;

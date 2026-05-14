@@ -171,6 +171,11 @@ CREATE TABLE IF NOT EXISTS sync_applied_mutations (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(client_id, mutation_id)
 );
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 SQL);
         $this->addColumnIfMissing('users', 'avatar_data', 'TEXT');
         $this->addColumnIfMissing('notes', 'category_id', 'INTEGER REFERENCES asset_categories(id) ON DELETE SET NULL');

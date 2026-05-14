@@ -1,28 +1,26 @@
 # DiVault Android
 
-Android client for `com.divault.mobile`. It supports a standalone local vault on-device and an optional server-connected WebView mode for syncing with an existing DiVault server.
+Android client for `com.divault.mobile`. It is a fullscreen WebView wrapper for an existing DiVault server, so Android uses the same synced notes as your browser and desktop clients.
 
 ## Open
 
 Open the `android/` directory in Android Studio and let Gradle sync with Android Gradle Plugin 8.7.3. Use Android Studio's bundled JDK 17 or newer.
 
-## Local Vault
-
-The app opens the local vault by default. Local notes are stored on the Android device, can be searched and edited offline, and can be exported/imported as JSON.
-
-Export local notes before uninstalling the app, switching phones, or clearing app data. Android removes local app storage during uninstall.
-
 ## Server URL
 
-Tap `Server` and enter the same server address you use for DiVault in the browser or desktop client, such as `https://notes.example.com`.
+On first launch, enter the same server address you use for DiVault in the browser or desktop client, such as `https://notes.example.com`.
 
-The app stores that URL on the device. Tap `Server` again to switch to another server. Tap `Local` to return to the standalone local vault.
+The app stores that URL on the device. If the saved server is unavailable, the retry screen lets you retry or change the saved server URL.
 
 ## Uploads And Sync
 
-In server mode, file uploads are sent to the configured DiVault server. Sync uses that same DiVault server URL, so changing the URL changes both uploads and sync.
+File uploads, notes, login, and sync all happen through the configured DiVault server. Changing the saved URL changes the server the Android app uses.
 
-The standalone local vault does not automatically sync with the server. Use JSON export/import for local backups, or use server mode when you need shared data across devices.
+The Android app is online-first. Use the browser PWA cache for limited offline viewing, but create/edit workflows should be treated as server-backed.
+
+## Sharing Into DiVault
+
+Android share intents can send text into DiVault after you are signed in to the configured server.
 
 ## Release Signing
 
@@ -33,4 +31,4 @@ GitHub release builds publish `DiVault_*_android-signed.apk`, signed with the pr
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 
-If a device has an older debug APK installed, Android may reject the signed APK update because the certificates differ. Export local notes, uninstall the debug APK once, then install the signed APK. Future signed APK versions should update normally.
+If a device has an older debug APK installed, Android may reject the signed APK update because the certificates differ. Uninstall the debug APK once, then install the signed APK. Future signed APK versions should update normally.

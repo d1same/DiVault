@@ -2508,12 +2508,13 @@ async function openSettings() {
   state.editingNote = false;
   renderApp();
   const isAdmin = canAdminSettings();
-  const [users, audit, sessions, backups, syncManifest, aiIntegration, desktopServer] = await Promise.all([
+  const [users, audit, sessions, backups, syncManifest, retentionSettings, aiIntegration, desktopServer] = await Promise.all([
     isAdmin ? api('/users').catch(() => ({ users: [] })) : { users: [] },
     isAdmin ? api('/audit').catch(() => ({ audit: [] })) : { audit: [] },
     api('/sessions').catch(() => ({ sessions: [] })),
     isAdmin ? api('/backups').catch(() => ({ backups: [], pending_restore: false })) : { backups: [], pending_restore: false },
     api('/sync/manifest').catch(() => null),
+    isAdmin ? api('/retention-settings').catch(() => ({ settings: { version_limit: 3, trash_days: 30 } })) : { settings: { version_limit: 3, trash_days: 30 } },
     isAdmin ? api('/integrations/ai/status').catch(() => null) : null,
     state.desktop && isAdmin ? api('/desktop/server').catch(() => ({ server_url: '' })) : { server_url: '' }
   ]);
@@ -2525,6 +2526,8 @@ async function openSettings() {
   const avatarPreview = state.user.avatar_data ? `<img class="profile-avatar" src="${esc(state.user.avatar_data)}" alt="Current avatar">` : `<img class="profile-avatar" src="/assets/divault-logo.svg" alt="DiVault">`;
   const removeAvatarButton = state.user.avatar_data ? '<button class="btn ghost" id="removeAvatarBtn" type="button">Remove avatar</button>' : '';
   const desktopServerCard = state.desktop && isAdmin ? `<div class="card stack"><h3>Desktop mode</h3><p class="muted small">Choose whether this desktop app starts its standalone local vault or opens a hosted DiVault server on launch.</p><div class="inline-note-blocks"><div class="inline-note ${desktopServer.server_url ? '' : 'active'}"><b>Standalone vault</b><span>Private local vault on this computer.</span></div><div class="inline-note ${desktopServer.server_url ? 'active' : ''}"><b>Connect to server</b><span>${desktopServer.server_url ? esc(desktopServer.server_url) : 'Use one shared server for desktop, Android, and browser sync.'}</span></div></div><form id="desktopServerSettingsForm" class="stack"><label class="field"><span>Server URL</span><input name="server_url" type="url" value="${esc(desktopServer.server_url || '')}" placeholder="https://notes.example.com" autocomplete="url" required></label><div class="btn-row"><button class="btn primary">Use server on next launch</button>${desktopServer.server_url ? '<button class="btn ghost" id="desktopStandaloneBtn" type="button">Use standalone on next launch</button>' : ''}</div></form><p class="small muted">Restart DiVault after changing desktop mode. Server mode opens that URL directly; standalone mode starts the bundled local vault.</p></div>` : '';
+  const retention = retentionSettings?.settings || { version_limit: 3, trash_days: 30 };
+  const retentionCard = isAdmin ? `<div class="card stack"><h3>Recycle bin and version policy</h3><form id="retentionSettingsForm" class="stack"><div class="file-row"><span>File version policy<br><span class="small muted">Keep only the most recent note versions.</span></span><span class="settings-inline-input">Keep only <input name="version_limit" type="number" min="0" max="100" step="1" value="${esc(retention.version_limit ?? 3)}" inputmode="numeric"> most recent versions</span></div><div class="file-row"><span>Empty recycle bin contents older than<br><span class="small muted">Uses the date a note was moved to the recycle bin.</span></span><span class="settings-inline-input"><input name="trash_days" type="number" min="1" max="3650" step="1" value="${esc(retention.trash_days ?? 30)}" inputmode="numeric"> days</span></div><button class="btn primary">Save policy</button></form></div>` : '';
   state.settingsHtml = `
     <div class="editor-grid">
       <div class="stack">
@@ -2532,6 +2535,7 @@ async function openSettings() {
         <div class="card stack"><h3>Change password</h3><form id="passwordForm" class="stack"><input name="current_password" type="password" placeholder="Current password" autocomplete="current-password"><input name="new_password" type="password" minlength="10" placeholder="New password" autocomplete="new-password"><input name="new_password_confirm" type="password" minlength="10" placeholder="Type new password again" autocomplete="new-password"><button class="btn">Update password</button></form></div>
         <div class="card stack"><h3>Appearance</h3><p class="muted small">Pick a comfortable preset. These include light, dark, neutral, cooler, and color-safe options.</p>${themePresetPicker()}</div>
         ${desktopServerCard}
+        ${retentionCard}
         <div class="card stack"><h3>Sync</h3>${renderSyncSettings(syncManifest)}</div>
         ${isAdmin ? `<div class="card stack"><h3>AI review API</h3>${renderAiIntegrationSettings(aiIntegration)}</div>` : ''}
         <div class="card stack"><h3>Emergency offline snapshot</h3><p class="muted small">Create or update an encrypted localStorage snapshot for offline access. Keep the passphrase; it is required to unlock the snapshot.</p><button class="btn" id="emergencySnapshotBtn">Create/update encrypted snapshot</button><p class="small muted">Pending offline notes remain unencrypted local-only drafts until synced.</p></div>
@@ -2618,6 +2622,14 @@ async function openSettings() {
       toast('Standalone mode saved. Restart DiVault to use it.');
       openSettings();
     }, 'Desktop mode update failed');
+  });
+  modal.querySelector('#retentionSettingsForm')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    await runUserAction(async () => {
+      const result = await api('/retention-settings', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+      toast(`Policy saved: ${result.settings.version_limit} versions, ${result.settings.trash_days} days`);
+      openSettings();
+    }, 'Retention policy update failed');
   });
   modal.querySelector('#emergencySnapshotBtn').addEventListener('click', async () => {
     const passphrase = await promptDialog({ title: 'Emergency snapshot passphrase', message: 'Create a passphrase. Keep it safe; it is required for offline unlock.', type: 'password', required: true });
