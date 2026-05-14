@@ -50,7 +50,7 @@ Download the signed Android APK from GitHub Releases:
 DiVault_*_android-signed.apk
 ```
 
-The Android app is a fullscreen WebView client for your DiVault server. On first launch, enter your Docker/Pangolin DiVault URL, then Android uses that same synced server data as your browser and desktop clients.
+The Android app is a server-connected WebView client for your DiVault server. On first launch, enter your Docker/Pangolin DiVault URL, then Android uses that same synced server data as your browser and desktop clients.
 
 If you installed an older debug APK, Android may reject the signed APK as an update because the signing certificate changed. Uninstall the debug APK once, then install the signed APK. Future signed APK releases should update normally.
 
@@ -62,7 +62,7 @@ If you installed an older debug APK, Android may reject the signed APK as an upd
 - Sensitive values are hidden and encrypted
 - Multi-user login with roles and optional 2FA
 - Browser PWA and Windows desktop app
-- Fullscreen Android WebView client
+- Android WebView client
 - Backup, export, import, and audit log
 - AI review-note REST API
 
@@ -218,10 +218,11 @@ The Android project is intentionally small and server-connected:
 
 - First launch asks for your DiVault server URL.
 - The saved server URL is stored on the device.
-- DiVault opens fullscreen in a WebView with JavaScript, DOM storage, and file uploads enabled.
+- DiVault opens in a WebView with JavaScript, DOM storage, and file uploads enabled.
+- Android status and navigation bars stay visible, so system controls remain accessible.
 - If the saved server is unavailable, Android shows retry and change-server actions.
 - Android share intents can send text into DiVault after you are signed in.
-- Back navigation goes back inside DiVault before closing the app.
+- Android system Back sends DiVault to the background instead of navigating WebView history.
 
 Release APKs are signed with the project Android release key configured in GitHub Actions secrets. Debug APKs are for development only and may not update cleanly across machines.
 

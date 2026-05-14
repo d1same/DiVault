@@ -1,6 +1,8 @@
 # DiVault Android
 
-Android client for `com.divault.mobile`. It is a fullscreen WebView wrapper for an existing DiVault server, so Android uses the same synced notes as your browser and desktop clients.
+Android client for `com.divault.mobile`. It is a WebView wrapper for an existing DiVault server, so Android uses the same synced notes as your browser and desktop clients.
+
+The app keeps Android status and navigation bars visible, so phone system controls remain accessible and DiVault does not render behind them.
 
 ## Open
 
@@ -21,6 +23,10 @@ The Android app is online-first. Use the browser PWA cache for limited offline v
 ## Sharing Into DiVault
 
 Android share intents can send text into DiVault after you are signed in to the configured server.
+
+## System Back Button
+
+Android's system Back button sends DiVault to the background instead of stepping backward through WebView history. Use DiVault's in-app Back controls when you want to leave an editor or return to the note list.
 
 ## Release Signing
 
