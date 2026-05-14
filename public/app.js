@@ -1,4 +1,4 @@
-const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: 'notes:all', panel: '', settingsHtml: '', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', hideNoteDetails: localStorage.getItem('divault_hide_note_details') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
+const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: 'notes:all', panel: '', settingsHtml: '', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
 const app = document.querySelector('#app');
 
 function applyTheme() {
@@ -321,6 +321,8 @@ const icon = name => ({
   , note: '<svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM14 3v5h4M9 13h6M9 17h6"/></svg>'
   , cards: '<svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg>'
   , list: '<svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>'
+  , sort: '<svg viewBox="0 0 24 24"><path d="M7 4v14M7 18l-3-3M7 18l3-3M17 20V6M17 6l-3 3M17 6l3 3"/></svg>'
+  , focus: '<svg viewBox="0 0 24 24"><path d="M8 4H4v4M16 4h4v4M8 20H4v-4M16 20h4v-4M9 9h6v6H9z"/></svg>'
   , logout: '<svg viewBox="0 0 24 24"><path d="M10 5H5v14h5M14 8l4 4-4 4M18 12H9"/></svg>'
   , clearFormat: '<svg viewBox="0 0 24 24"><path d="M5 5h12M11 5 7 19M15 19H5M15 11l5 5M20 11l-5 5"/></svg>'
   , key: '<svg viewBox="0 0 24 24"><path d="M14 10a5 5 0 1 1-2-4l7 7-2 2-2-2-2 2-2-2M7 10h.01"/></svg>'
@@ -756,15 +758,6 @@ function rememberRecentNote(note) {
   localStorage.setItem('divault_recent_notes', JSON.stringify(next));
 }
 
-function hasSearchToken(token) {
-  return String(state.q || '').split(/\s+/).includes(token);
-}
-
-function toggleSearchToken(token) {
-  const parts = String(state.q || '').split(/\s+/).filter(Boolean);
-  state.q = parts.includes(token) ? parts.filter(part => part !== token).join(' ') : [...parts, token].join(' ');
-}
-
 function noteView() {
   if (state.section === 'notes:archive') return 'archive';
   if (state.section === 'notes:trash') return 'trash';
@@ -814,7 +807,7 @@ function renderApp() {
 function renderFilterBar(panelOpen) {
   if (panelOpen) return '';
   if (isNoteSection(state.section)) {
-    return `<div class="filterbar notes-filter"><div class="filter-actions filter-actions-left">${state.notes.length && !state.selectionMode ? '<button class="btn" type="button" id="startSelectNotes">Select</button>' : ''}${renderNoteLayoutToggle()}${renderNoteSortSelect()}${renderNotePrivacyToggle()}${state.section === 'notes:trash' ? '<button class="btn danger" id="emptyTrashBtn" type="button">Empty recycle bin</button>' : ''}</div><input class="search" id="search" aria-label="Search notes. Press Q to focus search." title="Press Q to search" placeholder="Search ${esc(sectionLabel(state.section))}...  Q" value="${esc(state.q)}"><div class="filter-actions note-filter-actions">${renderNoteFilterChips()}<button class="btn ghost icon-only-btn" id="shortcutsHelpBtn" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">?</button><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick notes" title="Quick notes (K)">${toolIcon('quick', 'Quick notes')}</button><button class="btn primary icon-only-btn action-fab" id="newBtn" aria-label="New note" title="New full note (N or +)">+</button></div></div>`;
+    return `<div class="filterbar notes-filter"><div class="filter-actions filter-actions-left">${state.notes.length && !state.selectionMode ? '<button class="btn" type="button" id="startSelectNotes">Select</button>' : ''}${renderNoteLayoutToggle()}${renderNoteSortSelect()}${state.section === 'notes:trash' ? '<button class="btn danger" id="emptyTrashBtn" type="button">Empty recycle bin</button>' : ''}</div><input class="search" id="search" aria-label="Search notes. Press Q to focus search." title="Press Q to search" placeholder="Search ${esc(sectionLabel(state.section))}...  Q" value="${esc(state.q)}"><div class="filter-actions note-filter-actions"><button class="btn ghost icon-only-btn" id="shortcutsHelpBtn" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">?</button><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick notes" title="Quick notes (K)">${toolIcon('quick', 'Quick notes')}</button><button class="btn primary icon-only-btn action-fab" id="newBtn" aria-label="New note" title="New full note (N or +)">+</button></div></div>`;
   }
   return `<div class="filterbar"><select id="clientFilter" aria-label="Organization"><option value="">All organizations</option>${state.clients.map(c => `<option value="${c.id}" ${String(c.id) === String(state.clientId) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select><input class="search" id="search" aria-label="Search. Press Q to focus search." title="Press Q to search" placeholder="Search ${esc(sectionLabel(state.section))}...  Q" value="${esc(state.q)}"><label class="checkline"><input type="checkbox" id="includeArchive" ${state.includeArchive ? 'checked' : ''}> Include archive</label></div>`;
 }
@@ -858,7 +851,7 @@ function renderMainContent() {
 
 function renderNavGroups() {
   const recent = recentNotes();
-  const recentGroup = recent.length ? `<div class="nav-group recent-nav"><div class="nav-heading">Recent</div>${recent.map(note => `<button data-recent-note="${note.id}" title="${esc(state.hideNoteDetails ? 'Recent note' : note.title)}"><span class="nav-icon">${icon('note')}</span><span class="nav-label">${state.hideNoteDetails ? 'Hidden note' : esc(note.title)}</span></button>`).join('')}</div>` : '';
+  const recentGroup = recent.length ? `<div class="nav-group recent-nav"><div class="nav-heading">Recent</div>${recent.map(note => `<button data-recent-note="${note.id}" title="${esc(note.title)}"><span class="nav-icon">${icon('note')}</span><span class="nav-label">${esc(note.title)}</span></button>`).join('')}</div>` : '';
   const noteGroups = `${recentGroup}<div class="nav-group"><div class="nav-heading">Categories<button class="mini-add" id="addCategoryBtn" type="button" aria-label="Manage note categories">Manage</button></div>
     ${renderNavButton('notes:all', 'All', state.counts['notes:all'] ?? 0, '')}
     ${renderNavButton('notes:quick', 'Quick notes', state.counts['notes:quick'] ?? 0, '')}
@@ -913,7 +906,7 @@ function activeClientName() {
 function renderNotes() {
   if (!state.notes.length) return `<div class="empty card"><h2>No notes here yet</h2><p>Tap + to capture a quick thought, photo, file, password, checklist, or client note.</p></div>`;
   const titleOnly = Boolean(state.active) && currentNoteLayout() === 'list';
-  const privateList = state.hideNoteDetails || (state.noteFocus && Boolean(state.active));
+  const privateList = state.noteFocus && Boolean(state.active);
   return state.notes.map(note => `<article class="card note-card ${titleOnly ? 'title-only' : ''} ${state.active && Number(state.active.id) === Number(note.id) ? 'active' : ''} ${state.selectedNoteIds.has(Number(note.id)) ? 'selected' : ''}" draggable="true" data-note-id="${note.id}" data-open-card="${note.id}" tabindex="0" role="button" aria-label="Open ${esc(note.title || 'note')}">
     <div class="note-title-row">${state.selectionMode ? `<label class="note-select"><input type="checkbox" data-select-note="${note.id}" ${state.selectedNoteIds.has(Number(note.id)) ? 'checked' : ''} aria-label="Select ${esc(note.title)}"><span class="sr-only">Select ${esc(note.title)}</span></label>` : ''}<button data-open="${note.id}"><h2>${privateList && !(state.active && Number(state.active.id) === Number(note.id)) ? 'Hidden note' : `${Number(note.pinned) ? '★ ' : ''}${esc(note.title)}`}</h2></button></div>
     ${titleOnly || privateList ? '' : `
@@ -939,24 +932,14 @@ function renderNoteLayoutToggle() {
 }
 
 function renderNoteSortSelect() {
-  return `<select id="noteSort" aria-label="Sort notes" title="Sort notes">
+  return `<label class="note-sort-control" title="Sort notes">${toolIcon('sort', 'Sort notes')}<select id="noteSort" aria-label="Sort notes">
     <option value="updated_desc" ${currentNoteSort() === 'updated_desc' ? 'selected' : ''}>Updated newest</option>
     <option value="updated_asc" ${currentNoteSort() === 'updated_asc' ? 'selected' : ''}>Updated oldest</option>
     <option value="created_desc" ${currentNoteSort() === 'created_desc' ? 'selected' : ''}>Created newest</option>
     <option value="created_asc" ${currentNoteSort() === 'created_asc' ? 'selected' : ''}>Created oldest</option>
     <option value="title_asc" ${currentNoteSort() === 'title_asc' ? 'selected' : ''}>A to Z</option>
     <option value="title_desc" ${currentNoteSort() === 'title_desc' ? 'selected' : ''}>Z to A</option>
-  </select>`;
-}
-
-function renderNotePrivacyToggle() {
-  return `<button class="btn ghost privacy-toggle ${state.hideNoteDetails ? 'active' : ''}" id="notePrivacyToggle" type="button" title="Hide note details in the list">${state.hideNoteDetails ? 'Private' : 'Details'}</button>`;
-}
-
-function renderNoteFilterChips() {
-  return `<div class="filter-chips" aria-label="Quick note filters">
-    ${['has:file', 'has:secret', 'has:code'].map(token => `<button class="filter-chip ${hasSearchToken(token) ? 'active' : ''}" type="button" data-filter-token="${token}">${token.replace('has:', '')}</button>`).join('')}
-  </div>`;
+  </select></label>`;
 }
 
 function showShortcutsHelp() {
@@ -1004,8 +987,7 @@ function renderInlineEditor() {
   const quickMode = ((!id && state.newNoteMode === 'quick') || (id && state.section === 'notes:quick' && !note.category_id)) && !hasInlineSecrets;
   if (!editing) return renderReadOnlyNote(note, visibleBody, id);
   const focusLabel = state.noteFocus ? 'Show notes' : 'Focus';
-  const pinLabel = Number(note.pinned) ? 'Unpin' : 'Pin';
-  const editorActions = `<div class="btn-row note-top-actions"><button class="btn ghost icon-only-btn" data-editor-command="undo" type="button" aria-label="Undo" title="Undo">${toolIcon('undo', 'Undo')}</button><button class="btn ghost icon-only-btn" data-editor-command="redo" type="button" aria-label="Redo">${toolIcon('redo', 'Redo')}</button><button type="button" class="btn ghost" id="focusNoteBtn">${focusLabel}</button>${id ? `<button type="button" class="btn ghost" id="pinNoteBtn">${pinLabel}</button><button type="button" class="btn" id="archiveNote">Archive</button><button type="button" class="btn danger" id="deleteNote">Recycle</button>` : ''}<button class="btn primary" form="noteForm" type="submit">Save</button><button class="btn ghost" data-close-inline type="button">Back</button></div>`;
+  const editorActions = `<div class="btn-row note-top-actions"><button class="btn ghost icon-only-btn" data-editor-command="undo" type="button" aria-label="Undo" title="Undo">${toolIcon('undo', 'Undo')}</button><button class="btn ghost icon-only-btn" data-editor-command="redo" type="button" aria-label="Redo" title="Redo">${toolIcon('redo', 'Redo')}</button><button type="button" class="btn ghost icon-only-btn ${state.noteFocus ? 'active' : ''}" id="focusNoteBtn" aria-label="${focusLabel}" title="${focusLabel}">${toolIcon('focus', focusLabel)}</button>${id ? `<button type="button" class="btn" id="archiveNote">Archive</button><button type="button" class="btn danger" id="deleteNote">Recycle</button>` : ''}<button class="btn primary" form="noteForm" type="submit">Save</button><button class="btn ghost" data-close-inline type="button">Back</button></div>`;
   return `<section class="editor-panel note-editor-panel inline-note-editor" data-inline-editor data-editing="1" data-is-new-note="${id ? '0' : '1'}">
     <div class="topbar editor-topbar terminal-topbar"><div><p class="terminal-path">divault ~/notes/${id || (quickMode ? 'quick' : 'new')}</p><h2>${quickMode ? 'Quick note' : (id ? 'Edit note' : 'New note')}</h2></div>${editorActions}</div>
     <form id="noteForm" class="note-editor-form">
@@ -1042,9 +1024,8 @@ function renderReadOnlyNote(note, visibleBody, id) {
   const recycleIcon = `<button class="btn danger icon-only-btn" data-trash-note-readonly type="button" aria-label="Recycle" title="Recycle">${toolIcon('trash', 'Recycle')}</button>`;
   const recoveryActions = Number(note.deleted) ? '<button class="btn primary" data-restore-note type="button">Restore</button><button class="btn danger" data-permanent-delete-note type="button">Delete forever</button>' : (Number(note.archived) ? '<button class="btn primary" data-restore-note type="button">Restore</button>' : `<button class="btn" data-archive-note-readonly type="button">Archive</button>${recycleIcon}`);
   const focusLabel = state.noteFocus ? 'Show notes' : 'Focus';
-  const pinLabel = Number(note.pinned) ? 'Unpin' : 'Pin';
   return `<section class="editor-panel note-editor-panel inline-note-editor readonly-note" data-inline-editor data-editing="0">
-    <div class="topbar editor-topbar terminal-topbar"><div><p class="terminal-path">divault ~/notes/${id}</p><h2>${esc(note.title || 'Untitled note')}</h2></div><div class="btn-row"><button class="btn ghost" id="focusNoteBtn" type="button">${focusLabel}</button><button class="btn ghost" id="pinNoteBtn" type="button">${pinLabel}</button>${recoveryActions}<button class="btn primary" data-edit-note type="button">Edit</button><button class="btn ghost" data-close-inline type="button">Back</button></div></div>
+    <div class="topbar editor-topbar terminal-topbar"><div><p class="terminal-path">divault ~/notes/${id}</p><h2>${esc(note.title || 'Untitled note')}</h2></div><div class="btn-row"><button class="btn ghost icon-only-btn ${state.noteFocus ? 'active' : ''}" id="focusNoteBtn" type="button" aria-label="${focusLabel}" title="${focusLabel}">${toolIcon('focus', focusLabel)}</button>${recoveryActions}<button class="btn primary" data-edit-note type="button">Edit</button><button class="btn ghost" data-close-inline type="button">Back</button></div></div>
     <div class="note-read-body">${renderReadableBlocks(parseBodyToBlocks(visibleBody))}</div>
     ${renderNoteExtras(visibleBody, note.title || 'note', state.activeExtra || {})}
     ${renderVersionPanel(id)}
@@ -1184,19 +1165,6 @@ function bindApp() {
     await loadCurrentSection();
     renderApp();
   });
-  document.querySelector('#notePrivacyToggle')?.addEventListener('click', () => {
-    state.hideNoteDetails = !state.hideNoteDetails;
-    localStorage.setItem('divault_hide_note_details', state.hideNoteDetails ? '1' : '0');
-    renderApp();
-  });
-  document.querySelectorAll('[data-filter-token]').forEach(btn => btn.addEventListener('click', async () => {
-    toggleSearchToken(btn.dataset.filterToken);
-    state.active = null;
-    state.activeExtra = null;
-    state.editingNote = false;
-    await loadCurrentSection();
-    renderApp();
-  }));
   document.querySelector('#shortcutsHelpBtn')?.addEventListener('click', showShortcutsHelp);
   document.querySelector('#syncBtn')?.addEventListener('click', () => refreshFromServer({ quiet: false }));
   document.querySelector('#emptyTrashBtn')?.addEventListener('click', async () => {
@@ -2033,11 +2001,19 @@ async function closeInlineEditor() {
   bindContentActions();
 }
 
+function toggleNoteFocus() {
+  state.noteFocus = !state.noteFocus;
+  localStorage.setItem('divault_note_focus', state.noteFocus ? '1' : '0');
+  document.querySelector('#contentArea').innerHTML = renderNotesWorkspace();
+  bindContentActions();
+}
+
 function bindInlineEditor(modal) {
   if (!modal || modal.dataset.bound === '1') return;
   modal.dataset.bound = '1';
   const id = state.active?.id ? Number(state.active.id) : null;
   modal.querySelector('[data-close-inline]')?.addEventListener('click', closeInlineEditor);
+  modal.querySelector('#focusNoteBtn')?.addEventListener('click', toggleNoteFocus);
   modal.querySelector('[data-edit-note]')?.addEventListener('click', () => {
     state.editingNote = true;
     document.querySelector('#contentArea').innerHTML = renderNotesWorkspace();
@@ -2093,13 +2069,6 @@ function bindInlineEditor(modal) {
   modal.querySelectorAll('[data-add-block]').forEach(btn => btn.addEventListener('click', () => addEditorBlock(modal, btn.dataset.addBlock)));
   modal.querySelectorAll('[data-format]').forEach(btn => btn.addEventListener('click', () => applyInlineFormat(modal, btn.dataset.format)));
   modal.querySelectorAll('[data-editor-command]').forEach(btn => btn.addEventListener('click', () => applyInlineFormat(modal, btn.dataset.editorCommand)));
-  modal.querySelector('#focusNoteBtn')?.addEventListener('click', () => {
-    state.noteFocus = !state.noteFocus;
-    localStorage.setItem('divault_note_focus', state.noteFocus ? '1' : '0');
-    document.querySelector('#contentArea').innerHTML = renderNotesWorkspace();
-    bindContentActions();
-  });
-  modal.querySelector('#pinNoteBtn')?.addEventListener('click', () => pinCurrentNote(id));
   if (!simpleBody) bindCodeBlockActions(modal);
   modal.querySelector('#noteForm').addEventListener('submit', async e => {
     e.preventDefault();
@@ -2251,23 +2220,6 @@ async function archiveCurrentNote(id) {
     await api(`/notes/${id}/archive`, { method: 'POST', body: {} });
     await reloadNotesAfterAction('Archived', { advanceFromId: id });
   }, 'Archive failed');
-}
-
-async function pinCurrentNote(id) {
-  if (!id) return;
-  if (hasUnsavedEditorChanges()) return toast('Save changes before pinning');
-  await runUserAction(async () => {
-    const details = state.activeExtra?.note?.id ? state.activeExtra : await api('/notes/' + id);
-    const note = details.note;
-    const pinned = Number(note.pinned) ? 0 : 1;
-    await api('/notes', { method: 'POST', body: { id, title: note.title, body: note.body, type: note.type, section: 'All', category_id: note.category_id || '', category: note.category || '', tags: note.tags || '', client_id: note.client_id || '', pinned } });
-    toast(pinned ? 'Pinned' : 'Unpinned');
-    state.notes = (await loadNotes()).notes;
-    state.active = state.notes.find(n => Number(n.id) === Number(id)) || null;
-    state.activeExtra = await api('/notes/' + id);
-    document.querySelector('#contentArea').innerHTML = renderNotesWorkspace();
-    bindContentActions();
-  }, 'Pin failed');
 }
 
 async function trashCurrentNote(id) {
