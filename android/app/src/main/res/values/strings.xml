@@ -3,6 +3,7 @@
     <string name="app_name">DiVault</string>
     <string name="clear_server_url">Clear server URL</string>
     <string name="refresh">Refresh</string>
+    <string name="local">Local</string>
     <string name="server">Server</string>
     <string name="lock">Lock</string>
     <string name="server_url_title">Server URL</string>
@@ -23,6 +24,7 @@
     <string name="server_unavailable">Server unavailable</string>
     <string name="retry">Retry</string>
     <string name="change_server">Change server</string>
+    <string name="open_local_vault">Open local vault</string>
     <string name="shared_note_saved">Shared note saved to DiVault.</string>
     <string name="shared_note_failed">Sign in to DiVault, then share again.</string>
     <string name="save">Save</string>
