@@ -121,7 +121,7 @@ jobs:
       - name: Build Android signed release APK
         working-directory: android
         env:
-          DIVAULT_ANDROID_KEYSTORE: release-keystore.jks
+          DIVAULT_ANDROID_KEYSTORE: ../release-keystore.jks
           DIVAULT_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           DIVAULT_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           DIVAULT_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
