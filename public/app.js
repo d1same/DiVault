@@ -747,17 +747,6 @@ function currentNoteSort() {
   return allowed.has(state.noteSort) ? state.noteSort : 'updated_desc';
 }
 
-function recentNotes() {
-  try { return JSON.parse(localStorage.getItem('divault_recent_notes') || '[]').filter(item => item?.id); }
-  catch { return []; }
-}
-
-function rememberRecentNote(note) {
-  if (!note?.id) return;
-  const next = [{ id: Number(note.id), title: note.title || 'Untitled note' }, ...recentNotes().filter(item => Number(item.id) !== Number(note.id))].slice(0, 5);
-  localStorage.setItem('divault_recent_notes', JSON.stringify(next));
-}
-
 function noteView() {
   if (state.section === 'notes:archive') return 'archive';
   if (state.section === 'notes:trash') return 'trash';
@@ -850,9 +839,7 @@ function renderMainContent() {
 }
 
 function renderNavGroups() {
-  const recent = recentNotes();
-  const recentGroup = recent.length ? `<div class="nav-group recent-nav"><div class="nav-heading">Recent</div>${recent.map(note => `<button data-recent-note="${note.id}" title="${esc(note.title)}"><span class="nav-icon">${icon('note')}</span><span class="nav-label">${esc(note.title)}</span></button>`).join('')}</div>` : '';
-  const noteGroups = `${recentGroup}<div class="nav-group"><div class="nav-heading">Categories<button class="mini-add" id="addCategoryBtn" type="button" aria-label="Manage note categories">Manage</button></div>
+  const noteGroups = `<div class="nav-group"><div class="nav-heading">Categories<button class="mini-add" id="addCategoryBtn" type="button" aria-label="Manage note categories">Manage</button></div>
     ${renderNavButton('notes:all', 'All', state.counts['notes:all'] ?? 0, '')}
     ${renderNavButton('notes:quick', 'Quick notes', state.counts['notes:quick'] ?? 0, '')}
     ${renderCategoryTree(null, 'notes')}
@@ -1137,12 +1124,6 @@ function bindApp() {
   }, 'Logout failed'));
   document.querySelector('#settingsBtn')?.addEventListener('click', () => { toggleMobileMenu(false); openSettings(); });
   document.querySelector('#addCategoryBtn')?.addEventListener('click', () => { toggleMobileMenu(false); openCategoryManager(); });
-  document.querySelectorAll('[data-recent-note]').forEach(btn => btn.addEventListener('click', async () => {
-    if (!await confirmDiscardUnsaved()) return;
-    state.panel = '';
-    toggleMobileMenu(false);
-    openEditor(Number(btn.dataset.recentNote));
-  }));
   document.querySelector('#clientFilter')?.addEventListener('change', async e => {
     state.clientId = e.target.value;
     localStorage.setItem('divault_client_id', state.clientId);
@@ -1978,7 +1959,6 @@ async function openEditor(id = null, options = {}) {
   state.activeExtra = id ? await api('/notes/' + id) : { files: [], secrets: [], versions: [] };
   if (id && state.activeExtra?.note) {
     state.active = state.notes.find(n => Number(n.id) === id) || state.activeExtra.note;
-    rememberRecentNote(state.activeExtra.note);
   }
   state.editingNote = !id;
   const content = document.querySelector('#contentArea');
