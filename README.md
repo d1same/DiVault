@@ -4,6 +4,10 @@ DiVault is a simple self-hosted vault for notes, client docs, files, scripts, an
 
 Run it with Docker, open it in your browser, install the Windows desktop app, or build the Android client. Phones, desktops, and mobile apps can all use the same DiVault server so your notes stay in one place.
 
+![DiVault desktop showcase](docs/screenshots/desktop-showcase.png)
+
+![DiVault Android showcase](docs/screenshots/android-showcase.png)
+
 ## Quick Install
 
 ### Docker Compose
@@ -40,9 +44,15 @@ The desktop app works standalone and includes its own local runtime. For syncing
 
 ### Android
 
-The Android client lives in `android/`. Open that folder in Android Studio, build the app, then enter your DiVault server URL on first launch.
+Download the signed Android APK from GitHub Releases:
 
-Android is a server-connected client. It does not create a separate local vault; login, uploads, and sync all use the configured DiVault server.
+```text
+DiVault_*_android-signed.apk
+```
+
+The Android app opens a standalone local vault by default. Local notes stay on that Android device and can be exported/imported as JSON. Use the `Server` button when you want to connect to a Docker/Pangolin DiVault server for shared synced data.
+
+If you installed an older debug APK, Android may reject the signed APK as an update because the signing certificate changed. Export any local notes first, uninstall the debug APK once, then install the signed APK. Future signed APK releases should update normally.
 
 ## Features
 
@@ -206,13 +216,26 @@ Phones, Android wrappers, desktop wrappers, PWAs, and future native clients shou
 
 The Android project is intentionally small and native:
 
-- First launch asks for the DiVault server URL.
-- The URL is saved on the device.
-- The app opens DiVault in a WebView with JavaScript, DOM storage, and file uploads enabled.
+- First launch opens the local standalone vault.
+- Local notes are stored on-device and can be exported/imported as JSON.
+- The `Server` button opens a DiVault server URL for synced server-backed use.
+- The server URL is saved on the device.
+- Server mode opens DiVault in a WebView with JavaScript, DOM storage, and file uploads enabled.
 - Back navigation goes back inside DiVault before closing the app.
-- `Clear server URL` lets you switch servers.
+- `Local` returns to standalone local notes.
+
+Release APKs are signed with the project Android release key configured in GitHub Actions secrets. Debug APKs are for development only and may not update cleanly across machines.
 
 Build it by opening `android/` in Android Studio. Android Studio should use JDK 17 or newer for Android Gradle Plugin 8.7.3.
+
+## Desktop Signing
+
+Windows desktop installers are built and smoke-tested automatically for each release. They are not Authenticode-signed yet, so Windows SmartScreen may show a warning until a real code-signing certificate is added to the release workflow.
+
+The release workflow already supports optional Authenticode signing. Add these GitHub Actions secrets when a Windows code-signing certificate is available:
+
+- `WINDOWS_CERT_BASE64`
+- `WINDOWS_CERT_PASSWORD`
 
 ## AI Review Notes API
 
