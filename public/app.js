@@ -1,4 +1,4 @@
-const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: 'notes:all', panel: '', settingsHtml: '', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
+const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: 'notes:all', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
 const app = document.querySelector('#app');
 
 function applyTheme() {
@@ -2569,6 +2569,19 @@ function bindCategoryPanel(panel) {
 
 function bindSettingsPanel(panel) {
   if (!panel) return;
+  panel.querySelectorAll('[data-settings-tab]').forEach(btn => btn.addEventListener('click', () => {
+    const tab = btn.dataset.settingsTab;
+    state.settingsTab = tab;
+    localStorage.setItem('divault_settings_tab', tab);
+    panel.querySelectorAll('[data-settings-tab]').forEach(item => {
+      const active = item.dataset.settingsTab === tab;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-selected', String(active));
+    });
+    panel.querySelectorAll('[data-settings-panel]').forEach(section => {
+      section.classList.toggle('hidden', section.dataset.settingsPanel !== tab);
+    });
+  }));
 }
 
 async function openAssetEditor(id = null) {
@@ -2676,26 +2689,49 @@ async function openSettings() {
   const androidClientCard = window.DiVaultAndroid ? `<div class="card stack"><h3>Android app</h3><p class="muted small">Change the saved Android server URL without waiting for the offline screen.</p><div class="file-row"><span>Current server<br><span class="small muted">${esc(location.origin)}</span></span><button class="btn" id="androidChangeServerBtn" type="button">Change server</button></div></div>` : '';
   const retention = retentionSettings?.settings || { version_limit: 3, trash_days: 30 };
   const retentionCard = isAdmin ? `<div class="card stack"><h3>Recycle bin and version policy</h3><form id="retentionSettingsForm" class="stack"><div class="file-row"><span>File version policy<br><span class="small muted">Keep only the most recent note versions.</span></span><span class="settings-inline-input">Keep only <input name="version_limit" type="number" min="0" max="100" step="1" value="${esc(retention.version_limit ?? 3)}" inputmode="numeric"> most recent versions</span></div><div class="file-row"><span>Empty recycle bin contents older than<br><span class="small muted">Uses the date a note was moved to the recycle bin.</span></span><span class="settings-inline-input"><input name="trash_days" type="number" min="1" max="3650" step="1" value="${esc(retention.trash_days ?? 30)}" inputmode="numeric"> days</span></div><button class="btn primary">Save policy</button></form></div>` : '';
+  const deviceCards = `${desktopServerCard}${androidClientCard}`;
+  const settingsTabs = [
+    ['account', 'Account'],
+    ['sync', 'Sync'],
+    ['security', 'Security'],
+    ...(isAdmin ? [['data', 'Data'], ['people', 'People']] : [])
+  ];
+  if (!settingsTabs.some(([key]) => key === state.settingsTab)) state.settingsTab = settingsTabs[0][0];
+  const settingsTabButtons = settingsTabs.map(([key, label]) => `<button class="btn ghost settings-tab ${state.settingsTab === key ? 'active' : ''}" type="button" role="tab" aria-selected="${state.settingsTab === key ? 'true' : 'false'}" data-settings-tab="${key}">${label}</button>`).join('');
   state.settingsHtml = `
-    <div class="editor-grid">
-      <div class="stack">
-        <div class="card stack"><h3>Mini profile</h3><div class="profile-row">${avatarPreview}<div><b>${esc(state.user.name)}</b><p class="small muted">${esc(state.user.email)} · ${esc(state.user.role)}</p></div></div><form id="profileForm" class="stack"><label class="field"><span>Name</span><input name="name" value="${esc(state.user.name)}" autocomplete="name"></label><label class="field"><span>Avatar</span><div class="avatar-controls"><input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">${removeAvatarButton}</div></label><input type="hidden" name="avatar_data" value="${esc(state.user.avatar_data || '')}"><button class="btn primary">Save profile</button></form></div>
-        <div class="card stack"><h3>Change password</h3><form id="passwordForm" class="stack"><input name="current_password" type="password" placeholder="Current password" autocomplete="current-password"><input name="new_password" type="password" minlength="10" placeholder="New password" autocomplete="new-password"><input name="new_password_confirm" type="password" minlength="10" placeholder="Type new password again" autocomplete="new-password"><button class="btn">Update password</button></form></div>
-        <div class="card stack"><h3>Appearance</h3><p class="muted small">Pick a comfortable preset. These include light, dark, neutral, cooler, and color-safe options.</p>${themePresetPicker()}</div>
-        ${desktopServerCard}
-        ${androidClientCard}
-        ${retentionCard}
-        <div class="card stack"><h3>Sync</h3>${renderSyncSettings(syncManifest)}</div>
-        ${isAdmin ? `<div class="card stack"><h3>AI review API</h3>${renderAiIntegrationSettings(aiIntegration)}</div>` : ''}
-        <div class="card stack"><h3>Emergency offline snapshot</h3><p class="muted small">Create or update an encrypted localStorage snapshot for offline access. Keep the passphrase; it is required to unlock the snapshot.</p><button class="btn" id="emergencySnapshotBtn">Create/update encrypted snapshot</button><p class="small muted">Pending offline notes remain unencrypted local-only drafts until synced.</p></div>
-        <div class="card stack"><h3>Two-factor authentication</h3><p class="muted small">Use an authenticator app. Save recovery codes somewhere safe.</p><div class="btn-row"><button class="btn" id="start2fa">Start 2FA setup</button><button class="btn" id="regenRecovery">New recovery codes</button></div><div id="twofa"></div></div>
-        ${adminDataCards}
-        <div class="card"><h3>Passkeys / biometrics</h3><p class="muted small">The database table and UI are ready. Full WebAuthn enrollment/login should be completed after the final Pangolin HTTPS domain is known, because passkeys are bound to the relying-party domain.</p></div>
-      </div>
-      <aside class="stack">
-        ${adminSidebarCards}
-        <div class="card"><h3>Sessions</h3>${groupedSessionsHtml(sessions.sessions)}</div>
-      </aside>
+    <div class="settings-shell">
+      <div class="settings-tabs" role="tablist" aria-label="Settings sections">${settingsTabButtons}</div>
+      <section class="settings-tab-panel ${state.settingsTab === 'account' ? '' : 'hidden'}" data-settings-panel="account" role="tabpanel">
+        <div class="editor-grid settings-grid">
+          <div class="stack">
+            <div class="card stack"><h3>Mini profile</h3><div class="profile-row">${avatarPreview}<div><b>${esc(state.user.name)}</b><p class="small muted">${esc(state.user.email)} · ${esc(state.user.role)}</p></div></div><form id="profileForm" class="stack"><label class="field"><span>Name</span><input name="name" value="${esc(state.user.name)}" autocomplete="name"></label><label class="field"><span>Avatar</span><div class="avatar-controls"><input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">${removeAvatarButton}</div></label><input type="hidden" name="avatar_data" value="${esc(state.user.avatar_data || '')}"><button class="btn primary">Save profile</button></form></div>
+            <div class="card stack"><h3>Change password</h3><form id="passwordForm" class="stack"><input name="current_password" type="password" placeholder="Current password" autocomplete="current-password"><input name="new_password" type="password" minlength="10" placeholder="New password" autocomplete="new-password"><input name="new_password_confirm" type="password" minlength="10" placeholder="Type new password again" autocomplete="new-password"><button class="btn">Update password</button></form></div>
+            <div class="card stack"><h3>Appearance</h3><p class="muted small">Pick a comfortable preset. These include light, dark, neutral, cooler, and color-safe options.</p>${themePresetPicker()}</div>
+          </div>
+          <aside class="stack"><div class="card"><h3>Sessions</h3>${groupedSessionsHtml(sessions.sessions)}</div></aside>
+        </div>
+      </section>
+      <section class="settings-tab-panel ${state.settingsTab === 'sync' ? '' : 'hidden'}" data-settings-panel="sync" role="tabpanel">
+        <div class="stack">
+          <div class="card stack"><h3>Sync</h3>${renderSyncSettings(syncManifest)}</div>
+          ${deviceCards}
+        </div>
+      </section>
+      <section class="settings-tab-panel ${state.settingsTab === 'security' ? '' : 'hidden'}" data-settings-panel="security" role="tabpanel">
+        <div class="editor-grid settings-grid">
+          <div class="stack">
+            ${retentionCard}
+            ${isAdmin ? `<div class="card stack"><h3>AI review API</h3>${renderAiIntegrationSettings(aiIntegration)}</div>` : ''}
+          </div>
+          <aside class="stack">
+            <div class="card stack"><h3>Emergency offline snapshot</h3><p class="muted small">Create or update an encrypted localStorage snapshot for offline access. Keep the passphrase; it is required to unlock the snapshot.</p><button class="btn" id="emergencySnapshotBtn">Create/update encrypted snapshot</button><p class="small muted">Pending offline notes remain unencrypted local-only drafts until synced.</p></div>
+            <div class="card stack"><h3>Two-factor authentication</h3><p class="muted small">Use an authenticator app. Save recovery codes somewhere safe.</p><div class="btn-row"><button class="btn" id="start2fa">Start 2FA setup</button><button class="btn" id="regenRecovery">New recovery codes</button></div><div id="twofa"></div></div>
+            <div class="card"><h3>Passkeys / biometrics</h3><p class="muted small">The database table and UI are ready. Full WebAuthn enrollment/login should be completed after the final Pangolin HTTPS domain is known, because passkeys are bound to the relying-party domain.</p></div>
+          </aside>
+        </div>
+      </section>
+      ${isAdmin ? `<section class="settings-tab-panel ${state.settingsTab === 'data' ? '' : 'hidden'}" data-settings-panel="data" role="tabpanel"><div class="stack">${adminDataCards}</div></section>` : ''}
+      ${isAdmin ? `<section class="settings-tab-panel ${state.settingsTab === 'people' ? '' : 'hidden'}" data-settings-panel="people" role="tabpanel"><div class="editor-grid settings-grid"><div class="stack">${adminSidebarCards}</div></div></section>` : ''}
     </div>`;
   renderApp();
   const modal = document.querySelector('#settingsPanel');
@@ -2811,13 +2847,29 @@ async function openSettings() {
     await runUserAction(async () => {
       const result = await api('/integrations/ai/enable', { method: 'POST', body: {} });
       if (result.token) {
-        await navigator.clipboard.writeText(result.token);
-        await alertDialog({ title: 'AI API enabled', message: 'The API token was copied to your clipboard. Save it now; DiVault will not show this same token again.' });
+        await showAiApiToken(modal, result.token, result.endpoint);
       } else {
         toast('AI API is enabled by server config');
       }
-      openSettings();
     }, 'AI API enable failed');
+  });
+  modal.querySelector('#copyAiTokenBtn')?.addEventListener('click', async () => {
+    const currentPassword = await promptDialog({ title: 'Current password', message: 'Enter your current password to copy the saved local AI API token.', type: 'password', required: true });
+    if (currentPassword === null) return;
+    await runUserAction(async () => {
+      const result = await api('/integrations/ai/reveal', { method: 'POST', body: { current_password: currentPassword } });
+      await showAiApiToken(modal, result.token, result.endpoint);
+    }, 'AI token copy failed');
+  });
+  modal.querySelector('#testAiTokenBtn')?.addEventListener('click', async () => {
+    const preview = modal.querySelector('#aiApiTokenPreview');
+    const existing = preview && !preview.classList.contains('hidden') ? preview.value : '';
+    const token = existing || await promptDialog({ title: 'Test AI API token', message: 'Paste the AI API token to validate it against this server.', type: 'password', required: true });
+    if (token === null) return;
+    await runUserAction(async () => {
+      const result = await api('/integrations/ai/test', { method: 'POST', body: { token } });
+      toast(result.message || 'AI token validated');
+    }, 'AI token validation failed');
   });
   modal.querySelector('#disableAiApiBtn')?.addEventListener('click', async () => {
     if (!await confirmDialog({ title: 'Disable AI API', message: 'Disable the AI review API token for this DiVault instance?', confirmText: 'Disable' })) return;
@@ -2924,6 +2976,18 @@ async function openSettings() {
   }));
 }
 
+async function showAiApiToken(panel, token, endpoint) {
+  await navigator.clipboard.writeText(token);
+  const preview = panel.querySelector('#aiApiTokenPreview');
+  if (preview) {
+    preview.value = token;
+    preview.classList.remove('hidden');
+  }
+  const tokenStatus = panel.querySelector('#aiApiTokenStatus');
+  if (tokenStatus) tokenStatus.textContent = `Token copied. Endpoint: ${endpoint || `${location.origin}/api/integrations/ai/review-notes`}`;
+  toast('AI API token copied');
+}
+
 function renderSyncSettings(manifest) {
   const origin = location.origin;
   if (!manifest) return '<p class="small muted">Sync status is unavailable while this device is offline.</p>';
@@ -2940,11 +3004,13 @@ function renderAiIntegrationSettings(status) {
   if (!status) return '<p class="small muted">AI API status is unavailable.</p>';
   const endpoint = status.endpoint || `${location.origin}/api/integrations/ai/review-notes`;
   const enabled = status.enabled === true;
+  const localTokenControls = enabled && status.can_reveal ? '<button class="btn ghost" type="button" id="copyAiTokenBtn">Copy current token</button>' : '';
   return `<p class="muted small">Let an AI tool add review notes directly into DiVault.</p>
     <div class="file-row"><span>Status<br><span class="small muted">${enabled ? `Enabled (${esc(status.source || 'local')})` : 'Disabled'}</span></span><span class="pill">${enabled ? 'on' : 'off'}</span></div>
     <div class="file-row"><span>Endpoint<br><span class="small muted">${esc(endpoint)}</span></span><button class="btn ghost" type="button" id="copyAiEndpointBtn">Copy URL</button></div>
-    <div class="btn-row"><button class="btn" type="button" id="enableAiApiBtn">${enabled ? 'Regenerate token' : 'Enable API'}</button>${enabled && status.can_disable !== false ? '<button class="btn danger" type="button" id="disableAiApiBtn">Disable</button>' : ''}</div>
-    <p class="small muted">Use header <code>X-DiVault-AI-Token</code>. Save the token when you enable or regenerate it.</p>`;
+    <label class="field ai-token-preview"><span>Token</span><textarea id="aiApiTokenPreview" class="hidden" readonly spellcheck="false" aria-label="AI API token"></textarea><span id="aiApiTokenStatus" class="small muted">${enabled && status.can_reveal ? 'Copy requires your current password.' : 'Token is shown after enable/regenerate.'}</span></label>
+    <div class="btn-row"><button class="btn" type="button" id="enableAiApiBtn">${enabled ? 'Regenerate token' : 'Enable API'}</button>${localTokenControls}<button class="btn ghost" type="button" id="testAiTokenBtn">Test token</button>${enabled && status.can_disable !== false ? '<button class="btn danger" type="button" id="disableAiApiBtn">Disable</button>' : ''}</div>
+    <p class="small muted">Use header <code>X-DiVault-AI-Token</code> or <code>Authorization: Bearer TOKEN</code>. Environment-managed tokens cannot be revealed in Settings.</p>`;
 }
 
 function showRecoveryCodes(modal, codes) {

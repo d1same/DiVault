@@ -528,6 +528,10 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 .sync-pill.syncing { color: var(--primary-dark); background: var(--surface-soft); }
 .sync-pill.offline { color: var(--danger); background: var(--danger-bg); }
 .layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: 100vh; }
+@media (min-width: 821px) {
+  .layout { height: 100vh; min-height: 100vh; overflow: hidden; }
+  .main { max-height: 100vh; overflow-y: auto; }
+}
 body.sidebar-collapsed .layout { grid-template-columns: 56px minmax(0, 1fr); }
 .sidebar-backdrop { display: none; }
 .sidebar {
@@ -749,6 +753,13 @@ body.resizing-note-pane { cursor: col-resize; user-select: none; }
 .inline-note-editor.drop-ready { outline: 2px dashed var(--terminal-accent); outline-offset: -10px; background: color-mix(in srgb, var(--terminal-bg) 90%, var(--terminal-accent)); }
 .inline-panel { display: grid; gap: 14px; }
 .inline-panel.card { padding: 18px; }
+.settings-shell { display: grid; gap: 16px; }
+.settings-tabs { position: sticky; top: -18px; z-index: 5; display: flex; gap: 8px; flex-wrap: wrap; padding: 0 0 12px; background: var(--surface-card); border-bottom: 1px solid var(--border-soft); }
+.settings-tab { min-height: 38px; border-radius: var(--radius-xl); }
+.settings-tab.active { background: var(--primary); color: white; }
+.settings-tab-panel { display: grid; gap: 14px; }
+.settings-grid { grid-template-columns: minmax(0, 1fr) minmax(280px, 380px); align-items: start; }
+.ai-token-preview textarea { min-height: 96px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .78rem; word-break: break-all; }
 .profile-row { display: flex; align-items: center; gap: 12px; }
 .profile-avatar { width: 58px; height: 58px; border-radius: var(--radius-xl); object-fit: cover; background: var(--surface-soft); border: 1px solid var(--border); }
 .profile-avatar.initials { display: grid; place-items: center; color: var(--primary-dark); font-weight: 900; }
@@ -965,6 +976,9 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .main { padding: 14px; }
   .main, .inline-panel, .inline-panel.card, .card, .editor-grid, .inline-note-editor, .note-editor-form, .block-editor, .editor-block { max-width: 100%; overflow-x: hidden; }
   .inline-panel.card, .card { padding: 14px; }
+  .settings-tabs { top: -14px; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+  .settings-tabs::-webkit-scrollbar { display: none; }
+  .settings-grid { grid-template-columns: 1fr; }
   .profile-row { align-items: flex-start; }
   .profile-row > div { min-width: 0; }
   .profile-row b,

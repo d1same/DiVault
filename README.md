@@ -246,6 +246,8 @@ The release workflow already supports optional Authenticode signing. Add these G
 - `WINDOWS_CERT_BASE64`
 - `WINDOWS_CERT_PASSWORD`
 
+See `docs/windows-code-signing.md` for certificate conversion and SmartScreen notes.
+
 ## AI Review Notes API
 
 External AI tools can create review notes without browser cookies or CSRF by using a dedicated API token.
@@ -262,7 +264,7 @@ Windows desktop local API URL:
 http://127.0.0.1:3444/api/integrations/ai/review-notes
 ```
 
-The desktop app must be running for the local API to be available. In local desktop mode, open Settings, enable the AI review API, and save the token that DiVault copies to your clipboard. You can disable or regenerate it later from Settings.
+The desktop app must be running for the local API to be available. In local desktop mode, open Settings, enable the AI review API, and save the token that DiVault copies to your clipboard. Local tokens can be copied later from Settings after confirming your current password; environment-managed server tokens cannot be revealed in Settings. You can disable, regenerate, and test tokens from Settings.
 
 Configure the server:
 

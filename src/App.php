@@ -64,6 +64,8 @@ final class App
         if ($method === 'GET' && preg_match('#^/sync/files/(\d+)$#', $path, $m)) $this->downloadFile($user, (int)$m[1]);
         if ($method === 'GET' && $path === '/integrations/ai/status') $this->aiReviewStatus($user);
         if ($method === 'POST' && $path === '/integrations/ai/enable') $this->enableAiReviewApi($user);
+        if ($method === 'POST' && $path === '/integrations/ai/reveal') $this->revealAiReviewApiToken($user);
+        if ($method === 'POST' && $path === '/integrations/ai/test') $this->testAiReviewApiToken($user);
         if ($method === 'POST' && $path === '/integrations/ai/disable') $this->disableAiReviewApi($user);
         if ($method === 'GET' && $path === '/categories') $this->categories($user);
         if ($method === 'POST' && $path === '/categories') $this->createCategory($user);
@@ -816,6 +818,7 @@ final class App
             'enabled' => $enabled,
             'source' => $envToken !== '' ? 'environment' : ($fileToken !== '' ? 'local' : 'disabled'),
             'can_disable' => $envToken === '',
+            'can_reveal' => $envToken === '' && $fileToken !== '',
             'endpoint' => $this->origin() . '/api/integrations/ai/review-notes',
             'token_hint' => $enabled ? 'Use the token you saved when enabling the API. Regenerate if you need a new one.' : '',
         ]);
@@ -832,6 +835,29 @@ final class App
         file_put_contents($this->aiReviewTokenPath(), $token . "\n");
         $this->audit((int)$user['id'], 'integration.ai_review_enabled', 'integration', null);
         $this->json(['enabled' => true, 'source' => 'local', 'token' => $token, 'endpoint' => $this->origin() . '/api/integrations/ai/review-notes']);
+    }
+
+    private function revealAiReviewApiToken(array $user): void
+    {
+        $this->requireAdmin($user);
+        if (Config::aiReviewApiToken() !== '') throw new RuntimeException('Environment-managed AI API tokens cannot be revealed from Settings');
+        $data = $this->input();
+        $this->requireCurrentPassword($user, (string)($data['current_password'] ?? ''));
+        $token = $this->aiReviewFileToken();
+        if ($token === '') throw new RuntimeException('AI review API is not enabled');
+        $this->audit((int)$user['id'], 'integration.ai_review_token_revealed', 'integration', null);
+        $this->json(['token' => $token, 'endpoint' => $this->origin() . '/api/integrations/ai/review-notes']);
+    }
+
+    private function testAiReviewApiToken(array $user): void
+    {
+        $this->requireAdmin($user);
+        $data = $this->input();
+        $token = trim((string)($data['token'] ?? ''));
+        if ($token === '') throw new RuntimeException('Token required');
+        $configuredToken = $this->configuredAiReviewToken();
+        if ($configuredToken === '' || !hash_equals($configuredToken, $token)) throw new RuntimeException('AI review API token did not validate');
+        $this->json(['ok' => true, 'message' => 'AI review API token validated']);
     }
 
     private function disableAiReviewApi(array $user): void

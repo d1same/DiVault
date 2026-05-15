@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "DiVault",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "identifier": "com.divault.notes",
   "build": {
     "frontendDist": "../public"
@@ -25,6 +25,11 @@
     ],
     "windows": {
       "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "headerImage": "icons/installer-header.bmp",
+        "sidebarImage": "icons/installer-sidebar.bmp",
+        "uninstallerHeaderImage": "icons/installer-header.bmp",
         "installerHooks": "nsis-hooks.nsh"
       }
     }
