@@ -1829,7 +1829,8 @@ function sanitizeRichHtml(value) {
     }
     [...el.attributes].forEach(attr => {
       const keepHref = el.tagName === 'A' && attr.name === 'href' && /^(https?:|mailto:|tel:)/i.test(attr.value);
-      const keepStyle = el.tagName === 'SPAN' && attr.name === 'style' && /^color\s*:/i.test(attr.value);
+      const keepStyle = el.tagName === 'SPAN' && attr.name === 'style' && safeColorStyle(attr.value);
+      if (keepStyle) el.setAttribute('style', keepStyle);
       if (!keepHref && !keepStyle) el.removeAttribute(attr.name);
     });
     if (el.tagName === 'A') {
@@ -1838,6 +1839,11 @@ function sanitizeRichHtml(value) {
     }
   });
   return template.innerHTML;
+}
+
+function safeColorStyle(value) {
+  const match = String(value || '').match(/^\s*color\s*:\s*(#[0-9a-f]{3,8}|[a-z]{3,20}|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\))\s*;?\s*$/i);
+  return match ? `color: ${match[1]}` : '';
 }
 
 function serializeTableBlock(block) {

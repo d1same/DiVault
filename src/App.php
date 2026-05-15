@@ -14,6 +14,7 @@ final class App
 
     public function handle(): void
     {
+        $this->securityHeaders();
         $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) ?: '/';
         if (!str_starts_with($path, '/api')) {
             $shell = rtrim($_SERVER['DOCUMENT_ROOT'] ?? '', '/\\') . '/app.html';
@@ -23,6 +24,7 @@ final class App
         }
 
         header('Content-Type: application/json');
+        header('Cache-Control: no-store');
         try {
             $this->route($_SERVER['REQUEST_METHOD'], substr($path, 4) ?: '/');
         } catch (Throwable $e) {
@@ -253,7 +255,7 @@ final class App
         $credentials = $this->webauthnCredentials((int)$user['id']);
         if (!$credentials) throw new RuntimeException('No passkey is enrolled for this account');
         $challenge = $this->base64UrlEncode(random_bytes(32));
-        $this->saveSetting($this->webauthnChallengeKey('login', (int)$user['id']), $challenge);
+        $this->saveWebauthnChallenge('login', (int)$user['id'], $challenge);
         $this->json([
             'challenge' => $challenge,
             'timeout' => 60000,
@@ -276,7 +278,7 @@ final class App
             $this->audit(null, 'login.passkey_failed', 'user', null);
             throw new RuntimeException('Passkey verification failed');
         }
-        $challenge = $this->setting($this->webauthnChallengeKey('login', (int)$user['id']));
+        $challenge = $this->webauthnChallenge('login', (int)$user['id']);
         $this->deleteSetting($this->webauthnChallengeKey('login', (int)$user['id']));
         $this->verifyWebauthnAssertion($data, $challenge, (string)$user['public_key']);
         $this->db->prepare('UPDATE webauthn_credentials SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([(int)$user['credential_row_id']]);
@@ -1087,6 +1089,7 @@ final class App
         $stored = bin2hex(random_bytes(16)) . '-' . $name;
         $dest = Config::dir() . '/files/' . $stored;
         if (!move_uploaded_file($file['tmp_name'], $dest)) throw new RuntimeException('Upload failed');
+        @chmod($dest, 0600);
         $stmt = $this->db->prepare('INSERT INTO files (note_id, user_id, original_name, stored_name, mime, size) VALUES (?, ?, ?, ?, ?, ?)');
         $stmt->execute([$noteId, (int)$user['id'], $file['name'], $stored, $mime, (int)$file['size']]);
         $this->audit((int)$user['id'], 'file.uploaded', 'note', $noteId);
@@ -1099,13 +1102,15 @@ final class App
         $stmt->execute([$id]);
         $file = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$file) throw new RuntimeException('File not found');
+        $path = Config::dir() . '/files/' . basename((string)$file['stored_name']);
+        if (!is_file($path)) throw new RuntimeException('File not found');
         $this->audit((int)$user['id'], 'file.downloaded', 'file', $id);
         header_remove('Content-Type');
         header('Content-Type: ' . ($file['mime'] ?: 'application/octet-stream'));
         $mode = $inline && $this->isPreviewable($file['mime'] ?? '') ? 'inline' : 'attachment';
         header('Content-Disposition: ' . $this->contentDisposition($mode, $file['original_name']));
         header('X-Content-Type-Options: nosniff');
-        readfile(Config::dir() . '/files/' . $file['stored_name']);
+        readfile($path);
         exit;
     }
 
@@ -1225,7 +1230,7 @@ final class App
         $data = $this->input();
         $this->requireCurrentPassword($user, $data['current_password'] ?? '');
         $challenge = $this->base64UrlEncode(random_bytes(32));
-        $this->saveSetting($this->webauthnChallengeKey('register', (int)$user['id']), $challenge);
+        $this->saveWebauthnChallenge('register', (int)$user['id'], $challenge);
         $this->json([
             'challenge' => $challenge,
             'rp' => ['name' => 'DiVault'],
@@ -1246,7 +1251,7 @@ final class App
     private function webauthnRegister(array $user): void
     {
         $data = $this->input();
-        $challenge = $this->setting($this->webauthnChallengeKey('register', (int)$user['id']));
+        $challenge = $this->webauthnChallenge('register', (int)$user['id']);
         $this->deleteSetting($this->webauthnChallengeKey('register', (int)$user['id']));
         $this->verifyWebauthnClientData($data['clientDataJSON'] ?? '', 'webauthn.create', $challenge);
         $attestationAuthData = $this->base64UrlDecode((string)($data['authenticatorData'] ?? ''));
@@ -1545,6 +1550,7 @@ final class App
             $zip->close();
             throw new RuntimeException('Unable to restore database');
         }
+        @chmod($configDir . '/app.sqlite', 0600);
         $key = $zip->getFromName('keys/master.key');
         if ($key !== false) {
             if (file_put_contents($configDir . '/keys/master.key', $key) === false) {
@@ -1568,6 +1574,7 @@ final class App
                 $zip->close();
                 throw new RuntimeException('Unable to restore file attachment');
             }
+            @chmod($configDir . '/' . $entry, 0600);
         }
         $zip->close();
     }
@@ -1721,6 +1728,18 @@ final class App
         $this->setCsrfCookie();
     }
 
+    private function securityHeaders(): void
+    {
+        header('X-Content-Type-Options: nosniff');
+        header('X-Frame-Options: DENY');
+        header('Referrer-Policy: same-origin');
+        header('Permissions-Policy: camera=(self), microphone=(), geolocation=(), payment=(), usb=()');
+        header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self'; media-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
+        if ($this->isSecureRequest()) {
+            header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+        }
+    }
+
     private function webauthnCredentials(int $userId): array
     {
         $stmt = $this->db->prepare('SELECT id, label, credential_id, created_at, last_used_at FROM webauthn_credentials WHERE user_id = ? ORDER BY id DESC');
@@ -1771,6 +1790,20 @@ final class App
     private function webauthnChallengeKey(string $purpose, int $userId): string
     {
         return 'webauthn.' . $purpose . '.' . $userId;
+    }
+
+    private function saveWebauthnChallenge(string $purpose, int $userId, string $challenge): void
+    {
+        $this->saveSetting($this->webauthnChallengeKey($purpose, $userId), (string)json_encode(['challenge' => $challenge, 'expires_at' => time() + 300]));
+    }
+
+    private function webauthnChallenge(string $purpose, int $userId): string
+    {
+        $raw = $this->setting($this->webauthnChallengeKey($purpose, $userId));
+        $data = json_decode($raw, true);
+        if (!is_array($data)) return $raw;
+        if ((int)($data['expires_at'] ?? 0) < time()) return '';
+        return is_string($data['challenge'] ?? null) ? $data['challenge'] : '';
     }
 
     private function setting(string $key): string
@@ -1893,11 +1926,20 @@ final class App
 
     private function origin(): string
     {
-        if (empty($_SERVER['HTTP_HOST'])) return Config::appUrl() ?: 'http://localhost';
-        $forwardedProto = Config::trustProxy() ? strtolower(trim(explode(',', $_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')[0])) : '';
-        $scheme = in_array($forwardedProto, ['http', 'https'], true) ? $forwardedProto : ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http');
+        if (Config::appUrl() !== '') return Config::appUrl();
+        $scheme = $this->isSecureRequest() ? 'https' : 'http';
         $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        if (!preg_match('/^[A-Za-z0-9._:-]+$/', $host)) throw new RuntimeException('Invalid host header');
         return $scheme . '://' . $host;
+    }
+
+    private function isSecureRequest(): bool
+    {
+        if (Config::trustProxy()) {
+            $forwardedProto = strtolower(trim(explode(',', $_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')[0]));
+            if ($forwardedProto === 'https') return true;
+        }
+        return !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
     }
 
     private function ip(): string
