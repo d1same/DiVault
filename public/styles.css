@@ -380,6 +380,9 @@ button { cursor: pointer; }
 .auth-card .setup-theme .theme-presets { grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); }
 .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
 .brand-mark { width: 42px; height: 42px; border-radius: var(--radius-lg); background: transparent; display: grid; place-items: center; color: var(--bg); font: 800 .8rem/1 Sora, Inter, sans-serif; letter-spacing: -.03em; }
+.brand-home { border: 0; padding: 0; cursor: pointer; }
+.brand-home:hover { transform: translateY(-1px); }
+.brand-home:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .brand-mark img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
 .menu-toggle { display: none; margin-left: auto; width: 44px; height: 44px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); font-size: 1.1rem; font-weight: 900; }
 h1, h2, h3 { line-height: 1.1; margin: 0; }

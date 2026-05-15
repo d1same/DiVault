@@ -841,7 +841,7 @@ function renderApp() {
   const panelOpen = Boolean(state.panel);
   app.innerHTML = `<div class="layout">
     <aside class="sidebar">
-      <div class="brand"><div class="brand-mark">${state.user.avatar_data ? `<img src="${esc(state.user.avatar_data)}" alt="">` : brandMark()}</div><div class="brand-text"><h2>DiVault</h2><div class="small muted">${esc(state.user.name)} · ${esc(state.user.role)}</div></div><button class="sidebar-collapse" id="sidebarCollapse" type="button" aria-label="Collapse sidebar" title="Collapse sidebar">‹</button><button class="menu-toggle" id="menuToggle" type="button" aria-label="Open navigation" aria-expanded="false">☰</button></div>
+      <div class="brand"><button class="brand-mark brand-home" id="brandHomeBtn" type="button" aria-label="Go to home" title="Go to home">${state.user.avatar_data ? `<img src="${esc(state.user.avatar_data)}" alt="">` : brandMark()}</button><div class="brand-text"><h2>DiVault</h2><div class="small muted">${esc(state.user.name)} · ${esc(state.user.role)}</div></div><button class="sidebar-collapse" id="sidebarCollapse" type="button" aria-label="Collapse sidebar" title="Collapse sidebar">‹</button><button class="menu-toggle" id="menuToggle" type="button" aria-label="Open navigation" aria-expanded="false">☰</button></div>
       <nav class="nav">${renderNavGroups()}</nav>
       <div class="sidebar-footer">
         <button class="sync-pill sidebar-sync" data-sync-status type="button" id="syncBtn">${esc(syncLabel())}</button>
@@ -995,6 +995,22 @@ function renderNoteSortSelect() {
   </select></label>`;
 }
 
+async function goHome() {
+  if (!await confirmDiscardUnsaved()) return;
+  state.section = 'notes:all';
+  state.panel = '';
+  state.q = '';
+  state.active = null;
+  state.activeExtra = null;
+  state.editingNote = false;
+  state.selectionMode = false;
+  state.selectedNoteIds.clear();
+  localStorage.setItem('divault_section', state.section);
+  toggleMobileMenu(false);
+  await loadCurrentSection();
+  renderApp();
+}
+
 function showShortcutsHelp() {
   alertDialog({ title: 'Keyboard shortcuts', message: 'Q: search notes\nK: quick note\nN or +: new full note\nEsc: close dialogs\nFocus mode: use the Focus button in the note editor.' });
 }
@@ -1137,6 +1153,7 @@ function renderInlineSecret(label, value) {
 function bindApp() {
   bindThemeControls();
   bindGlobalShortcuts();
+  document.querySelector('#brandHomeBtn')?.addEventListener('click', goHome);
   document.querySelector('#menuToggle')?.addEventListener('click', () => toggleMobileMenu());
   document.querySelector('#sidebarCollapse')?.addEventListener('click', () => toggleDesktopSidebar());
   restoreDesktopSidebarState();
