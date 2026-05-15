@@ -152,6 +152,7 @@ CREATE TABLE IF NOT EXISTS webauthn_credentials (
     label TEXT NOT NULL,
     credential_id TEXT NOT NULL,
     public_key TEXT NOT NULL,
+    last_used_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS sync_events (
@@ -181,8 +182,10 @@ SQL);
         $this->addColumnIfMissing('notes', 'category_id', 'INTEGER REFERENCES asset_categories(id) ON DELETE SET NULL');
         $this->addColumnIfMissing('asset_categories', 'parent_id', 'INTEGER REFERENCES asset_categories(id) ON DELETE SET NULL');
         $this->addColumnIfMissing('asset_categories', 'icon', 'TEXT');
+        $this->addColumnIfMissing('webauthn_credentials', 'last_used_at', 'TEXT');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_notes_category_id ON notes(category_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_asset_categories_parent ON asset_categories(parent_id)');
+        $this->pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_webauthn_credentials_credential_id ON webauthn_credentials(credential_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_sync_events_id ON sync_events(id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_sync_events_entity ON sync_events(entity_type, entity_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_sync_applied_mutations_client ON sync_applied_mutations(client_id, mutation_id)');

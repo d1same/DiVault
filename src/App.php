@@ -41,6 +41,8 @@ final class App
         if ($method === 'POST' && $path === '/desktop/server' && $this->needsSetup()) $this->saveDesktopServer();
         if ($method === 'POST' && $path === '/login/check') $this->loginCheck();
         if ($method === 'POST' && $path === '/login') $this->login();
+        if ($method === 'POST' && $path === '/webauthn/login/options') $this->webauthnLoginOptions();
+        if ($method === 'POST' && $path === '/webauthn/login') $this->webauthnLogin();
         if ($method === 'POST' && $path === '/logout') $this->logout();
         if ($method === 'POST' && $path === '/integrations/ai/review-notes') $this->createAiReviewNote();
 
@@ -99,6 +101,10 @@ final class App
         if ($method === 'POST' && $path === '/2fa/start') $this->start2fa($user);
         if ($method === 'POST' && $path === '/2fa/confirm') $this->confirm2fa($user);
         if ($method === 'POST' && $path === '/2fa/recovery') $this->regenerateRecoveryCodes($user);
+        if ($method === 'GET' && $path === '/webauthn/credentials') $this->listWebauthnCredentials($user);
+        if ($method === 'POST' && $path === '/webauthn/register/options') $this->webauthnRegisterOptions($user);
+        if ($method === 'POST' && $path === '/webauthn/register') $this->webauthnRegister($user);
+        if ($method === 'DELETE' && preg_match('#^/webauthn/credentials/(\d+)$#', $path, $m)) $this->deleteWebauthnCredential($user, (int)$m[1]);
         if ($method === 'GET' && $path === '/audit') $this->audit($user);
         if ($method === 'GET' && $path === '/export') $this->export($user);
         if ($method === 'POST' && $path === '/import') $this->import($user);
@@ -212,11 +218,7 @@ final class App
                 throw new RuntimeException('Two-factor code required');
             }
         }
-        $token = bin2hex(random_bytes(32));
-        $stmt = $this->db->prepare('INSERT INTO sessions (user_id, token_hash, user_agent, ip, expires_at) VALUES (?, ?, ?, ?, datetime("now", "+30 days"))');
-        $stmt->execute([(int)$user['id'], hash('sha256', $token), $_SERVER['HTTP_USER_AGENT'] ?? '', $this->ip()]);
-        setcookie('divault_session', $token, $this->cookieOptions(time() + 2592000));
-        $this->setCsrfCookie();
+        $this->createSession($user);
         $this->audit((int)$user['id'], 'login.success', 'user', (int)$user['id']);
         $this->json(['user' => $this->publicUser($user)]);
     }
@@ -234,6 +236,53 @@ final class App
             throw new RuntimeException('Invalid login');
         }
         $this->json(['mfa_required' => (int)$user['totp_enabled'] === 1]);
+    }
+
+    private function webauthnLoginOptions(): void
+    {
+        $data = $this->input();
+        $email = strtolower(trim((string)($data['email'] ?? '')));
+        $this->checkRateLimit('login:' . $this->ip(), 8, 900);
+        $stmt = $this->db->prepare('SELECT * FROM users WHERE email = ? AND disabled = 0');
+        $stmt->execute([$email]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$user) {
+            $this->hitRateLimit('login:' . $this->ip(), 900);
+            throw new RuntimeException('Passkey not found');
+        }
+        $credentials = $this->webauthnCredentials((int)$user['id']);
+        if (!$credentials) throw new RuntimeException('No passkey is enrolled for this account');
+        $challenge = $this->base64UrlEncode(random_bytes(32));
+        $this->saveSetting($this->webauthnChallengeKey('login', (int)$user['id']), $challenge);
+        $this->json([
+            'challenge' => $challenge,
+            'timeout' => 60000,
+            'userVerification' => 'required',
+            'allowCredentials' => array_map(fn($row) => ['type' => 'public-key', 'id' => $row['credential_id']], $credentials),
+        ]);
+    }
+
+    private function webauthnLogin(): void
+    {
+        $data = $this->input();
+        $email = strtolower(trim((string)($data['email'] ?? '')));
+        $credentialId = (string)($data['id'] ?? '');
+        $this->checkRateLimit('login:' . $this->ip(), 8, 900);
+        $stmt = $this->db->prepare('SELECT u.*, c.public_key, c.id AS credential_row_id FROM webauthn_credentials c JOIN users u ON u.id = c.user_id WHERE u.email = ? AND c.credential_id = ? AND u.disabled = 0');
+        $stmt->execute([$email, $credentialId]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$user) {
+            $this->hitRateLimit('login:' . $this->ip(), 900);
+            $this->audit(null, 'login.passkey_failed', 'user', null);
+            throw new RuntimeException('Passkey verification failed');
+        }
+        $challenge = $this->setting($this->webauthnChallengeKey('login', (int)$user['id']));
+        $this->deleteSetting($this->webauthnChallengeKey('login', (int)$user['id']));
+        $this->verifyWebauthnAssertion($data, $challenge, (string)$user['public_key']);
+        $this->db->prepare('UPDATE webauthn_credentials SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([(int)$user['credential_row_id']]);
+        $this->createSession($user);
+        $this->audit((int)$user['id'], 'login.passkey_success', 'user', (int)$user['id']);
+        $this->json(['user' => $this->publicUser($user)]);
     }
 
     private function logout(): void
@@ -1171,6 +1220,56 @@ final class App
         $this->json(['recovery_codes' => $codes]);
     }
 
+    private function webauthnRegisterOptions(array $user): void
+    {
+        $data = $this->input();
+        $this->requireCurrentPassword($user, $data['current_password'] ?? '');
+        $challenge = $this->base64UrlEncode(random_bytes(32));
+        $this->saveSetting($this->webauthnChallengeKey('register', (int)$user['id']), $challenge);
+        $this->json([
+            'challenge' => $challenge,
+            'rp' => ['name' => 'DiVault'],
+            'user' => ['id' => $this->base64UrlEncode((string)$user['id']), 'name' => $user['email'], 'displayName' => $user['name']],
+            'pubKeyCredParams' => [['type' => 'public-key', 'alg' => -7], ['type' => 'public-key', 'alg' => -257]],
+            'authenticatorSelection' => ['residentKey' => 'preferred', 'userVerification' => 'required'],
+            'timeout' => 60000,
+            'attestation' => 'none',
+            'excludeCredentials' => array_map(fn($row) => ['type' => 'public-key', 'id' => $row['credential_id']], $this->webauthnCredentials((int)$user['id'])),
+        ]);
+    }
+
+    private function listWebauthnCredentials(array $user): void
+    {
+        $this->json(['credentials' => $this->webauthnCredentialList((int)$user['id'])]);
+    }
+
+    private function webauthnRegister(array $user): void
+    {
+        $data = $this->input();
+        $challenge = $this->setting($this->webauthnChallengeKey('register', (int)$user['id']));
+        $this->deleteSetting($this->webauthnChallengeKey('register', (int)$user['id']));
+        $this->verifyWebauthnClientData($data['clientDataJSON'] ?? '', 'webauthn.create', $challenge);
+        $attestationAuthData = $this->base64UrlDecode((string)($data['authenticatorData'] ?? ''));
+        $this->requireWebauthnUserVerification($attestationAuthData);
+        $credentialId = (string)($data['id'] ?? '');
+        $publicKey = $this->spkiToPem($this->base64UrlDecode((string)($data['publicKey'] ?? '')));
+        $label = trim((string)($data['label'] ?? '')) ?: 'Passkey';
+        if ($credentialId === '' || $publicKey === '') throw new RuntimeException('Passkey registration failed');
+        $this->db->prepare('INSERT INTO webauthn_credentials (user_id, label, credential_id, public_key) VALUES (?, ?, ?, ?)')->execute([(int)$user['id'], substr($label, 0, 80), $credentialId, $publicKey]);
+        $this->db->prepare('UPDATE users SET passkey_enabled = 1 WHERE id = ?')->execute([(int)$user['id']]);
+        $this->audit((int)$user['id'], 'passkey.enrolled', 'user', (int)$user['id']);
+        $this->json(['ok' => true, 'credentials' => $this->webauthnCredentialList((int)$user['id'])]);
+    }
+
+    private function deleteWebauthnCredential(array $user, int $id): void
+    {
+        $this->db->prepare('DELETE FROM webauthn_credentials WHERE id = ? AND user_id = ?')->execute([$id, (int)$user['id']]);
+        $remaining = count($this->webauthnCredentials((int)$user['id']));
+        if ($remaining === 0) $this->db->prepare('UPDATE users SET passkey_enabled = 0 WHERE id = ?')->execute([(int)$user['id']]);
+        $this->audit((int)$user['id'], 'passkey.deleted', 'user', (int)$user['id']);
+        $this->json(['ok' => true, 'credentials' => $this->webauthnCredentialList((int)$user['id'])]);
+    }
+
     private function audit($user = null, string $action = null, string $type = null, int $id = null): void
     {
         if ($action !== null) {
@@ -1611,6 +1710,99 @@ final class App
         if ($password === '' || !password_verify($password, $user['password_hash'] ?? '')) {
             throw new RuntimeException('Current password required');
         }
+    }
+
+    private function createSession(array $user): void
+    {
+        $token = bin2hex(random_bytes(32));
+        $stmt = $this->db->prepare('INSERT INTO sessions (user_id, token_hash, user_agent, ip, expires_at) VALUES (?, ?, ?, ?, datetime("now", "+30 days"))');
+        $stmt->execute([(int)$user['id'], hash('sha256', $token), $_SERVER['HTTP_USER_AGENT'] ?? '', $this->ip()]);
+        setcookie('divault_session', $token, $this->cookieOptions(time() + 2592000));
+        $this->setCsrfCookie();
+    }
+
+    private function webauthnCredentials(int $userId): array
+    {
+        $stmt = $this->db->prepare('SELECT id, label, credential_id, created_at, last_used_at FROM webauthn_credentials WHERE user_id = ? ORDER BY id DESC');
+        $stmt->execute([$userId]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    private function webauthnCredentialList(int $userId): array
+    {
+        return array_map(fn($row) => ['id' => (int)$row['id'], 'label' => $row['label'], 'created_at' => $row['created_at'], 'last_used_at' => $row['last_used_at'] ?? null], $this->webauthnCredentials($userId));
+    }
+
+    private function verifyWebauthnAssertion(array $data, string $challenge, string $publicKey): void
+    {
+        $clientDataJson = $this->base64UrlDecode((string)($data['clientDataJSON'] ?? ''));
+        $authenticatorData = $this->base64UrlDecode((string)($data['authenticatorData'] ?? ''));
+        $signature = $this->base64UrlDecode((string)($data['signature'] ?? ''));
+        $this->verifyWebauthnClientData($data['clientDataJSON'] ?? '', 'webauthn.get', $challenge);
+        $this->requireWebauthnUserVerification($authenticatorData);
+        $signed = $authenticatorData . hash('sha256', $clientDataJson, true);
+        $ok = openssl_verify($signed, $signature, $publicKey, OPENSSL_ALGO_SHA256);
+        if ($ok !== 1) throw new RuntimeException('Passkey verification failed');
+    }
+
+    private function verifyWebauthnClientData(string $encoded, string $type, string $challenge): array
+    {
+        if ($challenge === '') throw new RuntimeException('Passkey challenge expired');
+        $clientData = json_decode($this->base64UrlDecode($encoded), true) ?: [];
+        if (($clientData['type'] ?? '') !== $type) throw new RuntimeException('Invalid passkey response');
+        if (!hash_equals($challenge, (string)($clientData['challenge'] ?? ''))) throw new RuntimeException('Invalid passkey challenge');
+        if (!hash_equals($this->origin(), (string)($clientData['origin'] ?? ''))) throw new RuntimeException('Invalid passkey origin');
+        return $clientData;
+    }
+
+    private function requireWebauthnUserVerification(string $authenticatorData): void
+    {
+        if (strlen($authenticatorData) < 33) throw new RuntimeException('Invalid passkey response');
+        $flags = ord($authenticatorData[32]);
+        if (($flags & 0x01) !== 0x01 || ($flags & 0x04) !== 0x04) throw new RuntimeException('Biometric or device PIN verification required');
+    }
+
+    private function spkiToPem(string $spki): string
+    {
+        if ($spki === '') return '';
+        return "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode($spki), 64, "\n") . "-----END PUBLIC KEY-----\n";
+    }
+
+    private function webauthnChallengeKey(string $purpose, int $userId): string
+    {
+        return 'webauthn.' . $purpose . '.' . $userId;
+    }
+
+    private function setting(string $key): string
+    {
+        $stmt = $this->db->prepare('SELECT value FROM app_settings WHERE key = ?');
+        $stmt->execute([$key]);
+        return (string)($stmt->fetchColumn() ?: '');
+    }
+
+    private function saveSetting(string $key, string $value): void
+    {
+        $this->db->prepare('INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at')->execute([$key, $value]);
+    }
+
+    private function deleteSetting(string $key): void
+    {
+        $this->db->prepare('DELETE FROM app_settings WHERE key = ?')->execute([$key]);
+    }
+
+    private function base64UrlEncode(string $value): string
+    {
+        return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+    }
+
+    private function base64UrlDecode(string $value): string
+    {
+        $value = strtr($value, '-_', '+/');
+        $padding = strlen($value) % 4;
+        if ($padding) $value .= str_repeat('=', 4 - $padding);
+        $decoded = base64_decode($value, true);
+        if ($decoded === false) throw new RuntimeException('Invalid passkey data');
+        return $decoded;
     }
 
     private function requireAdmin(array $user): void

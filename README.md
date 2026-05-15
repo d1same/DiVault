@@ -108,7 +108,7 @@ TRUST_PROXY=true
 SECURE_COOKIES=true
 ```
 
-The app honors forwarded IP headers when `TRUST_PROXY=true`, uses secure cookies when `SECURE_COOKIES=true`, and keeps passkey/WebAuthn planning tied to the final HTTPS domain.
+The app honors forwarded IP headers when `TRUST_PROXY=true`, uses secure cookies when `SECURE_COOKIES=true`, and supports passkey/WebAuthn sign-in after a user enrolls a passkey from Settings. Passkeys work best on HTTPS or localhost because browsers restrict WebAuthn on insecure origins.
 
 ## Persistent Data Layout
 
@@ -437,17 +437,12 @@ docker rm -f divault-clean-test
 ## Roadmap
 
 - Make secret/code/file blocks fully inline editable without raw text syntax
-- Add slash-command style insertion
-- Complete WebAuthn/passkey enrollment and login
 - Offline encrypted PWA cache
 - Google Keep Takeout import
-- Obsidian/Joplin Markdown folder import
 - OCR for PDFs and images
 - OnlyOffice integration as an optional extra container
 - S3-compatible storage option
-- Bundle PHP with desktop releases
 - Add local-desktop-to-server conflict-safe merge sync
-- Native mobile wrappers
 - Browser extension and mobile share-sheet capture
 
 ## License

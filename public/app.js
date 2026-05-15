@@ -435,13 +435,15 @@ function renderSetup() {
 }
 
 function renderLogin() {
+  const passkeyHelp = webauthnSupported() ? 'Use a saved passkey, Windows Hello, Touch ID, Face ID, or your device screen lock.' : 'Passkey login needs a browser with WebAuthn support.';
   app.innerHTML = authShell('Welcome back', 'Quick notes, client docs, files, and hidden secrets.', `
     <form class="stack" id="loginForm">
       <label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required></label>
       <label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label>
       ${state.loginMfa ? `<label class="field"><span>2FA code</span><input name="totp" inputmode="numeric" autocomplete="one-time-code" placeholder="000000"></label><label class="field"><span>Recovery code</span><input name="recovery_code" autocomplete="one-time-code" placeholder="XXXXX-XXXXX"></label>` : ''}
       <button class="btn primary">${state.loginMfa ? 'Verify and sign in' : 'Continue'}</button>
-      <p class="small muted">Passkey/biometric login foundation is reserved for the HTTPS domain and can be enabled after WebAuthn credential enrollment is completed.</p>
+      <button class="btn" type="button" id="passkeyLoginBtn" ${webauthnSupported() ? '' : 'disabled'}>Sign in with passkey / biometrics</button>
+      <p class="small muted">${passkeyHelp}</p>
     </form>`);
   document.querySelector('#loginForm').addEventListener('submit', async e => {
     e.preventDefault();
@@ -459,6 +461,21 @@ function renderLogin() {
         }
       }
       const res = await api('/login', { method: 'POST', body: data });
+      state.loginMfa = false;
+      state.user = res.user;
+      await loadAll();
+      renderApp();
+      startSyncLoop();
+    } catch (err) { toast(err.message); }
+  });
+  document.querySelector('#passkeyLoginBtn')?.addEventListener('click', async () => {
+    if (!webauthnSupported()) return toast('Passkeys are not supported in this browser');
+    const email = document.querySelector('#loginForm input[name="email"]')?.value.trim();
+    if (!email) return toast('Enter your email first');
+    try {
+      const options = await api('/webauthn/login/options', { method: 'POST', body: { email } });
+      const credential = await navigator.credentials.get({ publicKey: publicKeyOptionsFromServer(options) });
+      const res = await api('/webauthn/login', { method: 'POST', body: webauthnAssertionPayload(email, credential) });
       state.loginMfa = false;
       state.user = res.user;
       await loadAll();
@@ -552,6 +569,55 @@ function bytesToBase64(bytes) {
 
 function base64ToBytes(value) {
   return Uint8Array.from(atob(value), c => c.charCodeAt(0));
+}
+
+function base64UrlToBytes(value) {
+  const padded = String(value).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((String(value).length + 3) % 4);
+  return base64ToBytes(padded);
+}
+
+function bytesToBase64Url(bytes) {
+  return bytesToBase64(new Uint8Array(bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function publicKeyOptionsFromServer(options) {
+  return {
+    ...options,
+    challenge: base64UrlToBytes(options.challenge),
+    user: options.user ? { ...options.user, id: base64UrlToBytes(options.user.id) } : undefined,
+    allowCredentials: (options.allowCredentials || []).map(item => ({ ...item, id: base64UrlToBytes(item.id) })),
+    excludeCredentials: (options.excludeCredentials || []).map(item => ({ ...item, id: base64UrlToBytes(item.id) }))
+  };
+}
+
+function webauthnSupported() {
+  return !!(window.PublicKeyCredential && navigator.credentials && window.crypto?.subtle);
+}
+
+function webauthnAssertionPayload(email, credential) {
+  return {
+    email,
+    id: credential.id,
+    rawId: bytesToBase64Url(credential.rawId),
+    clientDataJSON: bytesToBase64Url(credential.response.clientDataJSON),
+    authenticatorData: bytesToBase64Url(credential.response.authenticatorData),
+    signature: bytesToBase64Url(credential.response.signature),
+    userHandle: credential.response.userHandle ? bytesToBase64Url(credential.response.userHandle) : ''
+  };
+}
+
+function webauthnRegistrationPayload(label, credential) {
+  const publicKey = credential.response.getPublicKey?.();
+  const authenticatorData = credential.response.getAuthenticatorData?.();
+  if (!publicKey || !authenticatorData) throw new Error('This browser cannot export the passkey public key DiVault needs');
+  return {
+    label,
+    id: credential.id,
+    rawId: bytesToBase64Url(credential.rawId),
+    clientDataJSON: bytesToBase64Url(credential.response.clientDataJSON),
+    authenticatorData: bytesToBase64Url(authenticatorData),
+    publicKey: bytesToBase64Url(publicKey)
+  };
 }
 
 function loadPendingNotes() {
@@ -995,7 +1061,7 @@ function renderInlineEditor() {
         <input type="hidden" name="section" value="All">
         <input type="hidden" name="type" value="${esc(note.type || 'text')}">
         <input type="hidden" name="body" id="noteBodySerialized" value="${esc(visibleBody)}">
-        ${quickMode ? `<textarea class="quick-note-body" name="body" data-simple-body placeholder="Type the quick note here. No formatting, no blocks, just text.">${esc(visibleBody)}</textarea>` : `<div class="block-editor" data-block-editor>${renderEditorBlocks(parseBodyToBlocks(visibleBody))}</div>`}
+        ${quickMode ? `<textarea class="quick-note-body" name="body" data-simple-body placeholder="Type the quick note here. No formatting, no blocks, just text.">${esc(visibleBody)}</textarea>` : `<div class="block-editor" data-block-editor>${renderEditorBlocks(parseBodyToBlocks(visibleBody))}</div><p class="small muted slash-hint">Type /heading, /check, /list, /code, /secret, /table, /draw, or /divider in an empty paragraph to switch block type.</p>`}
         <input type="hidden" name="existing_secret_markers" value="${esc(hiddenMarkers.join('\n'))}">
         <input id="fileInput" class="hidden" type="file" multiple accept="image/*,.pdf,.txt,.md,.csv,.json,.zip,.doc,.docx,.xls,.xlsx">
         <div id="pendingAttachments">${renderPendingAttachments()}</div>
@@ -1512,6 +1578,7 @@ function bindBlockEditor(modal) {
   editor.addEventListener('focusout', e => e.target.closest('[data-block]')?.classList.remove('active'));
   editor.addEventListener('input', e => {
     if (e.target.matches('[data-block-code]')) syncCodeLineNumbers(e.target);
+    if (e.target.matches('[data-rich-text]') && handleSlashCommand(modal, e.target)) return;
     refreshSerializedBodyAndPreviews(modal);
   });
   editor.addEventListener('change', e => {
@@ -1644,6 +1711,32 @@ function addEditorBlock(modal, type) {
   if (type === 'code') syncCodeLineNumbers(added.querySelector('[data-block-code]'));
   refreshSerializedBodyAndPreviews(modal);
   added.querySelector('[contenteditable], textarea, input:not([type="hidden"]), select')?.focus();
+}
+
+function handleSlashCommand(modal, richText) {
+  const command = String(richText.textContent || '').trim().toLowerCase();
+  const type = {
+    '/p': 'paragraph', '/paragraph': 'paragraph',
+    '/h': 'heading', '/heading': 'heading',
+    '/check': 'checklist', '/todo': 'checklist',
+    '/list': 'bullet', '/bullet': 'bullet',
+    '/number': 'numbered', '/numbered': 'numbered',
+    '/quote': 'quote', '/divider': 'hr', '/hr': 'hr',
+    '/table': 'table', '/code': 'code', '/math': 'math',
+    '/secret': 'secret', '/password': 'secret',
+    '/draw': 'drawing', '/drawing': 'drawing'
+  }[command];
+  if (!type) return false;
+  const block = richText.closest('[data-block]');
+  if (!block) return false;
+  block.insertAdjacentHTML('afterend', renderEditorBlock(newEditorBlock(type)));
+  const added = block.nextElementSibling;
+  block.remove();
+  if (type === 'drawing') bindDrawingCanvas(added.querySelector('[data-drawing-canvas]'), modal);
+  if (type === 'code') syncCodeLineNumbers(added.querySelector('[data-block-code]'));
+  refreshSerializedBodyAndPreviews(modal);
+  added.querySelector('[contenteditable], textarea, input:not([type="hidden"]), select')?.focus();
+  return true;
 }
 
 function serializeEditorBlocks(modal) {
@@ -2668,7 +2761,7 @@ async function openSettings() {
   state.editingNote = false;
   renderApp();
   const isAdmin = canAdminSettings();
-  const [users, audit, sessions, backups, syncManifest, retentionSettings, aiIntegration, desktopServer] = await Promise.all([
+  const [users, audit, sessions, backups, syncManifest, retentionSettings, aiIntegration, desktopServer, passkeys] = await Promise.all([
     isAdmin ? api('/users').catch(() => ({ users: [] })) : { users: [] },
     isAdmin ? api('/audit').catch(() => ({ audit: [] })) : { audit: [] },
     api('/sessions').catch(() => ({ sessions: [] })),
@@ -2676,7 +2769,8 @@ async function openSettings() {
     api('/sync/manifest').catch(() => null),
     isAdmin ? api('/retention-settings').catch(() => ({ settings: { version_limit: 3, trash_days: 30 } })) : { settings: { version_limit: 3, trash_days: 30 } },
     isAdmin ? api('/integrations/ai/status').catch(() => null) : null,
-    state.desktop && isAdmin ? api('/desktop/server').catch(() => ({ server_url: '' })) : { server_url: '' }
+    state.desktop && isAdmin ? api('/desktop/server').catch(() => ({ server_url: '' })) : { server_url: '' },
+    api('/webauthn/credentials').catch(() => ({ credentials: [] }))
   ]);
   const adminDataCards = isAdmin ? `<div class="card stack"><h3>Import / export</h3><div class="btn-row"><a class="btn" href="/api/export">Export JSON</a><button class="btn" id="backupBtn">Create full backup</button></div><p class="small muted">Optional backup passphrases encrypt backups. Keep the passphrase; encrypted backups cannot be restored without it.</p><label class="field"><span>Import Markdown notes</span><input id="markdownImportFiles" type="file" accept=".md,text/markdown" multiple></label><label class="field"><span>Import Markdown folder</span><input id="markdownImportFolder" type="file" accept=".md,text/markdown" webkitdirectory multiple></label><button class="btn" id="importMarkdownBtn">Import Markdown</button><p class="small muted">Markdown files are read locally in this browser and imported directly. Folder imports map subfolders to categories.</p><label class="field"><span>Import JSON notes</span><textarea id="importJson" placeholder='{"notes":[{"title":"Imported","body":"Hello"}]}'></textarea></label><button class="btn" id="importBtn">Import JSON</button></div>
         <div class="card stack"><h3>Backups</h3>${backups.pending_restore ? '<p class="pill secret">Restore pending. Restart container to apply.</p>' : ''}<div class="btn-row"><input id="restoreUpload" type="file" accept=".zip,application/zip"><button class="btn danger" id="uploadRestoreBtn">Upload restore ZIP</button></div>${backups.backups.map(b => `<div class="file-row"><span>${esc(b.file)}<br><span class="small muted">${Math.ceil(Number(b.size) / 1024)} KB</span></span><span class="btn-row"><a class="btn" href="/api/backups/${esc(b.file)}">Download</a><button class="btn danger" data-restore="${esc(b.file)}">Schedule restore</button></span></div>`).join('') || '<p class="small muted">No backups yet.</p>'}</div>` : '';
@@ -2689,6 +2783,8 @@ async function openSettings() {
   const androidClientCard = window.DiVaultAndroid ? `<div class="card stack"><h3>Android app</h3><p class="muted small">Change the saved Android server URL without waiting for the offline screen.</p><div class="file-row"><span>Current server<br><span class="small muted">${esc(location.origin)}</span></span><button class="btn" id="androidChangeServerBtn" type="button">Change server</button></div></div>` : '';
   const retention = retentionSettings?.settings || { version_limit: 3, trash_days: 30 };
   const retentionCard = isAdmin ? `<div class="card stack"><h3>Recycle bin and version policy</h3><form id="retentionSettingsForm" class="stack"><div class="file-row"><span>File version policy<br><span class="small muted">Keep only the most recent note versions.</span></span><span class="settings-inline-input">Keep only <input name="version_limit" type="number" min="0" max="100" step="1" value="${esc(retention.version_limit ?? 3)}" inputmode="numeric"> most recent versions</span></div><div class="file-row"><span>Empty recycle bin contents older than<br><span class="small muted">Uses the date a note was moved to the recycle bin.</span></span><span class="settings-inline-input"><input name="trash_days" type="number" min="1" max="3650" step="1" value="${esc(retention.trash_days ?? 30)}" inputmode="numeric"> days</span></div><button class="btn primary">Save policy</button></form></div>` : '';
+  const passkeyRows = (passkeys.credentials || []).map(key => `<div class="file-row"><span>${esc(key.label)}<br><span class="small muted">Added ${esc(key.created_at || '')}${key.last_used_at ? ` · Last used ${esc(key.last_used_at)}` : ''}</span></span><button class="btn danger" type="button" data-passkey-delete="${key.id}">Remove</button></div>`).join('') || '<p class="small muted">No passkeys enrolled yet.</p>';
+  const passkeyCard = `<div class="card stack"><h3>Passkeys / biometrics</h3><p class="muted small">Use a passkey with Windows Hello, Touch ID, Face ID, or your device screen lock. Works best on HTTPS or localhost.</p><div class="btn-row"><button class="btn" id="startPasskey" type="button" ${webauthnSupported() ? '' : 'disabled'}>Add passkey</button></div>${passkeyRows}</div>`;
   const deviceCards = `${desktopServerCard}${androidClientCard}`;
   const settingsTabs = [
     ['account', 'Account'],
@@ -2726,7 +2822,7 @@ async function openSettings() {
           <aside class="stack">
             <div class="card stack"><h3>Emergency offline snapshot</h3><p class="muted small">Create or update an encrypted localStorage snapshot for offline access. Keep the passphrase; it is required to unlock the snapshot.</p><button class="btn" id="emergencySnapshotBtn">Create/update encrypted snapshot</button><p class="small muted">Pending offline notes remain unencrypted local-only drafts until synced.</p></div>
             <div class="card stack"><h3>Two-factor authentication</h3><p class="muted small">Use an authenticator app. Save recovery codes somewhere safe.</p><div class="btn-row"><button class="btn" id="start2fa">Start 2FA setup</button><button class="btn" id="regenRecovery">New recovery codes</button></div><div id="twofa"></div></div>
-            <div class="card"><h3>Passkeys / biometrics</h3><p class="muted small">The database table and UI are ready. Full WebAuthn enrollment/login should be completed after the final Pangolin HTTPS domain is known, because passkeys are bound to the relying-party domain.</p></div>
+            ${passkeyCard}
           </aside>
         </div>
       </section>
@@ -2902,6 +2998,30 @@ async function openSettings() {
     const result = await api('/2fa/recovery', { method: 'POST', body: { current_password: currentPassword } });
     showRecoveryCodes(modal, result.recovery_codes || []);
   });
+  modal.querySelector('#startPasskey')?.addEventListener('click', async () => {
+    if (!webauthnSupported()) return toast('Passkeys are not supported in this browser');
+    const currentPassword = await promptDialog({ title: 'Current password', message: 'Enter your current password to add a passkey.', type: 'password', required: true });
+    if (currentPassword === null) return;
+    const label = await promptDialog({ title: 'Passkey label', message: 'Name this passkey so you can recognize it later.', placeholder: 'Windows Hello on this PC' });
+    if (label === null) return;
+    await runUserAction(async () => {
+      const options = await api('/webauthn/register/options', { method: 'POST', body: { current_password: currentPassword } });
+      const credential = await navigator.credentials.create({ publicKey: publicKeyOptionsFromServer(options) });
+      await api('/webauthn/register', { method: 'POST', body: webauthnRegistrationPayload(label || 'Passkey', credential) });
+      toast('Passkey enabled');
+      state.user.passkey_enabled = 1;
+      openSettings();
+    }, 'Passkey setup failed');
+  });
+  modal.querySelectorAll('[data-passkey-delete]').forEach(button => button.addEventListener('click', async () => {
+    if (!await confirmDialog({ title: 'Remove passkey?', message: 'Remove this passkey from DiVault login?', confirmText: 'Remove' })) return;
+    await runUserAction(async () => {
+      const result = await api(`/webauthn/credentials/${button.dataset.passkeyDelete}`, { method: 'DELETE' });
+      state.user.passkey_enabled = result.credentials?.length ? 1 : 0;
+      toast('Passkey removed');
+      openSettings();
+    }, 'Passkey removal failed');
+  }));
   modal.querySelector('#backupBtn')?.addEventListener('click', async () => {
     await runUserAction(async () => {
       const passphrase = await promptDialog({ title: 'Backup passphrase', message: 'Optional. Keep it safe; encrypted backups require it to restore. Leave blank for no passphrase.', type: 'password' });
