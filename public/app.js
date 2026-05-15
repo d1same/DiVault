@@ -3010,7 +3010,7 @@ function renderAiIntegrationSettings(status) {
     <div class="file-row"><span>Endpoint<br><span class="small muted">${esc(endpoint)}</span></span><button class="btn ghost" type="button" id="copyAiEndpointBtn">Copy URL</button></div>
     <label class="field ai-token-preview"><span>Token</span><textarea id="aiApiTokenPreview" class="hidden" readonly spellcheck="false" aria-label="AI API token"></textarea><span id="aiApiTokenStatus" class="small muted">${enabled && status.can_reveal ? 'Copy requires your current password.' : 'Token is shown after enable/regenerate.'}</span></label>
     <div class="btn-row"><button class="btn" type="button" id="enableAiApiBtn">${enabled ? 'Regenerate token' : 'Enable API'}</button>${localTokenControls}<button class="btn ghost" type="button" id="testAiTokenBtn">Test token</button>${enabled && status.can_disable !== false ? '<button class="btn danger" type="button" id="disableAiApiBtn">Disable</button>' : ''}</div>
-    <p class="small muted">Use header <code>X-DiVault-AI-Token</code> or <code>Authorization: Bearer TOKEN</code>. Environment-managed tokens cannot be revealed in Settings.</p>`;
+    <p class="small muted">Use header <code>X-DiVault-AI-Token</code> or <code>Authorization: Bearer TOKEN</code>. Local tokens can be copied here with your password. Environment-managed tokens must be read from your server config or hosting secrets.</p>`;
 }
 
 function showRecoveryCodes(modal, codes) {
