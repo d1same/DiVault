@@ -1110,11 +1110,19 @@ function renderNotificationDropdown() {
   return `<div class="notification-menu" id="notificationMenu"><div class="section-title-row"><h3>Notifications</h3><span class="small muted">${items.length}</span></div>${items.length ? items.slice(0, 12).map(entry => {
     if (entry.kind === 'task') {
       const task = entry.item;
-      return `<div class="notification-row"><span class="agenda-kind task-kind">Task</span><span><b>${esc(task.title)}</b><br><span class="small muted">Due ${formatScheduleDateTime(task.due_at)}</span></span><div class="btn-row"><button class="btn ghost mini-btn" data-open-task="${task.id}" type="button">Open</button><button class="btn primary mini-btn" data-task-complete="${task.id}" type="button">Done</button></div></div>`;
+      return `<div class="notification-row notification-link" data-open-task="${task.id}" role="button" tabindex="0"><span class="agenda-kind task-kind">Task</span><span><b>${esc(task.title)}</b><br><span class="small muted">Due ${formatScheduleDateTime(task.due_at)}</span></span><button class="btn primary mini-btn" data-task-complete="${task.id}" type="button">Complete</button></div>`;
     }
     const event = entry.item;
-      return `<div class="notification-row"><span class="agenda-kind event-kind">Event</span><span><b>${esc(event.title)}</b><br><span class="small muted">${formatScheduleDateTime(event.starts_at)}</span></span><button class="btn ghost mini-btn" data-open-event="${event.series_id || event.id}" type="button">Open</button></div>`;
+      return `<div class="notification-row notification-link" data-open-event="${event.series_id || event.id}" role="button" tabindex="0"><span class="agenda-kind event-kind">Event</span><span><b>${esc(event.title)}</b><br><span class="small muted">${formatScheduleDateTime(event.starts_at)}</span></span></div>`;
   }).join('') : '<p class="small muted">Nothing needs attention.</p>'}</div>`;
+}
+
+async function completeTask(task, after = async () => {}) {
+  if (!task || task.status === 'done') return;
+  await runUserAction(async () => {
+    await api(`/tasks/${task.id}`, { method: 'PATCH', body: { ...task, status: 'done', shared: Number(task.private) === 0 } });
+    await after();
+  }, 'Task update failed');
 }
 
 function renderTopbar(panelOpen) {
@@ -1817,18 +1825,25 @@ function bindNotificationMenuActions() {
     }
   };
   setTimeout(() => document.addEventListener('pointerdown', close, true), 0);
-  menu.querySelectorAll('[data-task-complete]').forEach(btn => btn.addEventListener('click', async () => {
+  menu.querySelectorAll('[data-task-complete]').forEach(btn => btn.addEventListener('click', async e => {
+    e.stopPropagation();
     const task = state.tasks.find(item => String(item.id) === String(btn.dataset.taskComplete));
-    if (!task) return;
-    await runUserAction(async () => {
-      await api(`/tasks/${task.id}`, { method: 'PATCH', body: { ...task, status: 'done', shared: Number(task.private) === 0 } });
+    await completeTask(task, async () => {
       await loadNotificationData();
       await loadCurrentSection();
       renderApp();
-    }, 'Task update failed');
+    });
   }));
-  menu.querySelectorAll('[data-open-event]').forEach(btn => btn.addEventListener('click', () => openEventDialogById(btn.dataset.openEvent)));
-  menu.querySelectorAll('[data-open-task]').forEach(btn => btn.addEventListener('click', () => openTaskDialogById(btn.dataset.openTask)));
+  menu.querySelectorAll('[data-open-event]').forEach(row => row.addEventListener('click', () => openEventDialogById(row.dataset.openEvent)));
+  menu.querySelectorAll('[data-open-task]').forEach(row => row.addEventListener('click', e => {
+    if (e.target.closest('[data-task-complete]')) return;
+    openTaskDialogById(row.dataset.openTask);
+  }));
+  menu.querySelectorAll('.notification-link').forEach(row => row.addEventListener('keydown', e => {
+    if (!['Enter', ' '].includes(e.key) || e.target.closest('[data-task-complete]')) return;
+    e.preventDefault();
+    row.click();
+  }));
 }
 
 function bindContentActions() {
@@ -2292,9 +2307,19 @@ function openTaskDetailDialog(task = {}) {
     locationDetailRow(task.location)
   ].join('');
   const notes = linkedNoteDetailList(task.notes || []);
-  modal.innerHTML = `<section class="editor-panel small-panel detail-dialog"><div class="topbar"><div><p class="breadcrumb">Task</p><h2>${esc(task.title || 'Untitled task')}</h2></div><div class="btn-row"><button class="btn ghost icon-only-btn" type="button" data-print-detail aria-label="Print" title="Print">${toolIcon('print', 'Print')}</button><button class="btn ghost icon-only-btn" type="button" data-edit-detail aria-label="Edit" title="Edit">${toolIcon('draw', 'Edit')}</button><button class="btn danger icon-only-btn" type="button" data-delete-detail aria-label="Delete" title="Delete">${toolIcon('trash', 'Delete')}</button><button class="btn ghost" type="button" data-close>Close</button></div></div><div class="detail-grid">${rows}</div>${task.description ? `<div class="detail-description"><h3>Description</h3><p>${esc(task.description)}</p></div>` : ''}<section class="detail-notes"><h3>Related notes</h3>${notes}</section></section>`;
+  const completeButton = task.status !== 'done' ? '<button class="btn primary" type="button" data-complete-detail>Complete</button>' : '';
+  modal.innerHTML = `<section class="editor-panel small-panel detail-dialog"><div class="topbar"><div><p class="breadcrumb">Task</p><h2>${esc(task.title || 'Untitled task')}</h2></div><div class="btn-row">${completeButton}<button class="btn ghost icon-only-btn" type="button" data-print-detail aria-label="Print" title="Print">${toolIcon('print', 'Print')}</button><button class="btn ghost icon-only-btn" type="button" data-edit-detail aria-label="Edit" title="Edit">${toolIcon('draw', 'Edit')}</button><button class="btn danger icon-only-btn" type="button" data-delete-detail aria-label="Delete" title="Delete">${toolIcon('trash', 'Delete')}</button><button class="btn ghost" type="button" data-close>Close</button></div></div><div class="detail-grid">${rows}</div>${task.description ? `<div class="detail-description"><h3>Description</h3><p>${esc(task.description)}</p></div>` : ''}<section class="detail-notes"><h3>Related notes</h3>${notes}</section></section>`;
   document.body.appendChild(modal);
   setupAccessibleModal(modal, '[data-close]');
+  modal.querySelector('[data-complete-detail]')?.addEventListener('click', async () => {
+    await completeTask(task, async () => {
+      modal.remove();
+      await loadNotificationData();
+      await loadCurrentSection();
+      renderApp();
+      toast('Task completed');
+    });
+  });
   modal.querySelector('[data-edit-detail]').addEventListener('click', () => { modal.remove(); openTaskDialog(task); });
   modal.querySelector('[data-print-detail]').addEventListener('click', () => printDetail(task.title || 'Task', rows, notes, task.description));
   modal.querySelector('[data-delete-detail]').addEventListener('click', async () => {
