@@ -1,8 +1,23 @@
-const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: 'notes:all', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
+const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
+Object.assign(state, { features: null, calendars: [], events: [], tasks: [], calendarDate: new Date(), miniCalendarDate: new Date(), calendarView: localStorage.getItem('divault_calendar_view') || 'schedule', reminders: [], reminderTimer: null, linkableNotesLoaded: false, routeNoteId: null });
+if (state.calendarView === 'agenda') state.calendarView = 'schedule';
 const app = document.querySelector('#app');
 
+const defaultFeatures = () => ({
+  calendar: { enabled: false, settings: { home_enabled: true, reminders_enabled: true, default_reminder_minutes: 10, default_calendar_id: null } },
+  tasks: { enabled: false, settings: { home_enabled: true, reminders_enabled: true, default_reminder_minutes: 10, shared_calendar_tasks: true } },
+  home: { enabled: true, settings: { notes_enabled: true } }
+});
+const feature = key => state.features?.[key] || defaultFeatures()[key];
+const featureOn = key => Boolean(feature(key).enabled);
+const homeAvailable = () => featureOn('calendar') || featureOn('tasks');
+
 function applyTheme() {
-  const darkThemes = new Set(['dark', 'moss', 'midnight', 'black']);
+  if (state.theme === 'moss') {
+    state.theme = 'soft';
+    localStorage.setItem('divault_theme', state.theme);
+  }
+  const darkThemes = new Set(['dark', 'midnight', 'black', 'plum', 'blueprint']);
   const resolved = darkThemes.has(state.theme) ? 'dark' : 'light';
   document.documentElement.dataset.theme = resolved;
   document.documentElement.dataset.themeChoice = state.theme;
@@ -70,6 +85,25 @@ function formatDateTime(value) {
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function formatScheduleDateTime(value) {
+  if (!value) return 'unknown time';
+  const normalized = String(value).includes('T') ? String(value) : String(value).replace(' ', 'T') + 'Z';
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString([], { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function normalizeDate(value) {
+  return String(value || '').includes('T') ? String(value) : String(value || '').replace(' ', 'T') + 'Z';
+}
+
+function dateInputValue(value) {
+  const date = value instanceof Date ? value : new Date(normalizeDate(value));
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = number => String(number).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function deviceNameFromUserAgent(userAgent = '') {
@@ -261,9 +295,11 @@ const themePresets = [
   { key: 'soft', label: 'Soft neutral', note: 'Warm low-contrast middle ground' },
   { key: 'ocean', label: 'Ocean focus', note: 'Cool blue-green accents' },
   { key: 'colorblind', label: 'Color-safe', note: 'Blue/orange accessible contrast' },
-  { key: 'moss', label: 'Moss dusk', note: 'Muted charcoal, green, and amber' },
+  { key: 'mono', label: 'Black & white', note: 'Crisp grayscale with no color tint' },
+  { key: 'blueprint', label: 'Teal monochrome', note: 'Teal shades mixed with black' },
   { key: 'dark', label: 'Dark terminal', note: 'Low-glare dark mode' },
   { key: 'midnight', label: 'Midnight ember', note: 'Near-black warm amber' },
+  { key: 'plum', label: 'Plum night', note: 'Deep violet with soft pink highlights' },
   { key: 'black', label: 'True black', note: 'OLED black with green text' }
 ];
 
@@ -324,6 +360,8 @@ const icon = name => ({
   , sort: '<svg viewBox="0 0 24 24"><path d="M7 4v14M7 18l-3-3M7 18l3-3M17 20V6M17 6l-3 3M17 6l3 3"/></svg>'
   , focus: '<svg viewBox="0 0 24 24"><path d="M8 4H4v4M16 4h4v4M8 20H4v-4M16 20h4v-4M9 9h6v6H9z"/></svg>'
   , logout: '<svg viewBox="0 0 24 24"><path d="M10 5H5v14h5M14 8l4 4-4 4M18 12H9"/></svg>'
+  , bell: '<svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>'
+  , print: '<svg viewBox="0 0 24 24"><path d="M7 8V3h10v5M7 17H5a2 2 0 0 1-2-2v-3a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v3a2 2 0 0 1-2 2h-2M7 14h10v7H7zM17 12h.01"/></svg>'
   , clearFormat: '<svg viewBox="0 0 24 24"><path d="M5 5h12M11 5 7 19M15 19H5M15 11l5 5M20 11l-5 5"/></svg>'
   , key: '<svg viewBox="0 0 24 24"><path d="M14 10a5 5 0 1 1-2-4l7 7-2 2-2-2-2 2-2-2M7 10h.01"/></svg>'
   , shield: '<svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6zM9 12l2 2 4-4"/></svg>'
@@ -351,6 +389,44 @@ function toolIcon(name, label) {
   return `<span class="tool-icon" aria-hidden="true">${icon(name)}</span><span class="sr-only">${esc(label)}</span>`;
 }
 
+function defaultSection() {
+  return homeAvailable() ? 'home' : 'notes:all';
+}
+
+function sectionAllowed(section) {
+  if (!section) return false;
+  if (section === 'home') return homeAvailable();
+  if (section === 'calendar') return featureOn('calendar');
+  if (section === 'tasks') return featureOn('tasks');
+  return true;
+}
+
+function normalizeCurrentSection() {
+  const legacySections = ['Inbox', 'Personal', 'Projects', 'Vault', 'Archive', 'Trash'];
+  if (legacySections.includes(state.section) || !sectionAllowed(state.section)) state.section = defaultSection();
+  localStorage.setItem('divault_section', state.section);
+}
+
+function syncSectionRoute({ replace = false } = {}) {
+  localStorage.setItem('divault_section', state.section);
+  const route = state.panel || (state.active?.id ? `${state.section}/note/${state.active.id}` : state.section);
+  const hash = route ? `#${encodeURI(route)}` : '';
+  if (location.hash === hash) return;
+  const url = `${location.pathname}${location.search}${hash}`;
+  if (replace) history.replaceState(null, '', url);
+  else history.pushState(null, '', url);
+}
+
+async function applyRouteFromHash() {
+  if (!applyHashSection()) return false;
+  await loadCurrentSection();
+  renderApp();
+  if (state.panel === 'settings') await openSettings({ route: false });
+  if (state.panel === 'categories') openCategoryManager({ route: false });
+  if (state.routeNoteId) await openEditor(state.routeNoteId, { route: false });
+  return true;
+}
+
 async function boot() {
   loadEmergencySnapshot();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
@@ -366,7 +442,10 @@ async function boot() {
     const me = await api('/me');
       state.user = me.user;
       await loadAll();
+      await applyRouteFromHash();
+      syncSectionRoute({ replace: true });
       renderApp();
+      window.addEventListener('hashchange', applyRouteFromHash);
       startSyncLoop();
   } catch {
     renderLogin();
@@ -464,6 +543,8 @@ function renderLogin() {
       state.loginMfa = false;
       state.user = res.user;
       await loadAll();
+      await applyRouteFromHash();
+      syncSectionRoute({ replace: true });
       renderApp();
       startSyncLoop();
     } catch (err) { toast(err.message); }
@@ -479,6 +560,8 @@ function renderLogin() {
       state.loginMfa = false;
       state.user = res.user;
       await loadAll();
+      await applyRouteFromHash();
+      syncSectionRoute({ replace: true });
       renderApp();
       startSyncLoop();
     } catch (err) { toast(err.message); }
@@ -493,21 +576,82 @@ function authShell(title, subtitle, body) {
 }
 
 async function loadAll() {
-  const [clients, categories, counts] = await Promise.all([api('/clients'), api('/categories'), api('/asset-counts').catch(() => ({ counts: {} }))]);
+  const [clients, categories, counts, features] = await Promise.all([api('/clients'), api('/categories'), api('/asset-counts').catch(() => ({ counts: {} })), api('/features').catch(() => ({ features: defaultFeatures() }))]);
   state.clients = clients.clients;
   state.categories = categories.categories;
+  state.features = features.features || defaultFeatures();
+  if (featureOn('calendar') || featureOn('tasks')) state.calendars = (await api('/calendars').catch(() => ({ calendars: [] }))).calendars || [];
+  if (featureOn('calendar') || featureOn('tasks')) await loadNotificationData();
   if (state.clientId && !state.clients.some(client => String(client.id) === String(state.clientId))) {
     state.clientId = '';
     localStorage.removeItem('divault_client_id');
     localStorage.removeItem('qv_client_id');
   }
-  if (!state.section || ['Inbox', 'Personal', 'Projects', 'Vault', 'Archive', 'Trash'].includes(state.section)) state.section = 'notes:all';
+  normalizeCurrentSection();
   state.counts = counts.counts || {};
   await loadCurrentSection();
   state.lastSyncedAt = new Date();
   const syncedPending = await syncPendingNotes();
   if (syncedPending) await loadCurrentSection();
   await saveEmergencySnapshot();
+  startReminderPolling();
+}
+
+async function loadNotificationData() {
+  const jobs = [];
+  if (featureOn('tasks')) jobs.push(api('/tasks?view=all').then(res => { state.tasks = res.tasks || []; }).catch(() => null));
+  if (featureOn('calendar')) {
+    const start = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const end = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    jobs.push(api('/events?' + new URLSearchParams({ start: start.toISOString(), end: end.toISOString() })).then(res => { state.events = res.events || []; }).catch(() => null));
+  }
+  await Promise.all(jobs);
+}
+
+function applyHashSection() {
+  const hash = decodeURI(location.hash.replace(/^#\/?/, ''));
+  const [sectionPart, notePart] = hash.split('/note/');
+  const panel = sectionPart === 'settings' || sectionPart === 'categories' ? sectionPart : '';
+  const target = panel ? (state.section || defaultSection()) : (sectionAllowed(sectionPart) ? sectionPart : '');
+  const routeNoteId = notePart ? Number(notePart) : null;
+  if (!target) return false;
+  const changed = state.section !== target || state.panel !== panel || Number(state.active?.id || 0) !== Number(routeNoteId || 0);
+  if (!changed) return false;
+  state.section = target;
+  state.panel = panel;
+  state.routeNoteId = routeNoteId;
+  localStorage.setItem('divault_section', state.section);
+  state.q = '';
+  state.active = null;
+  state.activeExtra = null;
+  state.editingNote = false;
+  return true;
+}
+
+function startReminderPolling() {
+  if (state.reminderTimer) return;
+  pollReminders();
+  state.reminderTimer = setInterval(pollReminders, 60000);
+}
+
+async function pollReminders() {
+  if (!state.user || !(featureOn('calendar') || featureOn('tasks'))) return;
+  const enabled = feature('calendar').settings.reminders_enabled || feature('tasks').settings.reminders_enabled;
+  if (!enabled) return;
+  const res = await api('/reminders/due').catch(() => ({ reminders: [] }));
+  for (const reminder of res.reminders || []) showReminder(reminder);
+}
+
+async function showReminder(reminder) {
+  const title = `${reminder.kind === 'task' ? 'Task' : 'Calendar'} reminder`;
+  const body = `${reminder.title}${reminder.due_at ? ` · ${formatDateTime(reminder.due_at)}` : ''}`;
+  if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission().catch(() => null);
+  if ('Notification' in window && Notification.permission === 'granted') {
+    navigator.serviceWorker?.ready?.then(reg => reg.showNotification(title, { body, tag: `divault-${reminder.kind}-${reminder.id}`, data: { url: reminder.kind === 'task' ? '/#tasks' : '/#calendar' } })).catch(() => new Notification(title, { body }));
+  } else {
+    toast(`${title}: ${reminder.title}`);
+  }
+  await api(`/reminders/${reminder.kind}/${reminder.id}/dismiss`, { method: 'POST', body: {} }).catch(() => null);
 }
 
 async function saveEmergencySnapshot() {
@@ -751,11 +895,67 @@ function startSyncLoop() {
 }
 
 async function loadCurrentSection() {
+  if (state.section === 'home') {
+    await loadHomeData();
+    return;
+  }
+  if (state.section === 'calendar') {
+    await loadCalendarData();
+    return;
+  }
+  if (state.section === 'tasks') {
+    state.tasks = (await api('/tasks').catch(() => ({ tasks: [] }))).tasks || [];
+    return;
+  }
   if (isNoteSection(state.section)) {
     state.notes = (await loadNotes()).notes;
     return;
   }
   state.assets = (await loadAssets()).assets;
+}
+
+async function loadHomeData() {
+  const jobs = [loadNotes().catch(() => ({ notes: [] }))];
+  if (featureOn('calendar')) jobs.push(loadCalendarData().then(() => null));
+  if (featureOn('tasks')) jobs.push(api('/tasks').then(res => { state.tasks = res.tasks || []; }).catch(() => null));
+  const [notes] = await Promise.all(jobs);
+  state.notes = notes.notes || [];
+}
+
+async function loadCalendarData() {
+  if (!state.calendars.length) state.calendars = (await api('/calendars').catch(() => ({ calendars: [] }))).calendars || [];
+  const [visibleFirst, visibleLast] = calendarVisibleRange();
+  const miniFirst = new Date(state.miniCalendarDate.getFullYear(), state.miniCalendarDate.getMonth(), 1);
+  const miniLast = new Date(state.miniCalendarDate.getFullYear(), state.miniCalendarDate.getMonth() + 1, 0, 23, 59, 59);
+  const first = visibleFirst < miniFirst ? visibleFirst : miniFirst;
+  const last = visibleLast > miniLast ? visibleLast : miniLast;
+  const params = new URLSearchParams({ start: first.toISOString(), end: last.toISOString() });
+  state.events = (await api('/events?' + params).catch(() => ({ events: [] }))).events || [];
+  if (featureOn('tasks')) state.tasks = (await api('/tasks?view=all').catch(() => ({ tasks: [] }))).tasks || [];
+}
+
+function calendarVisibleRange() {
+  const date = state.calendarDate;
+  if (state.calendarView === 'day') {
+    return [new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0), new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59)];
+  }
+  if (state.calendarView === 'week') {
+    const start = startOfWeek(date);
+    return [start, new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6, 23, 59, 59)];
+  }
+  if (state.calendarView === 'schedule') {
+    return [new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0), new Date(date.getFullYear(), date.getMonth(), date.getDate() + 7, 23, 59, 59)];
+  }
+  if (state.calendarView === 'year') {
+    return [new Date(date.getFullYear(), 0, 1), new Date(date.getFullYear(), 11, 31, 23, 59, 59)];
+  }
+  return [new Date(date.getFullYear(), date.getMonth(), 1), new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59)];
+}
+
+function startOfWeek(value) {
+  const date = new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  date.setDate(date.getDate() - date.getDay());
+  return date;
 }
 
 async function loadNotes() {
@@ -794,6 +994,10 @@ function isNoteSection(section) {
   return String(section || '').startsWith('notes:');
 }
 
+function isUtilitySection(section) {
+  return ['home', 'calendar', 'tasks'].includes(String(section || ''));
+}
+
 function noteLayoutStorageKey(section = state.section) {
   return `divault_note_layout:${section || 'notes:all'}`;
 }
@@ -826,6 +1030,9 @@ function activeNoteCategoryId() {
 }
 
 function sectionLabel(section) {
+  if (section === 'home') return 'Home';
+  if (section === 'calendar') return 'Calendar';
+  if (section === 'tasks') return 'Tasks';
   if (section === 'notes:all') return 'All';
   if (section === 'notes:quick') return 'Quick notes';
   if (section === 'notes:archive') return 'Archive';
@@ -845,6 +1052,7 @@ function renderApp() {
       <nav class="nav">${renderNavGroups()}</nav>
       <div class="sidebar-footer">
         <button class="sync-pill sidebar-sync" data-sync-status type="button" id="syncBtn">${esc(syncLabel())}</button>
+        ${renderNotificationBell()}
         <button class="btn sidebar-action icon-only-btn" id="settingsBtn" aria-label="Settings" title="Settings">${toolIcon('settings', 'Settings')}</button>
         <button class="btn ghost sidebar-action icon-only-btn" id="logoutBtn" aria-label="Log out" title="Log out">${toolIcon('logout', 'Log out')}</button>
       </div>
@@ -861,15 +1069,47 @@ function renderApp() {
 
 function renderFilterBar(panelOpen) {
   if (panelOpen) return '';
+  if (state.section === 'home') return '';
+  if (state.section === 'calendar') return `<div class="filterbar calendar-filter"><div class="calendar-toolbar"><div class="btn-row calendar-nav-row"><button class="btn icon-only-btn" id="prevCalendarMonth" type="button" aria-label="Previous">‹</button><button class="btn" id="todayCalendarMonth" type="button">Today</button><button class="btn icon-only-btn" id="nextCalendarMonth" type="button" aria-label="Next">›</button></div><select class="calendar-view-select" id="calendarViewSelect" aria-label="Calendar view"><option value="day" ${state.calendarView === 'day' ? 'selected' : ''}>Day</option><option value="week" ${state.calendarView === 'week' ? 'selected' : ''}>Week</option><option value="month" ${state.calendarView === 'month' ? 'selected' : ''}>Month</option><option value="year" ${state.calendarView === 'year' ? 'selected' : ''}>Year</option><option value="schedule" ${state.calendarView === 'schedule' ? 'selected' : ''}>Schedule</option></select><div class="calendar-view-toggle" role="group" aria-label="Calendar view"><button class="btn ghost ${state.calendarView === 'day' ? 'active' : ''}" data-calendar-view="day" type="button">Day</button><button class="btn ghost ${state.calendarView === 'week' ? 'active' : ''}" data-calendar-view="week" type="button">Week</button><button class="btn ghost ${state.calendarView === 'month' ? 'active' : ''}" data-calendar-view="month" type="button">Month</button><button class="btn ghost ${state.calendarView === 'year' ? 'active' : ''}" data-calendar-view="year" type="button">Year</button><button class="btn ghost ${state.calendarView === 'schedule' ? 'active' : ''}" data-calendar-view="schedule" type="button">Schedule</button></div><div class="btn-row calendar-add-row"><button class="btn primary icon-only-btn action-fab" id="newEventBtn" type="button" aria-label="New event" title="New event">${toolIcon('calendar', 'New event')}</button><button class="btn primary icon-only-btn action-fab" id="newCalendarTaskBtn" type="button" aria-label="New task" title="New task">${toolIcon('check', 'New task')}</button></div></div></div>`;
+  if (state.section === 'tasks') return `<div class="filterbar"><input class="search" id="search" aria-label="Search tasks" placeholder="Search tasks..." value="${esc(state.q)}"><button class="btn primary" id="newTaskBtn" type="button">New task</button></div>`;
   if (isNoteSection(state.section)) {
     return `<div class="filterbar notes-filter"><div class="filter-actions filter-actions-left">${state.notes.length && !state.selectionMode ? '<button class="btn" type="button" id="startSelectNotes">Select</button>' : ''}${renderNoteLayoutToggle()}${renderNoteSortSelect()}${state.section === 'notes:trash' ? '<button class="btn danger" id="emptyTrashBtn" type="button">Empty recycle bin</button>' : ''}</div><input class="search" id="search" aria-label="Search notes. Press Q to focus search." title="Press Q to search" placeholder="Search ${esc(sectionLabel(state.section))}...  Q" value="${esc(state.q)}"><div class="filter-actions note-filter-actions"><button class="btn ghost icon-only-btn" id="shortcutsHelpBtn" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">?</button><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick notes" title="Quick notes (K)">${toolIcon('quick', 'Quick notes')}</button><button class="btn primary icon-only-btn action-fab" id="newBtn" aria-label="New note" title="New full note (N or +)">+</button></div></div>`;
   }
   return `<div class="filterbar"><select id="clientFilter" aria-label="Organization"><option value="">All organizations</option>${state.clients.map(c => `<option value="${c.id}" ${String(c.id) === String(state.clientId) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select><input class="search" id="search" aria-label="Search. Press Q to focus search." title="Press Q to search" placeholder="Search ${esc(sectionLabel(state.section))}...  Q" value="${esc(state.q)}"><label class="checkline"><input type="checkbox" id="includeArchive" ${state.includeArchive ? 'checked' : ''}> Include archive</label></div>`;
 }
 
+function notificationItems() {
+  const now = new Date();
+  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+  const soonEnd = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+  const recentStart = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+  const tasks = featureOn('tasks') ? state.tasks.filter(task => task.status !== 'done' && task.due_at).map(task => ({ kind: 'task', item: task, when: new Date(normalizeDate(task.due_at)) })).filter(entry => entry.when <= todayEnd) : [];
+  const events = featureOn('calendar') ? state.events.map(event => ({ kind: 'event', item: event, when: new Date(normalizeDate(event.starts_at)) })).filter(entry => entry.when >= recentStart && entry.when <= soonEnd) : [];
+  return [...tasks, ...events].sort((a, b) => a.when - b.when);
+}
+
+function renderNotificationBell() {
+  if (!homeAvailable()) return '';
+  const count = notificationItems().length;
+  return `<button class="btn sidebar-action icon-only-btn notification-bell" id="notificationBellBtn" aria-label="Notifications" title="Notifications">${toolIcon('bell', 'Notifications')}${count ? `<span class="notification-badge">${count > 99 ? '99+' : count}</span>` : ''}</button>`;
+}
+
+function renderNotificationDropdown() {
+  const items = notificationItems();
+  return `<div class="notification-menu" id="notificationMenu"><div class="section-title-row"><h3>Notifications</h3><span class="small muted">${items.length}</span></div>${items.length ? items.slice(0, 12).map(entry => {
+    if (entry.kind === 'task') {
+      const task = entry.item;
+      return `<div class="notification-row"><span class="agenda-kind task-kind">Task</span><span><b>${esc(task.title)}</b><br><span class="small muted">Due ${formatScheduleDateTime(task.due_at)}</span></span><div class="btn-row"><button class="btn ghost mini-btn" data-open-task="${task.id}" type="button">Open</button><button class="btn primary mini-btn" data-task-complete="${task.id}" type="button">Done</button></div></div>`;
+    }
+    const event = entry.item;
+      return `<div class="notification-row"><span class="agenda-kind event-kind">Event</span><span><b>${esc(event.title)}</b><br><span class="small muted">${formatScheduleDateTime(event.starts_at)}</span></span><button class="btn ghost mini-btn" data-open-event="${event.series_id || event.id}" type="button">Open</button></div>`;
+  }).join('') : '<p class="small muted">Nothing needs attention.</p>'}</div>`;
+}
+
 function renderTopbar(panelOpen) {
   if (!panelOpen && isNoteSection(state.section)) return '';
-  return `<div class="topbar"><div>${topbarKicker()}<h1>${esc(panelTitle())}</h1>${topbarSubtitle()}</div><div class="topbar-actions"><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick notes" title="Quick notes (K)">${toolIcon('quick', 'Quick notes')}</button><button class="btn primary icon-only-btn action-fab" id="newBtn" aria-label="New note" title="New full note (N or +)">+</button></div></div>`;
+  const actions = isUtilitySection(state.section) && !panelOpen ? '' : `<div class="topbar-actions"><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick notes" title="Quick notes (K)">${toolIcon('quick', 'Quick notes')}</button><button class="btn primary icon-only-btn action-fab" id="newBtn" aria-label="New note" title="New full note (N or +)">+</button></div>`;
+  return `<div class="topbar"><div>${topbarKicker()}<h1>${esc(panelTitle())}</h1>${topbarSubtitle()}</div>${actions}</div>`;
 }
 
 function panelTitle() {
@@ -881,13 +1121,14 @@ function panelTitle() {
 function topbarContext() {
   if (state.panel === 'categories') return 'Notes';
   if (state.panel === 'settings') return 'DiVault';
+  if (state.section === 'home') return 'Workspace';
+  if (state.section === 'calendar') return 'Calendar';
+  if (state.section === 'tasks') return 'Tasks';
   return isNoteSection(state.section) ? 'Notes' : `${activeClientName()} / ${panelTitle()}`;
 }
 
 function panelSubtitle() {
-  if (state.panel === 'categories') return 'Create, nest, and clean up categories without leaving this view.';
-  if (state.panel === 'settings') return 'Account, security, data, and admin tools in one place.';
-  return isNoteSection(state.section) ? 'Capture fast now. Organize calmly later.' : 'Track client documentation, assets, credentials, and procedures.';
+  return '';
 }
 
 function topbarKicker() {
@@ -895,16 +1136,21 @@ function topbarKicker() {
 }
 
 function topbarSubtitle() {
-  return isNoteSection(state.section) && !state.panel ? '' : `<p class="muted">${esc(panelSubtitle())}</p>`;
+  const subtitle = panelSubtitle();
+  return subtitle && !(isNoteSection(state.section) && !state.panel) ? `<p class="muted">${esc(subtitle)}</p>` : '';
 }
 
 function renderMainContent() {
   if (state.panel === 'categories') return renderCategoryManagerPanel();
   if (state.panel === 'settings') return `<section class="inline-panel card" id="settingsPanel">${state.settingsHtml || '<p class="muted">Loading settings...</p>'}</section>`;
+  if (state.section === 'home') return renderHome();
+  if (state.section === 'calendar') return renderCalendar();
+  if (state.section === 'tasks') return renderTasks();
   return isNoteSection(state.section) ? renderNotesWorkspace() : renderAssetTable();
 }
 
 function renderNavGroups() {
+  const utility = `<div class="nav-group"><div class="nav-heading">Workspace</div>${homeAvailable() ? renderNavButton('home', 'Home', 0) : ''}${featureOn('calendar') ? renderNavButton('calendar', 'Calendar', state.events.length || 0) : ''}${featureOn('tasks') ? renderNavButton('tasks', 'Tasks', state.tasks.filter(t => t.status !== 'done').length || 0) : ''}</div>`;
   const noteGroups = `<div class="nav-group"><div class="nav-heading">Categories<button class="mini-add" id="addCategoryBtn" type="button" aria-label="Manage note categories">Manage</button></div>
     ${renderNavButton('notes:all', 'All', state.counts['notes:all'] ?? 0, '')}
     ${renderNavButton('notes:quick', 'Quick notes', state.counts['notes:quick'] ?? 0, '')}
@@ -914,13 +1160,13 @@ function renderNavGroups() {
       ${renderNavButton('notes:trash', 'Recycle bin', state.counts['notes:trash'] ?? 0)}
     </div>
   </div>`;
-  return noteGroups;
+  return utility + noteGroups;
 }
 
 function renderNavButton(key, label, count = 0, dropCategoryId = undefined) {
   const drop = dropCategoryId !== undefined ? `data-drop-category-id="${dropCategoryId}"` : '';
   const category = key.startsWith('notes:cat:') ? state.categories.find(c => String(c.id) === key.replace('notes:cat:', '')) : null;
-  const icon = category?.icon || (key === 'notes:all' ? 'folder' : key === 'notes:quick' ? 'quick' : key === 'notes:archive' ? 'receipt' : key === 'notes:trash' ? 'trash' : 'folder');
+  const icon = category?.icon || (key === 'home' ? 'home' : key === 'calendar' ? 'calendar' : key === 'tasks' ? 'check' : key === 'notes:all' ? 'folder' : key === 'notes:quick' ? 'quick' : key === 'notes:archive' ? 'receipt' : key === 'notes:trash' ? 'trash' : 'folder');
   return `<button data-section="${esc(key)}" ${drop} class="${state.section === key ? 'active' : ''}" title="${esc(label)}"><span class="nav-icon">${renderCategoryIcon(icon)}</span><span class="nav-label">${esc(label)}</span><span class="nav-count">${count}</span></button>`;
 }
 
@@ -954,6 +1200,236 @@ function selectedVisibleNoteIds() {
 function activeClientName() {
   if (!state.clientId) return 'All organizations';
   return state.clients.find(c => String(c.id) === String(state.clientId))?.name || 'Organization';
+}
+
+function renderHome() {
+  const selected = new Date(state.calendarDate);
+  const scheduleStart = new Date(selected.getFullYear(), selected.getMonth(), selected.getDate(), 0, 0, 0);
+  const scheduleEnd = new Date(selected.getFullYear(), selected.getMonth(), selected.getDate() + 7, 23, 59, 59);
+  const todaysEvents = state.events.filter(event => new Date(normalizeDate(event.starts_at)).toDateString() === new Date().toDateString()).slice(0, 6);
+  const openTasks = state.tasks.filter(task => task.status !== 'done').slice(0, 8);
+  const dueToday = state.tasks.filter(task => task.status !== 'done' && task.due_at && new Date(normalizeDate(task.due_at)).toDateString() === new Date().toDateString()).slice(0, 6);
+  const recentNotes = feature('home').settings.notes_enabled ? state.notes.slice(0, 6) : [];
+  const scheduleItems = agendaItemsForRange(scheduleStart, scheduleEnd).slice(0, 12);
+  return `<div class="home-grid refined-home">
+    <section class="home-main stack">
+      <div class="home-hero card"><div><p class="breadcrumb">Today in DiVault</p><h2>${new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</h2></div><div class="home-stat-row"><span class="pill">${state.notes.length} notes</span><span class="pill">${todaysEvents.length} events today</span><span class="pill">${dueToday.length} tasks due</span></div><div class="home-action-row"><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick note" title="Quick note">${toolIcon('quick', 'Quick note')}</button><button class="btn icon-only-btn action-fab" id="newBtn" type="button" aria-label="Add note" title="Add note">+</button>${featureOn('calendar') ? `<button class="btn icon-only-btn action-fab" id="newEventBtn" type="button" aria-label="New event" title="New event">${toolIcon('calendar', 'New event')}</button>` : ''}${featureOn('tasks') ? `<button class="btn icon-only-btn action-fab" id="newCalendarTaskBtn" type="button" aria-label="New task" title="New task">${toolIcon('check', 'New task')}</button>` : ''}</div></div>
+      <section class="card home-widget stack"><div class="section-title-row"><h3>Recent notes</h3><button class="btn ghost" data-section="notes:all" type="button">View all</button></div>${recentNotes.length ? `<div class="home-note-grid">${recentNotes.map(note => `<button class="home-note-card" data-open="${note.id}"><b>${esc(note.title)}</b><span>${esc(note.updated_at || '')}</span></button>`).join('')}</div>` : '<p class="muted small">No recent notes.</p>'}</section>
+    </section>
+    <aside class="home-side stack">
+      ${featureOn('calendar') && feature('calendar').settings.home_enabled ? renderMiniMonthPicker() : ''}
+      <section class="card home-widget stack"><div class="section-title-row"><h3>Schedule</h3>${featureOn('calendar') ? '<button class="btn ghost" data-section="calendar" type="button">Calendar</button>' : ''}</div><p class="small muted">${scheduleStart.toLocaleDateString([], { month: 'short', day: 'numeric' })} - ${scheduleEnd.toLocaleDateString([], { month: 'short', day: 'numeric' })}</p>${(featureOn('calendar') || featureOn('tasks')) ? renderAgendaItems(scheduleItems, true, { readonly: true }) : '<p class="muted small">Calendar and tasks are disabled.</p>'}</section>
+    </aside>
+  </div>`;
+}
+
+function renderCalendar() {
+  if (state.calendarView === 'day') return renderCalendarDay();
+  if (state.calendarView === 'week') return renderCalendarWeek();
+  if (state.calendarView === 'year') return renderCalendarYear();
+  if (state.calendarView === 'schedule') return renderCalendarScheduleView();
+  const month = state.calendarDate;
+  const start = new Date(month.getFullYear(), month.getMonth(), 1);
+  const gridStart = new Date(start);
+  gridStart.setDate(start.getDate() - start.getDay());
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const day = new Date(gridStart);
+    day.setDate(gridStart.getDate() + i);
+    const dayEvents = eventsForDay(day);
+    const dayTasks = tasksForDay(day);
+    const classes = ['calendar-day'];
+    if (day.getMonth() !== month.getMonth()) classes.push('muted-day');
+    if (day < startOfToday()) classes.push('past-day');
+    if (day.toDateString() === new Date().toDateString()) classes.push('today');
+    cells.push(`<div class="${classes.join(' ')}" data-quick-add="${dateInputValue(new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 0))}"><div class="calendar-day-head"><b>${day.getDate()}</b></div>${dayEvents.slice(0, 3).map(event => renderEventChip(event)).join('')}${dayTasks.slice(0, 2).map(task => renderTaskChip(task)).join('')}${dayEvents.length + dayTasks.length > 5 ? `<p class="small muted">+${dayEvents.length + dayTasks.length - 5} more</p>` : ''}</div>`);
+  }
+  return `<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>${month.toLocaleString([], { month: 'long', year: 'numeric' })}</h2></div><div class="calendar-grid">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(day => `<div class="small muted"><b>${day}</b></div>`).join('')}${cells.join('')}</div></div>${renderCalendarSidebar('Upcoming', agendaItemsForRange(...calendarVisibleRange()).slice(0, 10))}</section>`;
+}
+
+function startOfToday() {
+  const today = new Date();
+  return new Date(today.getFullYear(), today.getMonth(), today.getDate());
+}
+
+function renderCalendarDay() {
+  const day = state.calendarDate;
+  const items = agendaItemsForRange(...calendarVisibleRange());
+  const hours = Array.from({ length: 24 }, (_, index) => index);
+  const hourRows = hours.map(hour => {
+    const slot = new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour, 0);
+    const hourItems = items.filter(entry => new Date(normalizeDate(entry.when)).getHours() === hour);
+    const classes = ['day-hour-slot'];
+    const now = new Date();
+    if (slot.toDateString() === now.toDateString() && hour === now.getHours()) classes.push('current-hour');
+    return `<div class="${classes.join(' ')}" data-quick-add="${dateInputValue(slot)}"><span class="day-hour-label">${formatHour(hour)}</span><div class="day-hour-content">${hourItems.length ? renderAgendaItems(hourItems, true) : ''}</div></div>`;
+  }).join('');
+  return `<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>${day.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</h2></div><div class="day-timeline">${hourRows}</div></div>${renderCalendarSidebar()}</section>`;
+}
+
+function renderCalendarWeek() {
+  const [start] = calendarVisibleRange();
+  const days = Array.from({ length: 7 }, (_, index) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + index));
+  const hours = Array.from({ length: 24 }, (_, index) => index);
+  const hasToday = days.some(day => day.toDateString() === new Date().toDateString());
+  const allDayRows = days.map(day => {
+    const items = agendaItemsForDay(day).filter(entry => entry.kind === 'task' || Number(entry.item.all_day));
+    return `<div class="week-all-day-cell">${items.slice(0, 3).map(entry => entry.kind === 'task' ? renderTaskChip(entry.item) : renderEventChip(entry.item)).join('') || '<span class="small muted">No all-day items</span>'}</div>`;
+  }).join('');
+  return `<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>${start.toLocaleDateString([], { month: 'short', day: 'numeric' })} - ${days[6].toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</h2></div><div class="week-calendar"><div class="week-time-head"></div>${days.map(day => `<div class="week-day-head ${day.toDateString() === new Date().toDateString() ? 'today' : ''}"><span>${day.toLocaleDateString([], { weekday: 'short' })}</span><b>${day.getDate()}</b></div>`).join('')}<div class="week-time-label">All day</div>${allDayRows}${hours.map(hour => `<div class="week-time-label ${hasToday && hour === new Date().getHours() ? 'current-hour-label' : ''}">${formatHour(hour)}</div>${days.map(day => {
+    const hourItems = agendaItemsForDay(day).filter(entry => !Number(entry.item.all_day) && new Date(normalizeDate(entry.when)).getHours() === hour);
+    const classes = ['week-hour-cell'];
+    const now = new Date();
+    if (day.toDateString() === now.toDateString()) classes.push('current-day');
+    if (day.toDateString() === now.toDateString() && hour === now.getHours()) classes.push('current-hour');
+    return `<div class="${classes.join(' ')}" data-quick-add="${dateInputValue(new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour, 0))}">${hourItems.map(entry => entry.kind === 'task' ? renderTaskChip(entry.item) : renderEventChip(entry.item)).join('') || '<span class="quick-add-hint">+</span>'}</div>`;
+  }).join('')}`).join('')}</div></div>${renderCalendarSidebar('This week', agendaItemsForRange(...calendarVisibleRange()).slice(0, 12))}</section>`;
+}
+
+function renderCalendarYear() {
+  const year = state.calendarDate.getFullYear();
+  const months = Array.from({ length: 12 }, (_, monthIndex) => renderYearMonth(year, monthIndex)).join('');
+  return `<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>${year}</h2></div><div class="year-grid">${months}</div></div>${renderCalendarSidebar('Scheduled this year', agendaItemsForRange(...calendarVisibleRange()).slice(0, 12))}</section>`;
+}
+
+function renderYearMonth(year, monthIndex) {
+  const start = new Date(year, monthIndex, 1);
+  const gridStart = new Date(start);
+  gridStart.setDate(start.getDate() - start.getDay());
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const day = new Date(gridStart);
+    day.setDate(gridStart.getDate() + i);
+    const count = eventsForDay(day).length + tasksForDay(day).length;
+    const classes = ['year-day'];
+    if (day.getMonth() !== monthIndex) classes.push('muted-day');
+    if (day < startOfToday()) classes.push('past-day');
+    if (day.toDateString() === new Date().toDateString()) classes.push('today');
+    if (count) classes.push('busy-day');
+    cells.push(`<button class="${classes.join(' ')}" data-year-day="${dateInputValue(day)}" type="button" aria-label="${day.toLocaleDateString()}${count ? ', busy' : ''}"><span>${day.getDate()}</span></button>`);
+  }
+  return `<section class="year-month"><h3>${start.toLocaleString([], { month: 'long' })}</h3><div class="year-weekdays">${['S','M','T','W','T','F','S'].map(day => `<span>${day}</span>`).join('')}</div><div class="year-days">${cells.join('')}</div></section>`;
+}
+
+function renderCalendarScheduleView() {
+  const [start, end] = calendarVisibleRange();
+  const days = [];
+  for (let day = new Date(start); day <= end; day.setDate(day.getDate() + 1)) {
+    const copy = new Date(day);
+    const items = agendaItemsForDay(copy);
+    days.push(`<section class="agenda-list-day"><div class="agenda-list-date"><span>${copy.toLocaleDateString([], { weekday: 'short' })}</span><b>${copy.toLocaleDateString([], { month: 'short', day: 'numeric' })}</b></div><div class="agenda-list-content"><div class="section-title-row"><h3>${copy.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</h3><span><button class="btn ghost mini-btn icon-only-btn" data-new-event-date="${dateInputValue(copy)}" type="button" aria-label="Add event" title="Add event">${toolIcon('calendar', 'Add event')}</button><button class="btn ghost mini-btn icon-only-btn" data-new-task-date="${dateInputValue(copy)}" type="button" aria-label="Add task" title="Add task">${toolIcon('check', 'Add task')}</button></span></div>${renderAgendaItems(items, true)}</div></section>`);
+  }
+  return `<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>Schedule</h2></div><div class="agenda-list-stack">${days.join('')}</div></div>${renderCalendarSidebar()}</section>`;
+}
+
+function renderCalendarSidebar(agendaTitle = '', agendaItems = []) {
+  const agenda = agendaTitle ? `<section class="card calendar-agenda stack"><h3>${esc(agendaTitle)}</h3>${renderAgendaItems(agendaItems, true, { readonly: true })}</section>` : '';
+  return `<aside class="calendar-side stack">${renderCalendarSharing()}${renderMiniMonthPicker()}${agenda}</aside>`;
+}
+
+function renderMiniMonthPicker() {
+  const month = state.miniCalendarDate;
+  const start = new Date(month.getFullYear(), month.getMonth(), 1);
+  const gridStart = new Date(start);
+  gridStart.setDate(start.getDate() - start.getDay());
+  const cells = [];
+  for (let i = 0; i < 42; i++) {
+    const day = new Date(gridStart);
+    day.setDate(gridStart.getDate() + i);
+    const count = eventsForDay(day).length + tasksForDay(day).length;
+    const classes = ['mini-month-day'];
+    if (day.getMonth() !== month.getMonth()) classes.push('muted-day');
+    if (day < startOfToday()) classes.push('past-day');
+    if (day.toDateString() === new Date().toDateString()) classes.push('today');
+    if (day.toDateString() === state.calendarDate.toDateString()) classes.push('selected');
+    cells.push(`<button class="${classes.join(' ')}" data-mini-calendar-day="${dateInputValue(day)}" type="button" aria-label="Open ${day.toLocaleDateString()}${count ? `, ${count} scheduled` : ''}"><span>${day.getDate()}</span>${count ? '<b></b>' : ''}</button>`);
+  }
+  return `<section class="card mini-month-card stack"><div class="section-title-row mini-month-head"><button class="btn ghost mini-btn" data-mini-month-shift="-1" type="button" aria-label="Previous month">‹</button><h3>${month.toLocaleString([], { month: 'long', year: 'numeric' })}</h3><button class="btn ghost mini-btn" data-mini-month-shift="1" type="button" aria-label="Next month">›</button></div><div class="mini-month-weekdays">${['S','M','T','W','T','F','S'].map(day => `<span>${day}</span>`).join('')}</div><div class="mini-month-grid">${cells.join('')}</div></section>`;
+}
+
+function formatHour(hour) {
+  const date = new Date(2026, 0, 1, hour, 0);
+  return date.toLocaleTimeString([], { hour: 'numeric' });
+}
+
+function eventsForDay(day) {
+  return state.events.filter(event => calendarVisible(event.calendar_id) && new Date(normalizeDate(event.starts_at)).toDateString() === day.toDateString());
+}
+
+function tasksForDay(day) {
+  return state.tasks.filter(task => (!task.calendar_id || calendarVisible(task.calendar_id)) && task.due_at && new Date(normalizeDate(task.due_at)).toDateString() === day.toDateString());
+}
+
+function agendaItemsForDay(day) {
+  return [
+    ...eventsForDay(day).map(event => ({ kind: 'event', when: event.starts_at, item: event })),
+    ...tasksForDay(day).map(task => ({ kind: 'task', when: task.due_at, item: task })),
+  ].sort((a, b) => new Date(normalizeDate(a.when)) - new Date(normalizeDate(b.when)));
+}
+
+function agendaItemsForRange(start, end) {
+  const startTs = start.getTime();
+  const endTs = end.getTime();
+  return [
+    ...state.events.filter(event => calendarVisible(event.calendar_id) && (() => { const time = new Date(normalizeDate(event.starts_at)).getTime(); return time >= startTs && time <= endTs; })()).map(event => ({ kind: 'event', when: event.starts_at, item: event })),
+    ...state.tasks.filter(task => (!task.calendar_id || calendarVisible(task.calendar_id)) && task.due_at && (() => { const time = new Date(normalizeDate(task.due_at)).getTime(); return time >= startTs && time <= endTs; })()).map(task => ({ kind: 'task', when: task.due_at, item: task })),
+  ].sort((a, b) => new Date(normalizeDate(a.when)) - new Date(normalizeDate(b.when)));
+}
+
+function renderEventChip(event) {
+  return `<button class="calendar-event-chip" style="--event-color:${esc(event.calendar_color || '#2563eb')}" data-open-event="${event.series_id || event.id}" title="${esc(event.title)}">${esc(event.title)}${event.recurrence_rule ? ' (recurs)' : ''}</button>`;
+}
+
+function renderTaskChip(task) {
+  return `<button class="calendar-event-chip task-chip" data-open-task="${task.id}" title="${esc(task.title)}">Task: ${esc(task.title)}</button>`;
+}
+
+function renderAgendaItems(items, spacious = false, options = {}) {
+  if (!items.length) return '<p class="muted small">Nothing scheduled.</p>';
+  const readonly = Boolean(options.readonly);
+  return items.map(entry => {
+    if (entry.kind === 'task') {
+      const task = entry.item;
+      if (readonly) return `<button class="agenda-item agenda-link ${spacious ? 'large' : ''} ${task.status === 'done' ? 'done' : ''}" data-open-task="${task.id}" type="button"><span class="agenda-kind task-kind">Task</span><span><b>${esc(task.title)}</b><br><span class="small muted">Due ${formatScheduleDateTime(task.due_at)}${task.calendar_name ? ` · ${esc(task.calendar_name)}` : ''}</span></span></button>`;
+      return `<div class="agenda-item ${spacious ? 'large' : ''} ${task.status === 'done' ? 'done' : ''}"><span class="agenda-kind task-kind">Task</span><span><b>${esc(task.title)}</b><br><span class="small muted">Due ${formatScheduleDateTime(task.due_at)}${task.calendar_name ? ` · ${esc(task.calendar_name)}` : ''}</span></span><div class="btn-row agenda-actions"><button class="btn ghost" data-open-task="${task.id}" type="button">Open</button>${task.status !== 'done' ? `<button class="btn primary" data-task-complete="${task.id}" type="button">Done</button>` : ''}</div></div>`;
+    }
+    const event = entry.item;
+    if (readonly) return `<button class="agenda-item agenda-link ${spacious ? 'large' : ''}" data-open-event="${event.series_id || event.id}" type="button"><span class="agenda-kind event-kind">Event</span><span><b>${esc(event.title)}${event.recurrence_rule ? ' (recurs)' : ''}</b><br><span class="small muted">${formatScheduleDateTime(event.starts_at)}${event.calendar_name ? ` · ${esc(event.calendar_name)}` : ''}</span></span></button>`;
+    return `<div class="agenda-item ${spacious ? 'large' : ''}"><span class="agenda-kind event-kind">Event</span><span><b>${esc(event.title)}${event.recurrence_rule ? ' (recurs)' : ''}</b><br><span class="small muted">${formatScheduleDateTime(event.starts_at)}${event.calendar_name ? ` · ${esc(event.calendar_name)}` : ''}</span></span><button class="btn ghost" data-open-event="${event.series_id || event.id}" type="button">Open</button></div>`;
+  }).join('');
+}
+
+function renderCalendarSharing() {
+  if (!state.calendars.length) return `<section class="card stack"><div class="section-title-row"><h3>Calendars</h3><button class="btn" id="addCalendarBtn" type="button">Add</button></div><p class="small muted">No calendars yet.</p></section>`;
+  const calendarRows = state.calendars.map(item => {
+    const canAdmin = ['owner', 'admin'].includes(item.permission);
+    const checked = visibleCalendarIds().has(Number(item.id));
+    return `<div class="calendar-manage-row"><label class="calendar-visible-toggle" title="Show calendar"><input type="checkbox" data-calendar-visible="${item.id}" ${checked ? 'checked' : ''}><span style="--calendar-color:${esc(item.color || '#635bff')}"></span></label><span class="calendar-row-name">${esc(item.name)}</span>${canAdmin ? `<button class="icon-action calendar-edit" data-edit-calendar="${item.id}" type="button" aria-label="Edit calendar" title="Edit calendar">${toolIcon('draw', 'Edit')}</button>` : ''}</div>`;
+  }).join('');
+  return `<section class="card stack"><div class="section-title-row"><h3>Calendars</h3><button class="btn" id="addCalendarBtn" type="button">Add</button></div><div class="stack">${calendarRows}</div></section>`;
+}
+
+function visibleCalendarIds() {
+  const all = new Set(state.calendars.map(calendar => Number(calendar.id)));
+  const stored = JSON.parse(localStorage.getItem('divault_visible_calendar_ids') || 'null');
+  if (!Array.isArray(stored) || !stored.length) return all;
+  const selected = new Set(stored.map(Number).filter(id => all.has(id)));
+  return selected.size ? selected : all;
+}
+
+function calendarVisible(calendarId) {
+  if (!calendarId) return true;
+  return visibleCalendarIds().has(Number(calendarId));
+}
+
+function renderTasks() {
+  const query = state.q.trim().toLowerCase();
+  const tasks = query ? state.tasks.filter(task => `${task.title} ${task.description || ''}`.toLowerCase().includes(query)) : state.tasks;
+  return `<section class="card task-board"><h2>Tasks</h2>${renderTaskRows(tasks)}</section>`;
+}
+
+function renderTaskRows(tasks) {
+  return tasks.length ? tasks.map(task => `<div class="task-row ${task.status === 'done' ? 'done' : ''}"><label class="checkline"><input type="checkbox" data-task-done="${task.id}" ${task.status === 'done' ? 'checked' : ''}><span><b>${esc(task.title)}</b><br><span class="small muted">${task.due_at ? `Due ${formatScheduleDateTime(task.due_at)}` : 'No due date'}${task.calendar_name ? ` · ${esc(task.calendar_name)}` : ''}</span></span></label><button class="btn ghost" data-open-task="${task.id}" type="button">Open</button></div>`).join('') : '<p class="muted small">No tasks.</p>';
 }
 
 function renderNotes() {
@@ -997,7 +1473,7 @@ function renderNoteSortSelect() {
 
 async function goHome() {
   if (!await confirmDiscardUnsaved()) return;
-  state.section = 'notes:all';
+  state.section = defaultSection();
   state.panel = '';
   state.q = '';
   state.active = null;
@@ -1005,7 +1481,7 @@ async function goHome() {
   state.editingNote = false;
   state.selectionMode = false;
   state.selectedNoteIds.clear();
-  localStorage.setItem('divault_section', state.section);
+  syncSectionRoute();
   toggleMobileMenu(false);
   await loadCurrentSection();
   renderApp();
@@ -1082,7 +1558,7 @@ function renderInlineEditor() {
         <input id="fileInput" class="hidden" type="file" multiple accept="image/*,.pdf,.txt,.md,.csv,.json,.zip,.doc,.docx,.xls,.xlsx">
         <div id="pendingAttachments">${renderPendingAttachments()}</div>
         ${renderNoteExtras(visibleBody, note.title || 'note', state.activeExtra || {})}
-        <p class="small muted editor-sync">Saved notes sync through the server on every device.</p>
+        <p class="small muted editor-sync"><span data-autosave-status>Autosaves while open.</span> Saved notes sync through the server on every device.</p>
       </div>
         ${id ? renderVersionPanel(id) : ''}
     </form>
@@ -1158,11 +1634,18 @@ function bindApp() {
   document.querySelector('#sidebarCollapse')?.addEventListener('click', () => toggleDesktopSidebar());
   restoreDesktopSidebarState();
   document.querySelector('#sidebarBackdrop')?.addEventListener('click', () => toggleMobileMenu(false));
+  document.querySelector('#notificationBellBtn')?.addEventListener('click', e => {
+    e.stopPropagation();
+    const existing = document.querySelector('#notificationMenu');
+    if (existing) return existing.remove();
+    document.querySelector('#notificationBellBtn').insertAdjacentHTML('afterend', renderNotificationDropdown());
+    bindNotificationMenuActions();
+  });
   document.querySelectorAll('[data-section]').forEach(btn => btn.addEventListener('click', async () => {
     if (!await confirmDiscardUnsaved()) return;
     state.section = btn.dataset.section;
     state.panel = '';
-    localStorage.setItem('divault_section', state.section);
+    syncSectionRoute();
     state.q = '';
     state.active = null;
     state.activeExtra = null;
@@ -1178,6 +1661,7 @@ function bindApp() {
     if (!await confirmDiscardUnsaved()) return;
     if (state.panel || !['notes:all', 'notes:quick'].includes(state.section)) {
       state.section = 'notes:all';
+      syncSectionRoute();
       state.panel = '';
       state.q = '';
       await loadCurrentSection();
@@ -1189,6 +1673,7 @@ function bindApp() {
     if (!await confirmDiscardUnsaved()) return;
     if (state.panel || !isNoteSection(state.section)) {
       state.section = 'notes:all';
+      syncSectionRoute();
       state.panel = '';
       state.q = '';
       await loadCurrentSection();
@@ -1248,7 +1733,7 @@ function bindApp() {
     state.selectionMode = false;
     state.selectedNoteIds.clear();
     await loadCurrentSection();
-    document.querySelector('#contentArea').innerHTML = isNoteSection(state.section) ? renderNotesWorkspace() : renderAssetTable();
+    document.querySelector('#contentArea').innerHTML = renderMainContent();
     bindContentActions();
   }, 240));
   bindContentActions();
@@ -1313,10 +1798,35 @@ function toggleMobileMenu(force) {
   toggle.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
 }
 
+function bindNotificationMenuActions() {
+  const menu = document.querySelector('#notificationMenu');
+  if (!menu) return;
+  const close = event => {
+    if (!menu.contains(event.target) && !event.target.closest('#notificationBellBtn')) {
+      menu.remove();
+      document.removeEventListener('pointerdown', close, true);
+    }
+  };
+  setTimeout(() => document.addEventListener('pointerdown', close, true), 0);
+  menu.querySelectorAll('[data-task-complete]').forEach(btn => btn.addEventListener('click', async () => {
+    const task = state.tasks.find(item => String(item.id) === String(btn.dataset.taskComplete));
+    if (!task) return;
+    await runUserAction(async () => {
+      await api(`/tasks/${task.id}`, { method: 'PATCH', body: { ...task, status: 'done', shared: Number(task.private) === 0 } });
+      await loadNotificationData();
+      await loadCurrentSection();
+      renderApp();
+    }, 'Task update failed');
+  }));
+  menu.querySelectorAll('[data-open-event]').forEach(btn => btn.addEventListener('click', () => openEventDialogById(btn.dataset.openEvent)));
+  menu.querySelectorAll('[data-open-task]').forEach(btn => btn.addEventListener('click', () => openTaskDialogById(btn.dataset.openTask)));
+}
+
 function bindContentActions() {
   bindCategoryPanel(document.querySelector('#categoryPanel'));
   bindSettingsPanel(document.querySelector('#settingsPanel'));
   bindNotePaneResize();
+  bindCalendarTaskActions();
   document.querySelectorAll('[data-open]').forEach(el => el.addEventListener('click', async () => {
     if (!await confirmDiscardUnsaved()) return;
     openEditor(Number(el.dataset.open));
@@ -1403,6 +1913,555 @@ function bindContentActions() {
       renderApp();
     }, 'Archive failed');
   }));
+}
+
+function bindCalendarTaskActions() {
+  document.querySelector('#prevCalendarMonth')?.addEventListener('click', async () => { shiftCalendarDate(-1); await loadCalendarData(); renderApp(); });
+  document.querySelector('#nextCalendarMonth')?.addEventListener('click', async () => { shiftCalendarDate(1); await loadCalendarData(); renderApp(); });
+  document.querySelector('#todayCalendarMonth')?.addEventListener('click', async () => { state.calendarDate = new Date(); state.miniCalendarDate = new Date(state.calendarDate); await loadCalendarData(); renderApp(); });
+  document.querySelectorAll('[data-calendar-view]').forEach(btn => btn.addEventListener('click', async () => {
+    state.calendarView = btn.dataset.calendarView;
+    localStorage.setItem('divault_calendar_view', state.calendarView);
+    await loadCalendarData();
+    renderApp();
+  }));
+  document.querySelector('#calendarViewSelect')?.addEventListener('change', async e => {
+    state.calendarView = e.target.value;
+    localStorage.setItem('divault_calendar_view', state.calendarView);
+    await loadCalendarData();
+    renderApp();
+  });
+  document.querySelector('#newEventBtn')?.addEventListener('click', () => openEventDialog());
+  document.querySelector('#newCalendarTaskBtn')?.addEventListener('click', () => openTaskDialog({ due_at: dateInputValue(state.calendarDate), calendar_id: state.calendars[0]?.id || '' }));
+  document.querySelectorAll('[data-new-event-date]').forEach(btn => btn.addEventListener('click', () => openEventDialog({ starts_at: `${btn.dataset.newEventDate}T09:00`.replace('T00:00T', 'T') })));
+  document.querySelectorAll('[data-new-task-date]').forEach(btn => btn.addEventListener('click', () => openTaskDialog({ due_at: `${btn.dataset.newTaskDate}T15:00`.replace('T00:00T', 'T'), calendar_id: state.calendars[0]?.id || '' })));
+  document.querySelectorAll('[data-quick-add]').forEach(el => el.addEventListener('click', e => {
+    if (e.target.closest('button, a, input, select, textarea')) return;
+    openQuickAddPopover(el, el.dataset.quickAdd);
+  }));
+  document.querySelectorAll('[data-year-day]').forEach(btn => btn.addEventListener('click', async () => {
+    state.calendarDate = new Date(normalizeDate(btn.dataset.yearDay));
+    state.calendarView = 'day';
+    localStorage.setItem('divault_calendar_view', state.calendarView);
+    await loadCalendarData();
+    renderApp();
+  }));
+  document.querySelectorAll('[data-mini-calendar-day]').forEach(btn => btn.addEventListener('click', async () => {
+    state.calendarDate = new Date(normalizeDate(btn.dataset.miniCalendarDay));
+    state.miniCalendarDate = new Date(state.calendarDate);
+    if (state.section !== 'home') {
+      state.calendarView = 'day';
+      localStorage.setItem('divault_calendar_view', state.calendarView);
+    }
+    await loadCalendarData();
+    renderApp();
+  }));
+  document.querySelectorAll('[data-mini-month-shift]').forEach(btn => btn.addEventListener('click', async () => {
+    state.miniCalendarDate = new Date(state.miniCalendarDate.getFullYear(), state.miniCalendarDate.getMonth() + Number(btn.dataset.miniMonthShift || 0), 1);
+    await loadCalendarData();
+    renderApp();
+  }));
+  document.querySelectorAll('[data-open-event]').forEach(btn => btn.addEventListener('click', () => openEventDialogById(btn.dataset.openEvent)));
+  document.querySelector('#newTaskBtn')?.addEventListener('click', () => openTaskDialog());
+  document.querySelectorAll('[data-open-task]').forEach(btn => btn.addEventListener('click', () => openTaskDialogById(btn.dataset.openTask)));
+  document.querySelectorAll('[data-task-done]').forEach(input => input.addEventListener('change', async e => {
+    const task = state.tasks.find(item => String(item.id) === String(e.target.dataset.taskDone));
+    if (!task) return;
+    await runUserAction(async () => {
+      await api(`/tasks/${task.id}`, { method: 'PATCH', body: { ...task, status: e.target.checked ? 'done' : 'open', shared: Number(task.private) === 0 } });
+      await loadCurrentSection();
+      renderApp();
+    }, 'Task update failed');
+  }));
+  document.querySelectorAll('[data-task-complete]').forEach(btn => btn.addEventListener('click', async () => {
+    const task = state.tasks.find(item => String(item.id) === String(btn.dataset.taskComplete));
+    if (!task) return;
+    await runUserAction(async () => {
+      await api(`/tasks/${task.id}`, { method: 'PATCH', body: { ...task, status: 'done', shared: Number(task.private) === 0 } });
+      await loadCurrentSection();
+      renderApp();
+    }, 'Task update failed');
+  }));
+  document.querySelectorAll('[data-calendar-color]').forEach(btn => btn.addEventListener('click', () => {
+    const input = btn.closest('form')?.querySelector('input[name="color"]');
+    if (input) {
+      input.value = btn.dataset.calendarColor;
+      input.closest('.round-color-input')?.style.setProperty('--picked-color', btn.dataset.calendarColor);
+    }
+  }));
+  document.querySelectorAll('.round-color-input input[type="color"]').forEach(input => input.addEventListener('input', () => input.closest('.round-color-input')?.style.setProperty('--picked-color', input.value)));
+  document.querySelector('#addCalendarBtn')?.addEventListener('click', () => openCalendarDialog());
+  document.querySelectorAll('[data-calendar-visible]').forEach(input => input.addEventListener('change', async () => {
+    const selected = [...document.querySelectorAll('[data-calendar-visible]:checked')].map(item => Number(item.dataset.calendarVisible));
+    localStorage.setItem('divault_visible_calendar_ids', JSON.stringify(selected));
+    await loadCalendarData();
+    renderApp();
+  }));
+  document.querySelectorAll('[data-edit-calendar]').forEach(btn => btn.addEventListener('click', () => openCalendarDialog(btn.dataset.editCalendar)));
+  document.querySelectorAll('[data-calendar-manage]').forEach(form => form.addEventListener('submit', async e => {
+    e.preventDefault();
+    await runUserAction(async () => {
+      await api(`/calendars/${form.dataset.calendarManage}`, { method: 'PATCH', body: Object.fromEntries(new FormData(form)) });
+      state.calendars = (await api('/calendars')).calendars || [];
+      await loadCalendarData();
+      renderApp();
+      toast('Calendar saved');
+    }, 'Calendar save failed');
+  }));
+  document.querySelectorAll('[data-delete-calendar]').forEach(btn => btn.addEventListener('click', async () => {
+    const calendar = state.calendars.find(item => String(item.id) === String(btn.dataset.deleteCalendar));
+    if (!await confirmDialog({ title: 'Delete calendar?', message: `Delete ${calendar?.name || 'this calendar'}? Events stay hidden with the archived calendar.`, confirmText: 'Delete' })) return;
+    await runUserAction(async () => {
+      await api(`/calendars/${btn.dataset.deleteCalendar}`, { method: 'DELETE' });
+      state.calendars = (await api('/calendars')).calendars || [];
+      await loadCalendarData();
+      renderApp();
+      toast('Calendar deleted');
+    }, 'Calendar delete failed');
+  }));
+  document.querySelector('#shareCalendarForm')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    const calendarId = state.calendars[0]?.id;
+    if (!calendarId) return;
+    await runUserAction(async () => {
+      await api(`/calendars/${calendarId}/share`, { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+      state.calendars = (await api('/calendars')).calendars || [];
+      renderApp();
+      toast('Calendar shared');
+    }, 'Calendar share failed');
+  });
+  document.querySelectorAll('[data-unshare-user]').forEach(btn => btn.addEventListener('click', async () => {
+    if (!await confirmDialog({ title: 'Remove calendar share?', message: 'Remove this user from the calendar?', confirmText: 'Remove' })) return;
+    await runUserAction(async () => {
+      await api(`/calendars/${btn.dataset.calendarId}/share/${btn.dataset.unshareUser}`, { method: 'DELETE' });
+      state.calendars = (await api('/calendars')).calendars || [];
+      renderApp();
+      toast('Calendar share removed');
+    }, 'Calendar unshare failed');
+  }));
+  document.querySelectorAll('[data-share-user]').forEach(form => form.addEventListener('submit', async e => {
+    e.preventDefault();
+    await runUserAction(async () => {
+      await api(`/calendars/${form.dataset.calendarId}/share`, { method: 'POST', body: { email: form.dataset.shareEmail, permission: new FormData(form).get('permission') } });
+      state.calendars = (await api('/calendars')).calendars || [];
+      renderApp();
+      toast('Share updated');
+    }, 'Share update failed');
+  }));
+}
+
+function openQuickAddPopover(anchor, value) {
+  document.querySelector('.quick-add-popover')?.remove();
+  const when = value || dateInputValue(state.calendarDate);
+  const popover = document.createElement('div');
+  popover.className = 'quick-add-popover';
+  popover.innerHTML = `<b>${formatDateTime(when)}</b><div class="btn-row"><button class="btn primary mini-btn icon-only-btn" data-quick-event type="button" aria-label="Add event" title="Add event">${toolIcon('calendar', 'Add event')}</button><button class="btn mini-btn icon-only-btn" data-quick-task type="button" aria-label="Add task" title="Add task">${toolIcon('check', 'Add task')}</button></div>`;
+  document.body.appendChild(popover);
+  const rect = anchor.getBoundingClientRect();
+  popover.style.left = `${Math.min(rect.left + window.scrollX, window.scrollX + window.innerWidth - 190)}px`;
+  popover.style.top = `${rect.top + window.scrollY + Math.min(rect.height, 42)}px`;
+  const close = event => {
+    if (!popover.contains(event.target)) {
+      popover.remove();
+      document.removeEventListener('pointerdown', close, true);
+    }
+  };
+  setTimeout(() => document.addEventListener('pointerdown', close, true), 0);
+  popover.querySelector('[data-quick-event]').addEventListener('click', () => {
+    const end = new Date(normalizeDate(when));
+    end.setHours(end.getHours() + 1);
+    popover.remove();
+    openEventDialog({ starts_at: when, ends_at: dateInputValue(end) });
+  });
+  popover.querySelector('[data-quick-task]').addEventListener('click', () => { popover.remove(); openTaskDialog({ due_at: when, calendar_id: state.calendars[0]?.id || '' }); });
+}
+
+function shiftCalendarDate(direction) {
+  const date = new Date(state.calendarDate);
+  if (state.calendarView === 'day') date.setDate(date.getDate() + direction);
+  else if (state.calendarView === 'week' || state.calendarView === 'schedule') date.setDate(date.getDate() + (direction * 7));
+  else if (state.calendarView === 'year') date.setFullYear(date.getFullYear() + direction);
+  else date.setMonth(date.getMonth() + direction);
+  state.calendarDate = date;
+  state.miniCalendarDate = new Date(date);
+}
+
+function openCalendarDialog(id = '') {
+  const calendar = id ? state.calendars.find(item => String(item.id) === String(id)) : { name: '', color: '#2563eb', description: '', shares: [], permission: 'owner' };
+  if (!calendar) return;
+  const editing = Boolean(id);
+  const canAdmin = ['owner', 'admin'].includes(calendar.permission);
+  const shares = (calendar.shares || []).map(share => `<form class="share-row" data-dialog-share-user="${share.user_id}" data-share-email="${esc(share.email)}" data-calendar-id="${calendar.id}"><span><b>${esc(share.name || share.email)}</b><br><span class="small muted">${esc(share.email)}</span></span><select name="permission" aria-label="Share permission"><option value="view" ${share.permission === 'view' ? 'selected' : ''}>View</option><option value="edit" ${share.permission === 'edit' ? 'selected' : ''}>Edit</option><option value="admin" ${share.permission === 'admin' ? 'selected' : ''}>Admin</option></select><button class="btn ghost mini-btn" type="submit">Save</button><button class="btn danger mini-btn" data-dialog-unshare-user="${share.user_id}" data-calendar-id="${calendar.id}" type="button">Remove</button></form>`).join('') || '<p class="small muted">Not shared with anyone yet.</p>';
+  const modal = document.createElement('div');
+  modal.className = 'editor';
+  modal.innerHTML = `<section class="editor-panel small-panel calendar-dialog"><div class="topbar"><div><h2>${editing ? 'Edit calendar' : 'Add calendar'}</h2><p class="muted small">${editing ? 'Manage this calendar.' : 'Create a calendar and choose a color.'}</p></div><button class="btn ghost" type="button" data-close>Close</button></div><form id="calendarEditForm" class="calendar-dialog-form"><label class="field"><span>Name</span><input name="name" value="${esc(calendar.name)}" placeholder="Calendar name" required ${canAdmin ? '' : 'disabled'}></label><label class="field compact-color-field"><span>Color</span><label class="round-color-input" style="--picked-color:${esc(calendar.color || '#635bff')}" aria-label="Calendar color"><input name="color" type="color" value="${esc(calendar.color || '#635bff')}" ${canAdmin ? '' : 'disabled'}></label></label><label class="field calendar-description-field"><span>Description</span><textarea name="description" ${canAdmin ? '' : 'disabled'}>${esc(calendar.description || '')}</textarea></label>${canAdmin ? `<div class="btn-row dialog-action-row"><button class="btn primary">${editing ? 'Save' : 'Add calendar'}</button>${editing ? '<button class="btn danger" id="deleteCalendarDialogBtn" type="button">Delete</button>' : ''}</div>` : '<p class="small muted">You can view this shared calendar.</p>'}</form>${editing && canAdmin ? `<section class="calendar-dialog-share import-export-panel"><div class="section-title-row"><h3>Import / export</h3><div class="dialog-inline-actions"><button class="btn" data-dialog-import-calendar="${calendar.id}" type="button">Import ICS</button><a class="btn" href="/api/calendar/export/${calendar.id}.ics">Export ICS</a></div></div><p class="small muted">Import or export only ${esc(calendar.name)}.</p></section><section class="calendar-dialog-share"><div class="section-title-row"><h3>Sharing</h3></div><form id="shareCalendarForm" class="compact-dialog-share-form"><input name="email" type="email" placeholder="user@example.com" required><select name="permission"><option value="view">View</option><option value="edit">Edit</option><option value="admin">Admin</option></select><button class="btn">Share</button></form><div class="stack">${shares}</div></section>` : ''}</section>`;
+  document.body.appendChild(modal);
+  setupAccessibleModal(modal, 'input[name="name"]');
+  modal.querySelector('.round-color-input input[type="color"]')?.addEventListener('input', e => e.target.closest('.round-color-input')?.style.setProperty('--picked-color', e.target.value));
+  modal.querySelector('#calendarEditForm')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    await runUserAction(async () => {
+      await api(editing ? `/calendars/${calendar.id}` : '/calendars', { method: editing ? 'PATCH' : 'POST', body: Object.fromEntries(new FormData(e.target)) });
+      state.calendars = (await api('/calendars')).calendars || [];
+      await loadCalendarData();
+      modal.remove();
+      renderApp();
+      toast(editing ? 'Calendar saved' : 'Calendar added');
+    }, editing ? 'Calendar save failed' : 'Calendar create failed');
+  });
+  modal.querySelector('[data-dialog-import-calendar]')?.addEventListener('click', () => importIcsFile(calendar.id));
+  modal.querySelector('#deleteCalendarDialogBtn')?.addEventListener('click', async () => {
+    if (!await confirmDialog({ title: 'Delete calendar?', message: `Delete ${calendar.name}? Events stay hidden with the archived calendar.`, confirmText: 'Delete' })) return;
+    await runUserAction(async () => {
+      await api(`/calendars/${calendar.id}`, { method: 'DELETE' });
+      state.calendars = (await api('/calendars')).calendars || [];
+      await loadCalendarData();
+      modal.remove();
+      renderApp();
+      toast('Calendar deleted');
+    }, 'Calendar delete failed');
+  });
+  modal.querySelector('#shareCalendarForm')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    await runUserAction(async () => {
+      await api(`/calendars/${calendar.id}/share`, { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+      state.calendars = (await api('/calendars')).calendars || [];
+      modal.remove();
+      renderApp();
+      toast('Calendar shared');
+    }, 'Calendar share failed');
+  });
+  modal.querySelectorAll('[data-dialog-share-user]').forEach(form => form.addEventListener('submit', async e => {
+    e.preventDefault();
+    await runUserAction(async () => {
+      await api(`/calendars/${form.dataset.calendarId}/share`, { method: 'POST', body: { email: form.dataset.shareEmail, permission: new FormData(form).get('permission') } });
+      state.calendars = (await api('/calendars')).calendars || [];
+      modal.remove();
+      renderApp();
+      toast('Share updated');
+    }, 'Share update failed');
+  }));
+  modal.querySelectorAll('[data-dialog-unshare-user]').forEach(btn => btn.addEventListener('click', async () => {
+    if (!await confirmDialog({ title: 'Remove calendar share?', message: 'Remove this user from the calendar?', confirmText: 'Remove' })) return;
+    await runUserAction(async () => {
+      await api(`/calendars/${btn.dataset.calendarId}/share/${btn.dataset.dialogUnshareUser}`, { method: 'DELETE' });
+      state.calendars = (await api('/calendars')).calendars || [];
+      modal.remove();
+      renderApp();
+      toast('Calendar share removed');
+    }, 'Calendar unshare failed');
+  }));
+}
+
+async function openEventDialogById(id) {
+  await runUserAction(async () => {
+    const res = await api(`/events/${id}`);
+    openEventDetailDialog(res.event || {});
+  }, 'Event load failed');
+}
+
+async function openTaskDialogById(id) {
+  await runUserAction(async () => {
+    const res = await api(`/tasks/${id}`);
+    openTaskDetailDialog(res.task || {});
+  }, 'Task load failed');
+}
+
+async function ensureNotesForLinking(force = false) {
+  if (!force && state.linkableNotesLoaded && state.notes.length) return;
+  state.notes = (await api('/notes?view=all&sort=updated_desc').catch(() => ({ notes: [] }))).notes || [];
+  state.linkableNotesLoaded = true;
+}
+
+function noteLinkOptions(selected = []) {
+  const selectedSet = new Set((selected || []).map(note => String(note.id || note)));
+  const selectedNotes = (selected || []).filter(note => note && typeof note === 'object');
+  const byId = new Map([...selectedNotes, ...state.notes].filter(note => note?.id).map(note => [String(note.id), note]));
+  return [...byId.values()].slice(0, 240).map(note => `<option value="${note.id}" ${selectedSet.has(String(note.id)) ? 'selected' : ''}>${esc(note.title || 'Untitled note')}</option>`).join('');
+}
+
+function recurrenceLabel(rule = '') {
+  if (!rule) return 'Does not repeat';
+  const match = String(rule).match(/FREQ=([^;]+)/i);
+  return match ? `${match[1].charAt(0).toUpperCase()}${match[1].slice(1).toLowerCase()}` : rule;
+}
+
+function reminderLabel(minutes) {
+  const value = Number(minutes);
+  if (!Number.isFinite(value) || value < 0) return 'No reminder';
+  if (value === 0) return 'At start time';
+  if (value % 1440 === 0) return `${value / 1440} day${value === 1440 ? '' : 's'} before`;
+  if (value % 60 === 0) return `${value / 60} hour${value === 60 ? '' : 's'} before`;
+  return `${value} minutes before`;
+}
+
+function detailRow(label, value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  return `<div class="detail-row"><span>${esc(label)}</span><b>${esc(text)}</b></div>`;
+}
+
+function linkedNoteDetailList(notes = []) {
+  if (!notes.length) return '<p class="small muted">No linked notes.</p>';
+  return `<div class="linked-note-picks detail-note-list">${notes.map(note => `<span class="linked-note-pill"><span>${esc(note.title || 'Untitled note')}</span><button type="button" data-open-linked-note="${esc(note.id)}">View</button></span>`).join('')}</div>`;
+}
+
+async function openLinkedNoteFromModal(modal, id) {
+  await ensureNotesForLinking(true);
+  const noteId = Number(id);
+  if (!state.notes.find(note => Number(note.id) === noteId)) return toast('Linked note not found');
+  modal?.remove();
+  state.section = 'notes:all';
+  state.panel = '';
+  state.active = state.notes.find(note => Number(note.id) === noteId) || null;
+  state.editingNote = false;
+  renderApp();
+  openEditor(noteId);
+}
+
+function printDetail(title, rowsHtml, notesHtml, description = '') {
+  const printWindow = window.open('', '_blank', 'width=720,height=860');
+  if (!printWindow) return window.print();
+  printWindow.document.write(`<!doctype html><html><head><title>${esc(title)}</title><style>body{font-family:Arial,sans-serif;padding:32px;color:#111}h1{margin:0 0 18px}.detail-row{display:grid;grid-template-columns:150px 1fr;gap:12px;padding:8px 0;border-bottom:1px solid #ddd}.detail-row span{color:#666}.description{white-space:pre-wrap;margin-top:18px}.linked-note-pill{display:inline-block;margin:4px 6px 4px 0;padding:5px 10px;border:1px solid #ccc;border-radius:999px}</style></head><body><h1>${esc(title)}</h1>${rowsHtml}<div class="description">${esc(description || '')}</div><h2>Linked notes</h2>${notesHtml.replace(/<button[^>]*>.*?<\/button>/g, '')}</body></html>`);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
+}
+
+function openEventDetailDialog(event = {}) {
+  if (!event.id) return;
+  const modal = document.createElement('div');
+  modal.className = 'editor';
+  const rows = [
+    detailRow('Calendar', event.calendar_name),
+    detailRow('Starts', formatScheduleDateTime(event.starts_at)),
+    detailRow('Ends', event.ends_at ? formatScheduleDateTime(event.ends_at) : ''),
+    detailRow('All day', Number(event.all_day) ? 'Yes' : ''),
+    detailRow('Repeats', recurrenceLabel(event.recurrence_rule)),
+    detailRow('Reminder', reminderLabel(event.reminder_minutes)),
+    detailRow('Location', event.location)
+  ].join('');
+  const notes = linkedNoteDetailList(event.notes || []);
+  modal.innerHTML = `<section class="editor-panel small-panel detail-dialog"><div class="topbar"><div><p class="breadcrumb">Event</p><h2>${esc(event.title || 'Untitled event')}</h2></div><div class="btn-row"><button class="btn ghost icon-only-btn" type="button" data-print-detail aria-label="Print" title="Print">${toolIcon('print', 'Print')}</button><button class="btn ghost icon-only-btn" type="button" data-edit-detail aria-label="Edit" title="Edit">${toolIcon('draw', 'Edit')}</button><button class="btn danger icon-only-btn" type="button" data-delete-detail aria-label="Delete" title="Delete">${toolIcon('trash', 'Delete')}</button><button class="btn ghost" type="button" data-close>Close</button></div></div><div class="detail-grid">${rows}</div>${event.description ? `<div class="detail-description"><h3>Description</h3><p>${esc(event.description)}</p></div>` : ''}<section class="detail-notes"><h3>Related notes</h3>${notes}</section></section>`;
+  document.body.appendChild(modal);
+  setupAccessibleModal(modal, '[data-close]');
+  modal.querySelector('[data-edit-detail]').addEventListener('click', () => { modal.remove(); openEventDialog(event); });
+  modal.querySelector('[data-print-detail]').addEventListener('click', () => printDetail(event.title || 'Event', rows, notes, event.description));
+  modal.querySelector('[data-delete-detail]').addEventListener('click', async () => {
+    if (!await confirmDialog({ title: 'Delete event?', message: 'Delete this calendar event?', confirmText: 'Delete' })) return;
+    await runUserAction(async () => {
+      await api(`/events/${event.id}`, { method: 'DELETE' });
+      modal.remove();
+      await loadCurrentSection();
+      renderApp();
+      toast('Event deleted');
+    }, 'Event delete failed');
+  });
+  modal.addEventListener('click', e => {
+    const open = e.target.closest('[data-open-linked-note]');
+    if (open) openLinkedNoteFromModal(modal, open.dataset.openLinkedNote);
+  });
+}
+
+function openTaskDetailDialog(task = {}) {
+  if (!task.id) return;
+  const modal = document.createElement('div');
+  modal.className = 'editor';
+  const rows = [
+    detailRow('Status', task.status || 'open'),
+    detailRow('Due', task.due_at ? formatScheduleDateTime(task.due_at) : 'No due date'),
+    detailRow('Calendar', task.calendar_name || (Number(task.private) ? 'Private task' : '')),
+    detailRow('Priority', task.priority ? task.priority : ''),
+    detailRow('Reminder', reminderLabel(task.reminder_minutes))
+  ].join('');
+  const notes = linkedNoteDetailList(task.notes || []);
+  modal.innerHTML = `<section class="editor-panel small-panel detail-dialog"><div class="topbar"><div><p class="breadcrumb">Task</p><h2>${esc(task.title || 'Untitled task')}</h2></div><div class="btn-row"><button class="btn ghost icon-only-btn" type="button" data-print-detail aria-label="Print" title="Print">${toolIcon('print', 'Print')}</button><button class="btn ghost icon-only-btn" type="button" data-edit-detail aria-label="Edit" title="Edit">${toolIcon('draw', 'Edit')}</button><button class="btn danger icon-only-btn" type="button" data-delete-detail aria-label="Delete" title="Delete">${toolIcon('trash', 'Delete')}</button><button class="btn ghost" type="button" data-close>Close</button></div></div><div class="detail-grid">${rows}</div>${task.description ? `<div class="detail-description"><h3>Description</h3><p>${esc(task.description)}</p></div>` : ''}<section class="detail-notes"><h3>Related notes</h3>${notes}</section></section>`;
+  document.body.appendChild(modal);
+  setupAccessibleModal(modal, '[data-close]');
+  modal.querySelector('[data-edit-detail]').addEventListener('click', () => { modal.remove(); openTaskDialog(task); });
+  modal.querySelector('[data-print-detail]').addEventListener('click', () => printDetail(task.title || 'Task', rows, notes, task.description));
+  modal.querySelector('[data-delete-detail]').addEventListener('click', async () => {
+    if (!await confirmDialog({ title: 'Delete task?', message: 'Delete this task?', confirmText: 'Delete' })) return;
+    await runUserAction(async () => {
+      await api(`/tasks/${task.id}`, { method: 'DELETE' });
+      modal.remove();
+      await loadCurrentSection();
+      renderApp();
+      toast('Task deleted');
+    }, 'Task delete failed');
+  });
+  modal.addEventListener('click', e => {
+    const open = e.target.closest('[data-open-linked-note]');
+    if (open) openLinkedNoteFromModal(modal, open.dataset.openLinkedNote);
+  });
+}
+
+function enhanceLinkedNotes(modal) {
+  const select = modal.querySelector('select[name="note_ids"]');
+  if (!select || select.dataset.enhanced === '1') return;
+  select.dataset.enhanced = '1';
+  select.classList.add('linked-note-select');
+  select.insertAdjacentHTML('afterend', `<div class="linked-note-tools"><div class="linked-note-picks" data-linked-note-picks></div><div class="linked-note-search"><input type="search" data-linked-note-search placeholder="Search notes to link"><div class="linked-note-results" data-linked-note-results></div></div><div class="linked-note-create"><input type="text" data-linked-note-title placeholder="New linked note title"><button class="btn" type="button" data-add-linked-note>Add note</button></div></div>`);
+  const selectedIds = () => new Set([...select.selectedOptions].map(option => String(option.value)));
+  const noteById = id => state.notes.find(note => String(note.id) === String(id));
+  const setSelected = (id, selected) => {
+    const option = [...select.options].find(item => String(item.value) === String(id));
+    if (option) option.selected = selected;
+  };
+  const renderPicks = () => {
+    const picks = [...select.selectedOptions].map(option => `<span class="linked-note-pill"><span>${esc(option.textContent || 'Untitled note')}</span><button type="button" data-open-linked-note="${esc(option.value)}">View</button><button type="button" data-remove-linked-note="${esc(option.value)}" aria-label="Unlink ${esc(option.textContent || 'linked note')}" title="Unlink from this item on save">Unlink</button></span>`).join('');
+    const target = modal.querySelector('[data-linked-note-picks]');
+    if (target) target.innerHTML = picks || '<span class="small muted">No linked notes selected.</span>';
+  };
+  const renderResults = () => {
+    const query = String(modal.querySelector('[data-linked-note-search]')?.value || '').trim().toLowerCase();
+    const selected = selectedIds();
+    const matches = state.notes
+      .filter(note => !selected.has(String(note.id)))
+      .filter(note => !query || String(note.title || '').toLowerCase().includes(query))
+      .slice(0, 8);
+    const target = modal.querySelector('[data-linked-note-results]');
+    if (target) target.innerHTML = matches.map(note => `<button class="linked-note-result" type="button" data-pick-linked-note="${note.id}"><b>${esc(note.title || 'Untitled note')}</b><span>${esc(note.updated_at || '')}</span></button>`).join('') || '<span class="small muted">No matching notes.</span>';
+  };
+  select.addEventListener('change', renderPicks);
+  modal.querySelector('[data-linked-note-search]')?.addEventListener('input', renderResults);
+  modal.addEventListener('click', async e => {
+    const pick = e.target.closest('[data-pick-linked-note]');
+    if (pick) {
+      setSelected(pick.dataset.pickLinkedNote, true);
+      const search = modal.querySelector('[data-linked-note-search]');
+      if (search) search.value = '';
+      renderPicks();
+      renderResults();
+      return;
+    }
+    const remove = e.target.closest('[data-remove-linked-note]');
+    if (remove) {
+      setSelected(remove.dataset.removeLinkedNote, false);
+      renderPicks();
+      renderResults();
+      return;
+    }
+    const open = e.target.closest('[data-open-linked-note]');
+    if (open) {
+      if (!noteById(open.dataset.openLinkedNote)) await ensureNotesForLinking(true);
+      await openLinkedNoteFromModal(modal, open.dataset.openLinkedNote);
+    }
+  });
+  modal.querySelector('[data-add-linked-note]')?.addEventListener('click', async () => {
+    const input = modal.querySelector('[data-linked-note-title]');
+    const title = String(input?.value || '').trim();
+    if (!title) return toast('Enter a note title first');
+    await runUserAction(async () => {
+      const note = await api('/notes', { method: 'POST', body: { title, body: '', section: 'All', type: 'text' } });
+      const id = Number(note.id);
+      if (!id) throw new Error('Linked note was not created');
+      state.notes.unshift({ id, title });
+      state.linkableNotesLoaded = true;
+      const option = document.createElement('option');
+      option.value = String(id);
+      option.textContent = title;
+      option.selected = true;
+      select.prepend(option);
+      if (input) input.value = '';
+      renderPicks();
+      renderResults();
+      toast('Linked note added');
+    }, 'Linked note create failed');
+  });
+  renderPicks();
+  renderResults();
+}
+
+async function openEventDialog(event = {}) {
+  await ensureNotesForLinking();
+  const modal = document.createElement('div');
+  modal.className = 'editor';
+  const calendarOptions = state.calendars.map(calendar => `<option value="${calendar.id}" ${String(calendar.id) === String(event.calendar_id || state.calendars[0]?.id || '') ? 'selected' : ''}>${esc(calendar.name)}</option>`).join('');
+  const reminderMinutes = event.id ? (event.reminder_minutes ?? -1) : (feature('calendar').settings.default_reminder_minutes ?? 10);
+  modal.innerHTML = `<section class="editor-panel small-panel"><div class="topbar"><div><h2>${event.id ? 'Edit event' : 'New event'}</h2></div><button class="btn ghost" type="button" data-close>Cancel</button></div><form id="eventForm" class="stack"><label class="field"><span>Calendar</span><select name="calendar_id">${calendarOptions}</select></label><label class="field"><span>Title</span><input name="title" value="${esc(event.title || '')}" required></label><label class="field"><span>Starts</span><input name="starts_at" type="datetime-local" value="${esc(dateInputValue(event.starts_at || new Date()))}" required></label><label class="field"><span>Ends</span><input name="ends_at" type="datetime-local" value="${esc(dateInputValue(event.ends_at || event.starts_at || new Date()))}"></label><label class="checkline"><input name="all_day" type="checkbox" ${Number(event.all_day) ? 'checked' : ''}> All day</label><label class="field"><span>Repeats</span><select name="recurrence_rule"><option value="">Does not repeat</option><option value="FREQ=DAILY" ${event.recurrence_rule === 'FREQ=DAILY' ? 'selected' : ''}>Daily</option><option value="FREQ=WEEKLY" ${event.recurrence_rule === 'FREQ=WEEKLY' ? 'selected' : ''}>Weekly</option><option value="FREQ=MONTHLY" ${event.recurrence_rule === 'FREQ=MONTHLY' ? 'selected' : ''}>Monthly</option><option value="FREQ=YEARLY" ${event.recurrence_rule === 'FREQ=YEARLY' ? 'selected' : ''}>Yearly</option></select></label><label class="field"><span>Reminder minutes before</span><input name="reminder_minutes" type="number" min="-1" max="10080" value="${esc(reminderMinutes)}"></label><label class="field"><span>Location</span><input name="location" value="${esc(event.location || '')}"></label><label class="field"><span>Linked notes</span><select name="note_ids" multiple size="5">${noteLinkOptions(event.notes || [])}</select></label><label class="field"><span>Description</span><textarea name="description">${esc(event.description || '')}</textarea></label><div class="btn-row"><button class="btn primary">Save event</button>${event.id ? '<button class="btn danger" type="button" id="deleteEventBtn">Delete</button>' : ''}</div></form></section>`;
+  document.body.appendChild(modal);
+  setupAccessibleModal(modal, 'input[name="title"]');
+  enhanceLinkedNotes(modal);
+  modal.querySelector('#eventForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    data.note_ids = [...e.target.querySelector('select[name="note_ids"]').selectedOptions].map(option => Number(option.value));
+    data.all_day = Boolean(data.all_day);
+    await runUserAction(async () => {
+      await api(event.id ? `/events/${event.id}` : '/events', { method: event.id ? 'PATCH' : 'POST', body: data });
+      modal.remove();
+      await loadCurrentSection();
+      renderApp();
+    }, 'Event save failed');
+  });
+  modal.querySelector('#deleteEventBtn')?.addEventListener('click', async () => {
+    if (!await confirmDialog({ title: 'Delete event?', message: 'Delete this calendar event?', confirmText: 'Delete' })) return;
+    await api(`/events/${event.id}`, { method: 'DELETE' });
+    modal.remove();
+    await loadCurrentSection();
+    renderApp();
+  });
+}
+
+async function openTaskDialog(task = {}) {
+  await ensureNotesForLinking();
+  const modal = document.createElement('div');
+  modal.className = 'editor';
+  const calendarOptions = '<option value="">Private task</option>' + state.calendars.map(calendar => `<option value="${calendar.id}" ${String(calendar.id) === String(task.calendar_id || '') ? 'selected' : ''}>${esc(calendar.name)}</option>`).join('');
+  const sharedChecked = task.id ? Number(task.private) === 0 : Boolean(task.calendar_id);
+  const reminderMinutes = task.id ? (task.reminder_minutes ?? -1) : (feature('tasks').settings.default_reminder_minutes ?? 10);
+  modal.innerHTML = `<section class="editor-panel small-panel"><div class="topbar"><div><h2>${task.id ? 'Edit task' : 'New task'}</h2></div><button class="btn ghost" type="button" data-close>Cancel</button></div><form id="taskForm" class="stack"><label class="field"><span>Title</span><input name="title" value="${esc(task.title || '')}" required></label><label class="field"><span>Calendar</span><select name="calendar_id">${calendarOptions}</select></label><label class="checkline"><input name="shared" type="checkbox" ${sharedChecked ? 'checked' : ''}> Show on calendar</label><label class="field"><span>Due</span><input name="due_at" type="datetime-local" value="${esc(dateInputValue(task.due_at || ''))}"></label><label class="field"><span>Priority</span><input name="priority" type="number" min="0" max="5" value="${esc(task.priority || 0)}"></label><label class="field"><span>Reminder minutes before</span><input name="reminder_minutes" type="number" min="-1" max="10080" value="${esc(reminderMinutes)}"></label><label class="field"><span>Linked notes</span><select name="note_ids" multiple size="5">${noteLinkOptions(task.notes || [])}</select></label><label class="field"><span>Description</span><textarea name="description">${esc(task.description || '')}</textarea></label><div class="btn-row"><button class="btn primary">Save task</button>${task.id ? '<button class="btn danger" type="button" id="deleteTaskBtn">Delete</button>' : ''}</div></form></section>`;
+  document.body.appendChild(modal);
+  setupAccessibleModal(modal, 'input[name="title"]');
+  enhanceLinkedNotes(modal);
+  modal.querySelector('#taskForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    data.note_ids = [...e.target.querySelector('select[name="note_ids"]').selectedOptions].map(option => Number(option.value));
+    data.shared = Boolean(data.shared);
+    data.status = task.status || 'open';
+    await runUserAction(async () => {
+      await api(task.id ? `/tasks/${task.id}` : '/tasks', { method: task.id ? 'PATCH' : 'POST', body: data });
+      modal.remove();
+      await loadCurrentSection();
+      renderApp();
+    }, 'Task save failed');
+  });
+  modal.querySelector('#deleteTaskBtn')?.addEventListener('click', async () => {
+    if (!await confirmDialog({ title: 'Delete task?', message: 'Delete this task?', confirmText: 'Delete' })) return;
+    await api(`/tasks/${task.id}`, { method: 'DELETE' });
+    modal.remove();
+    await loadCurrentSection();
+    renderApp();
+  });
+}
+
+async function importIcsFile(calendarId = '') {
+  if (!state.calendars.length) {
+    await runUserAction(async () => {
+      await api('/calendars', { method: 'POST', body: { name: 'Imported Calendar', color: '#635bff' } });
+      state.calendars = (await api('/calendars')).calendars || [];
+    }, 'Calendar create failed');
+  }
+  const modal = document.createElement('div');
+  modal.className = 'editor';
+  const calendarOptions = state.calendars.map(calendar => `<option value="${calendar.id}" ${String(calendar.id) === String(calendarId) ? 'selected' : ''}>${esc(calendar.name)}</option>`).join('');
+  modal.innerHTML = `<section class="editor-panel small-panel"><div class="topbar"><div><h2>Import ICS calendar</h2><p class="muted small">Import standard iCalendar files.</p></div><button class="btn ghost" type="button" data-close>Cancel</button></div><form id="icsImportForm" class="stack"><label class="field"><span>ICS file</span><input name="ics" type="file" accept=".ics,text/calendar" required></label><label class="field ${calendarId ? 'hidden' : ''}"><span>Import into</span><select name="calendar_id">${calendarOptions}</select></label><label class="field"><span>If duplicates are found</span><select name="mode"><option value="skip">Skip existing events</option><option value="update">Update existing imported events</option></select></label><button class="btn primary">Import calendar</button></form></section>`;
+  document.body.appendChild(modal);
+  setupAccessibleModal(modal, 'input[type="file"]');
+  modal.querySelector('#icsImportForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const form = new FormData(e.target);
+    await runUserAction(async () => {
+      const res = await api('/calendar/import', { method: 'POST', body: form });
+      toast(`ICS import: ${res.imported || 0} new, ${res.updated || 0} updated, ${res.skipped || 0} skipped`);
+      modal.remove();
+      state.calendars = (await api('/calendars')).calendars || [];
+      await loadCalendarData();
+      renderApp();
+    }, 'ICS import failed');
+  });
 }
 
 function updateNoteLayoutToggleState() {
@@ -2084,6 +3143,7 @@ async function openEditor(id = null, options = {}) {
     const editor = content.querySelector('[data-inline-editor]');
     setTimeout(() => editor?.querySelector('input[name="title"]')?.focus({ preventScroll: true }), 0);
   }
+  if (options.route !== false) syncSectionRoute();
 }
 
 async function closeInlineEditor() {
@@ -2091,6 +3151,7 @@ async function closeInlineEditor() {
   state.active = null;
   state.activeExtra = null;
   state.editingNote = false;
+  syncSectionRoute();
   const content = document.querySelector('#contentArea');
   if (!content) return;
   content.innerHTML = renderNotesWorkspace();
@@ -2166,26 +3227,25 @@ function bindInlineEditor(modal) {
   modal.querySelectorAll('[data-format]').forEach(btn => btn.addEventListener('click', () => applyInlineFormat(modal, btn.dataset.format)));
   modal.querySelectorAll('[data-editor-command]').forEach(btn => btn.addEventListener('click', () => applyInlineFormat(modal, btn.dataset.editorCommand)));
   if (!simpleBody) bindCodeBlockActions(modal);
+  let autosaveTimer = null;
+  const scheduleAutosave = () => {
+    if (autosaveTimer) clearTimeout(autosaveTimer);
+    if (modal.dataset.editing !== '1' || !hasUnsavedEditorChanges()) return;
+    if (modal.dataset.autosaving === '1') {
+      modal.dataset.autosaveQueued = '1';
+      return;
+    }
+    autosaveTimer = setTimeout(() => saveInlineNote(modal, id, { autosave: true }), 1200);
+  };
+  modal.addEventListener('input', scheduleAutosave);
+  modal.addEventListener('change', scheduleAutosave);
   modal.querySelector('#noteForm').addEventListener('submit', async e => {
     e.preventDefault();
+    if (autosaveTimer) clearTimeout(autosaveTimer);
     await runUserAction(async () => {
-      const data = Object.fromEntries(new FormData(e.target));
-      if (data.existing_secret_markers) data.body = [data.body, data.existing_secret_markers].filter(Boolean).join('\n');
-      delete data.existing_secret_markers;
-      if (id) data.id = id;
-      const saved = await api('/notes', { method: 'POST', body: data });
-      if (!id) clearDraftNote();
-      const savedId = Number(saved.id || id);
-      if (savedId && state.pendingAttachments.length) {
-        await uploadAttachments(savedId, state.pendingAttachments);
-        state.pendingAttachments = [];
-      }
+      const savedId = await saveInlineNote(modal, id, { autosave: false });
       toast('Saved');
-      state.notes = (await loadNotes()).notes;
-      state.active = state.notes.find(n => Number(n.id) === savedId) || null;
-      state.activeExtra = savedId ? await api('/notes/' + savedId) : null;
       state.editingNote = false;
-      modal.dataset.dirtyBaseline = editorDirtySignature(modal);
       document.querySelector('#contentArea').innerHTML = renderNotesWorkspace();
       bindContentActions();
     }, 'Save failed');
@@ -2213,6 +3273,56 @@ function bindInlineEditor(modal) {
   bindSecretActions(modal);
   modal.dataset.dirtyBaseline = editorDirtySignature(modal);
   (titleField.value ? (simpleBody || modal.querySelector('[data-block-text], [data-block-title], [data-block-code], [data-block-math], [data-rich-text]')) : titleField)?.focus();
+}
+
+async function saveInlineNote(modal, initialId = null, { autosave = false } = {}) {
+  const status = modal.querySelector('[data-autosave-status]');
+  const form = modal.querySelector('#noteForm');
+  if (!form) return null;
+  const data = Object.fromEntries(new FormData(form));
+  if (data.existing_secret_markers) data.body = [data.body, data.existing_secret_markers].filter(Boolean).join('\n');
+  delete data.existing_secret_markers;
+  const currentId = Number(modal.dataset.autosaveNoteId || initialId || 0);
+  if (currentId) data.id = currentId;
+  if (autosave && !currentId && !String(data.title || '').trim() && !String(data.body || '').trim() && !state.pendingAttachments.length) return null;
+  const submittedSignature = editorDirtySignature(modal);
+
+  modal.dataset.autosaving = '1';
+  modal.dataset.autosaveQueued = '0';
+  if (status) status.textContent = autosave ? 'Autosaving...' : 'Saving...';
+  try {
+    const saved = await api('/notes', { method: 'POST', body: data });
+    const savedId = Number(saved.id || currentId || initialId || 0);
+    if (savedId) modal.dataset.autosaveNoteId = String(savedId);
+    if (savedId && state.pendingAttachments.length) {
+      await uploadAttachments(savedId, state.pendingAttachments);
+      state.pendingAttachments = [];
+      const pending = modal.querySelector('#pendingAttachments');
+      if (pending) pending.innerHTML = renderPendingAttachments();
+    }
+    if (savedId) {
+      if (!initialId) clearDraftNote();
+      state.notes = (await loadNotes()).notes;
+      state.active = state.notes.find(n => Number(n.id) === savedId) || state.active;
+      state.activeExtra = await api('/notes/' + savedId);
+    }
+    if (editorDirtySignature(modal) === submittedSignature) modal.dataset.dirtyBaseline = submittedSignature;
+    else modal.dataset.autosaveQueued = '1';
+    if (status) status.textContent = `${autosave ? 'Autosaved' : 'Saved'} ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
+    return savedId;
+  } catch (err) {
+    if (status) status.textContent = autosave ? 'Autosave failed. Keep this note open or use Save.' : 'Save failed.';
+    if (!autosave) throw err;
+    return null;
+  } finally {
+    modal.dataset.autosaving = '0';
+    if (autosave && modal.dataset.autosaveQueued === '1' && hasUnsavedEditorChanges(modal)) {
+      modal.dataset.autosaveQueued = '0';
+      setTimeout(() => {
+        if (modal.isConnected && modal.dataset.editing === '1' && hasUnsavedEditorChanges(modal)) saveInlineNote(modal, initialId, { autosave: true });
+      }, 1200);
+    }
+  }
 }
 
 function editorDirtySignature(modal = document.querySelector('[data-inline-editor][data-editing="1"]')) {
@@ -2611,12 +3721,13 @@ function clearDraftNote() {
   localStorage.removeItem('qv_note_draft');
 }
 
-function openCategoryManager() {
+function openCategoryManager(options = {}) {
   state.panel = 'categories';
   state.active = null;
   state.activeExtra = null;
   state.editingNote = false;
   state.settingsHtml = '';
+  if (options.route !== false) syncSectionRoute();
   renderApp();
 }
 
@@ -2675,7 +3786,7 @@ function bindCategoryPanel(panel) {
     await api(`/categories/${btn.dataset.deleteCategory}`, { method: 'DELETE' });
     if (state.section === `notes:cat:${btn.dataset.deleteCategory}` || state.categories.find(c => String(c.id) === String(btn.dataset.deleteCategory))?.slug === state.section) {
       state.section = 'notes:all';
-      localStorage.setItem('divault_section', state.section);
+      syncSectionRoute();
     }
     toast('Category deleted');
     await loadAll();
@@ -2777,11 +3888,12 @@ function defaultAssetType(section) {
   return map[section] || sectionLabel(section).replace(/s$/, '');
 }
 
-async function openSettings() {
+async function openSettings(options = {}) {
   state.panel = 'settings';
   state.active = null;
   state.activeExtra = null;
   state.editingNote = false;
+  if (options.route !== false) syncSectionRoute();
   renderApp();
   const isAdmin = canAdminSettings();
   const [users, audit, sessions, backups, syncManifest, retentionSettings, aiIntegration, desktopServer, passkeys] = await Promise.all([
@@ -2811,6 +3923,7 @@ async function openSettings() {
   const deviceCards = `${desktopServerCard}${androidClientCard}`;
   const settingsTabs = [
     ['account', 'Account'],
+    ['features', 'Features'],
     ['sync', 'Sync'],
     ['security', 'Security'],
     ...(isAdmin ? [['data', 'Data'], ['people', 'People']] : [])
@@ -2829,6 +3942,9 @@ async function openSettings() {
           </div>
           <aside class="stack"><div class="card"><h3>Sessions</h3>${groupedSessionsHtml(sessions.sessions)}</div></aside>
         </div>
+      </section>
+      <section class="settings-tab-panel ${state.settingsTab === 'features' ? '' : 'hidden'}" data-settings-panel="features" role="tabpanel">
+        <div class="card stack"><h3>Calendar, tasks, and home widgets</h3>${renderFeatureSettings()}</div>
       </section>
       <section class="settings-tab-panel ${state.settingsTab === 'sync' ? '' : 'hidden'}" data-settings-panel="sync" role="tabpanel">
         <div class="stack">
@@ -2909,6 +4025,25 @@ async function openSettings() {
       e.target.reset();
       toast('Password updated');
     }, 'Password update failed');
+  });
+  modal.querySelector('#featureSettingsForm')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    await runUserAction(async () => {
+      const form = new FormData(e.target);
+      const payload = {
+        calendar: { enabled: form.has('calendar_enabled'), home_enabled: form.has('calendar_home_enabled'), reminders_enabled: form.has('calendar_reminders_enabled'), default_reminder_minutes: Number(form.get('calendar_default_reminder_minutes') || 10) },
+        tasks: { enabled: form.has('tasks_enabled'), home_enabled: form.has('tasks_home_enabled'), reminders_enabled: form.has('tasks_reminders_enabled'), shared_calendar_tasks: form.has('tasks_shared_calendar_tasks'), default_reminder_minutes: Number(form.get('tasks_default_reminder_minutes') || 10) },
+        home: { enabled: true, notes_enabled: form.has('home_notes_enabled') }
+      };
+      const result = await api('/features', { method: 'PATCH', body: payload });
+      state.features = result.features;
+      normalizeCurrentSection();
+      syncSectionRoute();
+      if (featureOn('calendar') || featureOn('tasks')) state.calendars = (await api('/calendars')).calendars || [];
+      toast('Feature settings saved');
+      await loadCurrentSection();
+      openSettings();
+    }, 'Feature settings failed');
   });
   modal.querySelector('#desktopServerSettingsForm')?.addEventListener('submit', async e => {
     e.preventDefault();
@@ -3141,6 +4276,22 @@ function renderSyncSettings(manifest) {
     <div class="btn-row"><button class="btn" type="button" id="checkSyncBtn">Check sync</button><button class="btn ghost" type="button" id="copyServerUrlBtn">Copy server URL</button></div>
     <div class="btn-row sync-capabilities">${capabilities}</div>
     <p class="small muted">Use this same server URL when setting up desktop or Android clients. Standalone desktop vaults are intentionally separate until merge sync is added.</p>`;
+}
+
+function renderFeatureSettings() {
+  const calendar = feature('calendar');
+  const tasks = feature('tasks');
+  const home = feature('home');
+  return `<form id="featureSettingsForm" class="stack"><div class="feature-toggle-grid">
+    <label class="checkline"><input name="calendar_enabled" type="checkbox" ${calendar.enabled ? 'checked' : ''}> Enable Calendar</label>
+    <label class="checkline"><input name="tasks_enabled" type="checkbox" ${tasks.enabled ? 'checked' : ''}> Enable Tasks</label>
+    <label class="checkline"><input name="calendar_home_enabled" type="checkbox" ${calendar.settings.home_enabled ? 'checked' : ''}> Show calendar on Home</label>
+    <label class="checkline"><input name="tasks_home_enabled" type="checkbox" ${tasks.settings.home_enabled ? 'checked' : ''}> Show tasks on Home</label>
+    <label class="checkline"><input name="home_notes_enabled" type="checkbox" ${home.settings.notes_enabled ? 'checked' : ''}> Show notes on Home</label>
+    <label class="checkline"><input name="calendar_reminders_enabled" type="checkbox" ${calendar.settings.reminders_enabled ? 'checked' : ''}> Calendar reminders</label>
+    <label class="checkline"><input name="tasks_reminders_enabled" type="checkbox" ${tasks.settings.reminders_enabled ? 'checked' : ''}> Task reminders</label>
+    <label class="checkline"><input name="tasks_shared_calendar_tasks" type="checkbox" ${tasks.settings.shared_calendar_tasks ? 'checked' : ''}> Shared-calendar tasks</label>
+  </div><div class="editor-grid"><label class="field"><span>Default calendar reminder minutes</span><input name="calendar_default_reminder_minutes" type="number" min="0" max="10080" value="${esc(calendar.settings.default_reminder_minutes ?? 10)}"></label><label class="field"><span>Default task reminder minutes</span><input name="tasks_default_reminder_minutes" type="number" min="0" max="10080" value="${esc(tasks.settings.default_reminder_minutes ?? 10)}"></label></div><button class="btn primary">Save feature settings</button></form>`;
 }
 
 function renderAiIntegrationSettings(status) {

@@ -65,6 +65,8 @@ final class App
         if ($method === 'POST' && $path === '/sync/push') $this->syncPush($user);
         if ($method === 'GET' && $path === '/retention-settings') $this->retentionSettings($user);
         if ($method === 'POST' && $path === '/retention-settings') $this->saveRetentionSettings($user);
+        if ($method === 'GET' && $path === '/features') $this->featureSettings($user);
+        if ($method === 'PATCH' && $path === '/features') $this->saveFeatureSettings($user);
         if ($method === 'GET' && preg_match('#^/sync/files/(\d+)$#', $path, $m)) $this->downloadFile($user, (int)$m[1]);
         if ($method === 'GET' && $path === '/integrations/ai/status') $this->aiReviewStatus($user);
         if ($method === 'POST' && $path === '/integrations/ai/enable') $this->enableAiReviewApi($user);
@@ -91,6 +93,26 @@ final class App
         if ($method === 'DELETE' && preg_match('#^/notes/(\d+)/permanent$#', $path, $m)) $this->permanentlyDeleteNote($user, (int)$m[1]);
         if ($method === 'DELETE' && preg_match('#^/notes/(\d+)$#', $path, $m)) $this->deleteNote($user, (int)$m[1]);
         if ($method === 'DELETE' && $path === '/trash/notes') $this->emptyTrash($user);
+        if ($method === 'GET' && $path === '/calendars') $this->listCalendars($user);
+        if ($method === 'POST' && $path === '/calendars') $this->saveCalendar($user);
+        if ($method === 'PATCH' && preg_match('#^/calendars/(\d+)$#', $path, $m)) $this->saveCalendar($user, (int)$m[1]);
+        if ($method === 'DELETE' && preg_match('#^/calendars/(\d+)$#', $path, $m)) $this->deleteCalendar($user, (int)$m[1]);
+        if ($method === 'POST' && preg_match('#^/calendars/(\d+)/share$#', $path, $m)) $this->shareCalendar($user, (int)$m[1]);
+        if ($method === 'DELETE' && preg_match('#^/calendars/(\d+)/share/(\d+)$#', $path, $m)) $this->unshareCalendar($user, (int)$m[1], (int)$m[2]);
+        if ($method === 'GET' && $path === '/events') $this->listEvents($user);
+        if ($method === 'POST' && $path === '/events') $this->saveEvent($user);
+        if ($method === 'GET' && preg_match('#^/events/(\d+)$#', $path, $m)) $this->getEvent($user, (int)$m[1]);
+        if ($method === 'PATCH' && preg_match('#^/events/(\d+)$#', $path, $m)) $this->saveEvent($user, (int)$m[1]);
+        if ($method === 'DELETE' && preg_match('#^/events/(\d+)$#', $path, $m)) $this->deleteEvent($user, (int)$m[1]);
+        if ($method === 'GET' && $path === '/tasks') $this->listTasks($user);
+        if ($method === 'POST' && $path === '/tasks') $this->saveTask($user);
+        if ($method === 'GET' && preg_match('#^/tasks/(\d+)$#', $path, $m)) $this->getTask($user, (int)$m[1]);
+        if ($method === 'PATCH' && preg_match('#^/tasks/(\d+)$#', $path, $m)) $this->saveTask($user, (int)$m[1]);
+        if ($method === 'DELETE' && preg_match('#^/tasks/(\d+)$#', $path, $m)) $this->deleteTask($user, (int)$m[1]);
+        if ($method === 'GET' && $path === '/reminders/due') $this->dueReminders($user);
+        if ($method === 'POST' && preg_match('#^/reminders/(event|task)/(\d+)/(dismiss|snooze)$#', $path, $m)) $this->updateReminder($user, $m[1], (int)$m[2], $m[3]);
+        if ($method === 'POST' && $path === '/calendar/import') $this->importCalendar($user);
+        if ($method === 'GET' && preg_match('#^/calendar/export/(\d+)\.ics$#', $path, $m)) $this->exportCalendarIcs($user, (int)$m[1]);
         if ($method === 'POST' && preg_match('#^/notes/(\d+)/files$#', $path, $m)) $this->uploadFile($user, (int)$m[1]);
         if ($method === 'GET' && preg_match('#^/files/(\d+)/preview$#', $path, $m)) $this->downloadFile($user, (int)$m[1], true);
         if ($method === 'GET' && preg_match('#^/files/(\d+)$#', $path, $m)) $this->downloadFile($user, (int)$m[1]);
@@ -344,17 +366,19 @@ final class App
     {
         $since = max(0, (int)($_GET['since_event_id'] ?? $_GET['since'] ?? 0));
         $limit = min(500, max(1, (int)($_GET['limit'] ?? 200)));
-        $snapshot = $since === 0 ? $this->syncSnapshot() : null;
-        $stmt = $this->db->prepare('SELECT * FROM sync_events WHERE id > ? ORDER BY id ASC LIMIT ?');
+        $snapshot = $since === 0 ? $this->syncSnapshot($user) : null;
+        $stmt = $this->db->prepare('SELECT * FROM sync_events WHERE id > ? AND (user_id = ? OR user_id IS NULL) ORDER BY id ASC LIMIT ?');
         $stmt->bindValue(1, $since, PDO::PARAM_INT);
-        $stmt->bindValue(2, $limit + 1, PDO::PARAM_INT);
+        $stmt->bindValue(2, (int)$user['id'], PDO::PARAM_INT);
+        $stmt->bindValue(3, $limit + 1, PDO::PARAM_INT);
         $stmt->execute();
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
         $hasMore = count($rows) > $limit;
         $rows = array_slice($rows, 0, $limit);
         $events = [];
         foreach ($rows as $event) {
-            $events[] = $this->syncEventPayload($event);
+            $payload = $this->syncEventPayload($event, $user);
+            if ($payload) $events[] = $payload;
         }
         $watermark = (int)$this->db->query('SELECT COALESCE(MAX(id), 0) FROM sync_events')->fetchColumn();
         $nextSince = $events ? (int)end($events)['id'] : $since;
@@ -492,22 +516,30 @@ final class App
         return $id;
     }
 
-    private function syncSnapshot(): array
+    private function syncSnapshot(array $user): array
     {
+        $userId = (int)$user['id'];
+        $notes = $this->db->prepare('SELECT * FROM notes WHERE user_id = ? ORDER BY id');
+        $notes->execute([$userId]);
+        $assets = $this->db->prepare('SELECT id, user_id, client_id, type, name, status, asset_type, os, primary_ip, serial_number, expires_at, location, contact, username, notes, data_json, archived, created_at, updated_at FROM asset_records WHERE user_id = ? ORDER BY id');
+        $assets->execute([$userId]);
+        $files = $this->db->prepare('SELECT id, note_id, user_id, original_name, mime, size, created_at FROM files WHERE user_id = ? ORDER BY id');
+        $files->execute([$userId]);
         return [
             'categories' => $this->db->query('SELECT id, parent_id, name, icon, slug, created_at FROM asset_categories ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
             'clients' => $this->db->query('SELECT * FROM clients ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
-            'notes' => $this->db->query('SELECT * FROM notes ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
-            'assets' => $this->db->query('SELECT id, user_id, client_id, type, name, status, asset_type, os, primary_ip, serial_number, expires_at, location, contact, username, notes, data_json, archived, created_at, updated_at FROM asset_records ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
-            'files' => array_map(fn ($row) => $this->syncFilePayload($row), $this->db->query('SELECT id, note_id, user_id, original_name, mime, size, created_at FROM files ORDER BY id')->fetchAll(PDO::FETCH_ASSOC)),
+            'notes' => $notes->fetchAll(PDO::FETCH_ASSOC),
+            'assets' => $assets->fetchAll(PDO::FETCH_ASSOC),
+            'files' => array_map(fn ($row) => $this->syncFilePayload($row), $files->fetchAll(PDO::FETCH_ASSOC)),
         ];
     }
 
-    private function syncEventPayload(array $event): array
+    private function syncEventPayload(array $event, array $user): ?array
     {
         $type = (string)$event['entity_type'];
+        if (in_array($type, ['calendar', 'event', 'task'], true)) return null;
         $id = isset($event['entity_id']) ? (int)$event['entity_id'] : null;
-        $row = $id ? $this->syncEntityRow($type, $id) : null;
+        $row = $id ? $this->syncEntityRow($type, $id, $user) : null;
         return [
             'id' => (int)$event['id'],
             'entity_type' => $type,
@@ -519,18 +551,20 @@ final class App
         ];
     }
 
-    private function syncEntityRow(string $type, int $id): ?array
+    private function syncEntityRow(string $type, int $id, array $user): ?array
     {
+        if (in_array($type, ['calendar', 'event', 'task'], true)) return null;
         $queries = [
-            'note' => 'SELECT * FROM notes WHERE id = ?',
+            'note' => 'SELECT * FROM notes WHERE id = ? AND user_id = ?',
             'category' => 'SELECT id, parent_id, name, icon, slug, created_at FROM asset_categories WHERE id = ?',
-            'asset' => 'SELECT id, user_id, client_id, type, name, status, asset_type, os, primary_ip, serial_number, expires_at, location, contact, username, notes, data_json, archived, created_at, updated_at FROM asset_records WHERE id = ?',
+            'asset' => 'SELECT id, user_id, client_id, type, name, status, asset_type, os, primary_ip, serial_number, expires_at, location, contact, username, notes, data_json, archived, created_at, updated_at FROM asset_records WHERE id = ? AND user_id = ?',
             'client' => 'SELECT * FROM clients WHERE id = ?',
-            'file' => 'SELECT id, note_id, user_id, original_name, mime, size, created_at FROM files WHERE id = ?',
+            'file' => 'SELECT id, note_id, user_id, original_name, mime, size, created_at FROM files WHERE id = ? AND user_id = ?',
         ];
         if (empty($queries[$type])) return null;
         $stmt = $this->db->prepare($queries[$type]);
-        $stmt->execute([$id]);
+        $args = in_array($type, ['note', 'asset', 'file'], true) ? [$id, (int)$user['id']] : [$id];
+        $stmt->execute($args);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$row) return null;
         return $type === 'file' ? $this->syncFilePayload($row) : $row;
@@ -921,6 +955,309 @@ final class App
         $this->json(['enabled' => false]);
     }
 
+    private function featureSettings(array $user): void
+    {
+        $this->json(['features' => $this->userFeatures((int)$user['id'])]);
+    }
+
+    private function saveFeatureSettings(array $user): void
+    {
+        $data = $this->input();
+        $features = $this->userFeatures((int)$user['id']);
+        foreach (['calendar', 'tasks', 'home'] as $feature) {
+            if (!isset($data[$feature]) || !is_array($data[$feature])) continue;
+            $current = $features[$feature];
+            $incoming = $data[$feature];
+            if (array_key_exists('enabled', $incoming)) $current['enabled'] = !empty($incoming['enabled']);
+            foreach ($incoming as $key => $value) {
+                if ($key === 'enabled') continue;
+                $current['settings'][$key] = is_bool($value) ? $value : (is_numeric($value) ? (int)$value : $value);
+            }
+            $features[$feature] = $current;
+            $stmt = $this->db->prepare('INSERT INTO user_feature_settings (user_id, feature, enabled, settings_json, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(user_id, feature) DO UPDATE SET enabled = excluded.enabled, settings_json = excluded.settings_json, updated_at = CURRENT_TIMESTAMP');
+            $stmt->execute([(int)$user['id'], $feature, !empty($current['enabled']) ? 1 : 0, json_encode($current['settings'])]);
+        }
+        $this->audit((int)$user['id'], 'settings.features_updated', 'settings', null);
+        $this->json(['features' => $this->userFeatures((int)$user['id'])]);
+    }
+
+    private function listCalendars(array $user): void
+    {
+        $this->ensureDefaultCalendar($user);
+        $stmt = $this->db->prepare("SELECT c.*, CASE WHEN c.owner_user_id = ? THEN 'owner' ELSE s.permission END AS permission, u.name AS owner_name FROM calendars c JOIN users u ON u.id = c.owner_user_id LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?) ORDER BY c.owner_user_id = ? DESC, c.name COLLATE NOCASE");
+        $stmt->execute([(int)$user['id'], (int)$user['id'], (int)$user['id'], (int)$user['id'], (int)$user['id']]);
+        $calendars = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($calendars as &$calendar) {
+            $calendar['shares'] = in_array((string)($calendar['permission'] ?? ''), ['owner', 'admin'], true) ? $this->calendarShares((int)$calendar['id']) : [];
+        }
+        $this->json(['calendars' => $calendars]);
+    }
+
+    private function saveCalendar(array $user, int $id = 0): void
+    {
+        $this->requireEditor($user);
+        $data = $this->input();
+        $name = trim((string)($data['name'] ?? '')) ?: 'Calendar';
+        $color = $this->cleanColor($data['color'] ?? '#635bff');
+        $description = trim((string)($data['description'] ?? '')) ?: null;
+        if ($id > 0) {
+            $this->calendarAccess($user, $id, 'admin');
+            $stmt = $this->db->prepare('UPDATE calendars SET name = ?, color = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+            $stmt->execute([$name, $color, $description, $id]);
+            $this->audit((int)$user['id'], 'calendar.updated', 'calendar', $id);
+        } else {
+            $stmt = $this->db->prepare('INSERT INTO calendars (owner_user_id, name, color, description, timezone) VALUES (?, ?, ?, ?, ?)');
+            $stmt->execute([(int)$user['id'], $name, $color, $description, date_default_timezone_get() ?: 'UTC']);
+            $id = (int)$this->db->lastInsertId();
+            $this->audit((int)$user['id'], 'calendar.created', 'calendar', $id);
+        }
+        $this->json(['calendar' => $this->calendarAccess($user, $id, 'view')]);
+    }
+
+    private function deleteCalendar(array $user, int $id): void
+    {
+        $this->calendarAccess($user, $id, 'admin');
+        $this->db->prepare('UPDATE calendars SET archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$id]);
+        $this->audit((int)$user['id'], 'calendar.deleted', 'calendar', $id);
+        $this->json(['ok' => true]);
+    }
+
+    private function shareCalendar(array $user, int $id): void
+    {
+        $this->calendarAccess($user, $id, 'admin');
+        $data = $this->input();
+        $email = strtolower(trim((string)($data['email'] ?? '')));
+        $permission = (string)($data['permission'] ?? 'view');
+        if (!in_array($permission, ['view', 'edit', 'admin'], true)) throw new RuntimeException('Invalid permission');
+        $stmt = $this->db->prepare('SELECT id FROM users WHERE email = ? AND disabled = 0');
+        $stmt->execute([$email]);
+        $shareUserId = (int)$stmt->fetchColumn();
+        if (!$shareUserId) throw new RuntimeException('User not found');
+        if ($shareUserId === (int)$user['id']) throw new RuntimeException('Calendar owner already has access');
+        $this->db->prepare('INSERT INTO calendar_shares (calendar_id, user_id, permission) VALUES (?, ?, ?) ON CONFLICT(calendar_id, user_id) DO UPDATE SET permission = excluded.permission')->execute([$id, $shareUserId, $permission]);
+        $this->audit((int)$user['id'], 'calendar.shared', 'calendar', $id);
+        $this->json(['shares' => $this->calendarShares($id)]);
+    }
+
+    private function unshareCalendar(array $user, int $id, int $shareUserId): void
+    {
+        $this->calendarAccess($user, $id, 'admin');
+        $this->db->prepare('DELETE FROM calendar_shares WHERE calendar_id = ? AND user_id = ?')->execute([$id, $shareUserId]);
+        $this->db->prepare('DELETE FROM calendar_event_reminders WHERE user_id = ? AND event_id IN (SELECT id FROM calendar_events WHERE calendar_id = ?)')->execute([$shareUserId, $id]);
+        $this->db->prepare('DELETE FROM task_reminders WHERE user_id = ? AND task_id IN (SELECT id FROM tasks WHERE calendar_id = ?)')->execute([$shareUserId, $id]);
+        $this->audit((int)$user['id'], 'calendar.unshared', 'calendar', $id);
+        $this->json(['shares' => $this->calendarShares($id)]);
+    }
+
+    private function listEvents(array $user): void
+    {
+        $this->ensureDefaultCalendar($user);
+        [$start, $end] = $this->dateRangeFromQuery();
+        $args = [(int)$user['id'], (int)$user['id'], (int)$user['id'], $end, $start, $end];
+        $stmt = $this->db->prepare("SELECT e.*, c.name AS calendar_name, c.color AS calendar_color FROM calendar_events e JOIN calendars c ON c.id = e.calendar_id LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?) AND ((e.recurrence_rule IS NULL AND e.starts_at <= ? AND COALESCE(e.ends_at, e.starts_at) >= ?) OR (e.recurrence_rule IS NOT NULL AND e.starts_at <= ?)) ORDER BY e.starts_at ASC");
+        $stmt->execute($args);
+        $this->json(['events' => $this->expandRecurringEvents($stmt->fetchAll(PDO::FETCH_ASSOC), $start, $end)]);
+    }
+
+    private function getEvent(array $user, int $id): void
+    {
+        $event = $this->eventAccess($user, $id, 'view');
+        $event['notes'] = $this->linkedNotes('event', $id, $user);
+        $event['reminder_minutes'] = $this->eventReminderMinutes($user, $id);
+        $this->json(['event' => $event]);
+    }
+
+    private function saveEvent(array $user, int $id = 0): void
+    {
+        $this->requireEditor($user);
+        $data = $this->input();
+        $calendarId = (int)($data['calendar_id'] ?? 0);
+        if ($id > 0) {
+            $current = $this->eventAccess($user, $id, 'edit');
+            $calendarId = $calendarId ?: (int)$current['calendar_id'];
+        }
+        if (!$calendarId) $calendarId = $this->ensureDefaultCalendar($user);
+        $this->calendarAccess($user, $calendarId, 'edit');
+        $title = trim((string)($data['title'] ?? '')) ?: 'Untitled event';
+        $startsAt = $this->cleanDateTime($data['starts_at'] ?? '') ?: gmdate('Y-m-d H:i:s');
+        $endsAt = $this->cleanDateTime($data['ends_at'] ?? '') ?: $startsAt;
+        $allDay = !empty($data['all_day']) ? 1 : 0;
+        if ($id > 0) {
+            $stmt = $this->db->prepare('UPDATE calendar_events SET calendar_id=?, title=?, description=?, location=?, starts_at=?, ends_at=?, all_day=?, recurrence_rule=?, updated_at=CURRENT_TIMESTAMP WHERE id=?');
+            $stmt->execute([$calendarId, $title, (string)($data['description'] ?? ''), (string)($data['location'] ?? ''), $startsAt, $endsAt, $allDay, trim((string)($data['recurrence_rule'] ?? '')) ?: null, $id]);
+            $this->audit((int)$user['id'], 'event.updated', 'event', $id);
+        } else {
+            $stmt = $this->db->prepare('INSERT INTO calendar_events (calendar_id, created_by_user_id, title, description, location, starts_at, ends_at, all_day, recurrence_rule, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            $stmt->execute([$calendarId, (int)$user['id'], $title, (string)($data['description'] ?? ''), (string)($data['location'] ?? ''), $startsAt, $endsAt, $allDay, trim((string)($data['recurrence_rule'] ?? '')) ?: null, 'manual']);
+            $id = (int)$this->db->lastInsertId();
+            $this->audit((int)$user['id'], 'event.created', 'event', $id);
+        }
+        $this->saveEventReminder($user, $id, $startsAt, $data['reminder_minutes'] ?? null);
+        $this->saveLinks('event', $id, $user, $data['note_ids'] ?? []);
+        $this->json(['event' => $this->eventAccess($user, $id, 'view')]);
+    }
+
+    private function deleteEvent(array $user, int $id): void
+    {
+        $this->eventAccess($user, $id, 'edit');
+        $this->db->prepare('DELETE FROM calendar_events WHERE id = ?')->execute([$id]);
+        $this->audit((int)$user['id'], 'event.deleted', 'event', $id);
+        $this->json(['ok' => true]);
+    }
+
+    private function listTasks(array $user): void
+    {
+        $this->ensureDefaultCalendar($user);
+        $view = $_GET['view'] ?? 'open';
+        $where = ['(t.user_id = ? OR (t.private = 0 AND t.calendar_id IN (SELECT c.id FROM calendars c LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?))))'];
+        $args = [(int)$user['id'], (int)$user['id'], (int)$user['id'], (int)$user['id']];
+        if ($view !== 'all') $where[] = $view === 'done' ? "t.status = 'done'" : "t.status != 'done'";
+        $stmt = $this->db->prepare('SELECT t.*, c.name AS calendar_name, c.color AS calendar_color FROM tasks t LEFT JOIN calendars c ON c.id = t.calendar_id WHERE ' . implode(' AND ', $where) . ' ORDER BY CASE WHEN t.status = \'done\' THEN 1 ELSE 0 END, t.due_at IS NULL, t.due_at ASC, t.priority DESC, t.id DESC');
+        $stmt->execute($args);
+        $this->json(['tasks' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+    }
+
+    private function getTask(array $user, int $id): void
+    {
+        $task = $this->taskAccess($user, $id, 'view');
+        $task['notes'] = $this->linkedNotes('task', $id, $user);
+        $task['reminder_minutes'] = $this->taskReminderMinutes($user, $id);
+        $this->json(['task' => $task]);
+    }
+
+    private function saveTask(array $user, int $id = 0): void
+    {
+        $this->requireEditor($user);
+        $data = $this->input();
+        $current = $id > 0 ? $this->taskAccess($user, $id, 'edit') : null;
+        $calendarId = isset($data['calendar_id']) && $data['calendar_id'] !== '' ? (int)$data['calendar_id'] : ($current ? (int)($current['calendar_id'] ?? 0) : null);
+        $private = array_key_exists('shared', $data) ? (empty($data['shared']) ? 1 : 0) : ($current ? (int)$current['private'] : 1);
+        if ($calendarId) $this->calendarAccess($user, $calendarId, 'edit');
+        $title = trim((string)($data['title'] ?? ($current['title'] ?? ''))) ?: 'Untitled task';
+        $status = in_array(($data['status'] ?? ''), ['open', 'done'], true) ? $data['status'] : ($current['status'] ?? 'open');
+        $completedAt = $status === 'done' ? ($current['completed_at'] ?? gmdate('Y-m-d H:i:s')) : null;
+        $dueAt = $this->cleanDateTime($data['due_at'] ?? ($current['due_at'] ?? ''));
+        if ($id > 0) {
+            $stmt = $this->db->prepare('UPDATE tasks SET calendar_id=?, title=?, description=?, status=?, priority=?, due_at=?, completed_at=?, private=?, updated_at=CURRENT_TIMESTAMP WHERE id=?');
+            $stmt->execute([$calendarId ?: null, $title, (string)($data['description'] ?? $current['description'] ?? ''), $status, (int)($data['priority'] ?? $current['priority'] ?? 0), $dueAt, $completedAt, $private, $id]);
+            $this->audit((int)$user['id'], 'task.updated', 'task', $id);
+        } else {
+            $stmt = $this->db->prepare('INSERT INTO tasks (user_id, calendar_id, title, description, status, priority, due_at, completed_at, private, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            $stmt->execute([(int)$user['id'], $calendarId ?: null, $title, (string)($data['description'] ?? ''), $status, (int)($data['priority'] ?? 0), $dueAt, $completedAt, $private, 'manual']);
+            $id = (int)$this->db->lastInsertId();
+            $this->audit((int)$user['id'], 'task.created', 'task', $id);
+        }
+        $this->saveTaskReminder($user, $id, $dueAt, $data['reminder_minutes'] ?? null);
+        $this->saveLinks('task', $id, $user, $data['note_ids'] ?? []);
+        $this->json(['task' => $this->taskAccess($user, $id, 'view')]);
+    }
+
+    private function deleteTask(array $user, int $id): void
+    {
+        $this->taskAccess($user, $id, 'edit');
+        $this->db->prepare('DELETE FROM tasks WHERE id = ?')->execute([$id]);
+        $this->audit((int)$user['id'], 'task.deleted', 'task', $id);
+        $this->json(['ok' => true]);
+    }
+
+    private function dueReminders(array $user): void
+    {
+        $userId = (int)$user['id'];
+        $eventStmt = $this->db->prepare("SELECT r.id, 'event' AS kind, r.remind_at, e.title, e.starts_at AS due_at FROM calendar_event_reminders r JOIN calendar_events e ON e.id = r.event_id JOIN calendars c ON c.id = e.calendar_id LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE r.user_id = ? AND c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?) AND r.dismissed_at IS NULL AND r.sent_at IS NULL AND r.remind_at <= CURRENT_TIMESTAMP ORDER BY r.remind_at LIMIT 25");
+        $eventStmt->execute([$userId, $userId, $userId, $userId]);
+        $taskStmt = $this->db->prepare("SELECT r.id, 'task' AS kind, r.remind_at, t.title, t.due_at FROM task_reminders r JOIN tasks t ON t.id = r.task_id LEFT JOIN calendars c ON c.id = t.calendar_id LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE r.user_id = ? AND (t.user_id = ? OR (t.private = 0 AND c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?))) AND r.dismissed_at IS NULL AND r.sent_at IS NULL AND r.remind_at <= CURRENT_TIMESTAMP ORDER BY r.remind_at LIMIT 25");
+        $taskStmt->execute([$userId, $userId, $userId, $userId, $userId]);
+        $this->json(['reminders' => array_merge($eventStmt->fetchAll(PDO::FETCH_ASSOC), $taskStmt->fetchAll(PDO::FETCH_ASSOC))]);
+    }
+
+    private function updateReminder(array $user, string $kind, int $id, string $action): void
+    {
+        $table = $kind === 'event' ? 'calendar_event_reminders' : 'task_reminders';
+        if ($action === 'dismiss') {
+            $this->db->prepare("UPDATE $table SET dismissed_at = CURRENT_TIMESTAMP, sent_at = COALESCE(sent_at, CURRENT_TIMESTAMP) WHERE id = ? AND user_id = ?")->execute([$id, (int)$user['id']]);
+        } else {
+            $minutes = $this->boundedGenericInt($this->input()['minutes'] ?? 10, 1, 1440);
+            $this->db->prepare("UPDATE $table SET remind_at = datetime('now', ?), sent_at = NULL WHERE id = ? AND user_id = ?")->execute(['+' . $minutes . ' minutes', $id, (int)$user['id']]);
+        }
+        $this->json(['ok' => true]);
+    }
+
+    private function importCalendar(array $user): void
+    {
+        $this->requireEditor($user);
+        $calendarId = (int)($_POST['calendar_id'] ?? 0);
+        $ics = '';
+        $maxBytes = 1024 * 1024;
+        if (!empty($_FILES['ics']['tmp_name'])) {
+            if ((int)($_FILES['ics']['size'] ?? 0) > $maxBytes) throw new RuntimeException('ICS file is too large');
+            $ics = (string)file_get_contents($_FILES['ics']['tmp_name'], false, null, 0, $maxBytes + 1);
+        }
+        if ($ics === '') $ics = (string)($this->input()['ics'] ?? '');
+        if (strlen($ics) > $maxBytes) throw new RuntimeException('ICS file is too large');
+        if (trim($ics) === '') throw new RuntimeException('Choose an ICS file to import');
+        if (!$calendarId) $calendarId = $this->ensureDefaultCalendar($user);
+        $this->calendarAccess($user, $calendarId, 'edit');
+        $imported = 0;
+        $updated = 0;
+        $skipped = 0;
+        $total = 0;
+        $mode = ($_POST['mode'] ?? ($this->input()['mode'] ?? 'skip')) === 'update' ? 'update' : 'skip';
+        foreach ($this->parseIcsEvents($ics) as $event) {
+            $total++;
+            if ($total > 1000) throw new RuntimeException('ICS import is limited to 1000 events');
+            $uid = $event['uid'] ?: hash('sha256', json_encode($event));
+            if ($mode === 'update') {
+                $existing = $this->db->prepare('SELECT id FROM calendar_events WHERE calendar_id = ? AND import_source = ? AND import_uid = ?');
+                $existing->execute([$calendarId, 'ics', $uid]);
+                $existingId = (int)$existing->fetchColumn();
+                if ($existingId) {
+                    $stmt = $this->db->prepare('UPDATE calendar_events SET title=?, description=?, location=?, starts_at=?, ends_at=?, all_day=?, recurrence_rule=?, import_updated_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?');
+                    $stmt->execute([$event['title'], $event['description'], $event['location'], $event['starts_at'], $event['ends_at'], $event['all_day'], $event['recurrence_rule'], $existingId]);
+                    $updated++;
+                    continue;
+                }
+            }
+            $stmt = $this->db->prepare('INSERT OR IGNORE INTO calendar_events (calendar_id, created_by_user_id, title, description, location, starts_at, ends_at, all_day, recurrence_rule, source, import_source, import_uid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            $stmt->execute([$calendarId, (int)$user['id'], $event['title'], $event['description'], $event['location'], $event['starts_at'], $event['ends_at'], $event['all_day'], $event['recurrence_rule'], 'ics', 'ics', $uid]);
+            if ($stmt->rowCount() > 0) $imported++;
+            else $skipped++;
+        }
+        $this->audit((int)$user['id'], 'calendar.imported', 'calendar', $calendarId);
+        $this->json(['total' => $total, 'imported' => $imported, 'updated' => $updated, 'skipped' => $skipped]);
+    }
+
+    private function exportCalendarIcs(array $user, int $calendarId): void
+    {
+        $calendar = $this->calendarAccess($user, $calendarId, 'view');
+        $stmt = $this->db->prepare('SELECT * FROM calendar_events WHERE calendar_id = ? ORDER BY starts_at');
+        $stmt->execute([$calendarId]);
+        $lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//DiVault//Calendar//EN', 'CALSCALE:GREGORIAN', 'X-WR-CALNAME:' . $this->icsEscape($calendar['name'])];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $event) {
+            $lines[] = 'BEGIN:VEVENT';
+            $lines[] = 'UID:' . $this->icsEscape(($event['import_uid'] ?: 'divault-' . $event['id']) . '@divault');
+            $lines[] = 'DTSTAMP:' . gmdate('Ymd\THis\Z');
+            if ((int)$event['all_day']) {
+                $startDate = strtotime($event['starts_at']);
+                $endDate = strtotime($event['ends_at'] ?: $event['starts_at']);
+                $lines[] = 'DTSTART;VALUE=DATE:' . gmdate('Ymd', $startDate);
+                $lines[] = 'DTEND;VALUE=DATE:' . gmdate('Ymd', strtotime('+1 day', $endDate));
+            } else {
+                $lines[] = 'DTSTART:' . gmdate('Ymd\THis\Z', strtotime($event['starts_at']));
+                $lines[] = 'DTEND:' . gmdate('Ymd\THis\Z', strtotime($event['ends_at'] ?: $event['starts_at']));
+            }
+            $lines[] = 'SUMMARY:' . $this->icsEscape($event['title']);
+            if ($event['description']) $lines[] = 'DESCRIPTION:' . $this->icsEscape($event['description']);
+            if ($event['location']) $lines[] = 'LOCATION:' . $this->icsEscape($event['location']);
+            if ($event['recurrence_rule']) $lines[] = 'RRULE:' . $this->icsEscape($event['recurrence_rule']);
+            $lines[] = 'END:VEVENT';
+        }
+        $lines[] = 'END:VCALENDAR';
+        header('Content-Type: text/calendar; charset=utf-8');
+        header('Content-Disposition: ' . $this->contentDisposition('attachment', $this->slugify($calendar['name']) . '.ics'));
+        echo implode("\r\n", $lines) . "\r\n";
+        exit;
+    }
+
     private function retentionSettings(array $user): void
     {
         $this->requireAdmin($user);
@@ -1043,6 +1380,287 @@ final class App
         $number = filter_var($value, FILTER_VALIDATE_INT);
         if ($number === false) throw new RuntimeException('Retention settings must be whole numbers');
         return max($min, min($max, (int)$number));
+    }
+
+    private function boundedGenericInt($value, int $min, int $max): int
+    {
+        $number = filter_var($value, FILTER_VALIDATE_INT);
+        if ($number === false) throw new RuntimeException('Value must be a whole number');
+        return max($min, min($max, (int)$number));
+    }
+
+    private function userFeatures(int $userId): array
+    {
+        $features = [
+            'calendar' => ['enabled' => false, 'settings' => ['home_enabled' => true, 'reminders_enabled' => true, 'default_reminder_minutes' => 10, 'default_calendar_id' => null]],
+            'tasks' => ['enabled' => false, 'settings' => ['home_enabled' => true, 'reminders_enabled' => true, 'default_reminder_minutes' => 10, 'shared_calendar_tasks' => true]],
+            'home' => ['enabled' => true, 'settings' => ['notes_enabled' => true]],
+        ];
+        $stmt = $this->db->prepare('SELECT feature, enabled, settings_json FROM user_feature_settings WHERE user_id = ?');
+        $stmt->execute([$userId]);
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $feature = (string)$row['feature'];
+            if (!isset($features[$feature])) continue;
+            $settings = json_decode((string)($row['settings_json'] ?? ''), true);
+            $features[$feature]['enabled'] = (int)$row['enabled'] === 1;
+            if (is_array($settings)) $features[$feature]['settings'] = array_replace($features[$feature]['settings'], $settings);
+        }
+        return $features;
+    }
+
+    private function ensureDefaultCalendar(array $user): int
+    {
+        $stmt = $this->db->prepare('SELECT id FROM calendars WHERE owner_user_id = ? AND archived = 0 ORDER BY id LIMIT 1');
+        $stmt->execute([(int)$user['id']]);
+        $id = (int)$stmt->fetchColumn();
+        if ($id) return $id;
+        $stmt = $this->db->prepare('INSERT INTO calendars (owner_user_id, name, color, timezone) VALUES (?, ?, ?, ?)');
+        $stmt->execute([(int)$user['id'], 'My Calendar', '#635bff', date_default_timezone_get() ?: 'UTC']);
+        return (int)$this->db->lastInsertId();
+    }
+
+    private function calendarAccess(array $user, int $calendarId, string $level): array
+    {
+        $stmt = $this->db->prepare("SELECT c.*, CASE WHEN c.owner_user_id = ? THEN 'owner' ELSE s.permission END AS permission FROM calendars c LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE c.id = ? AND c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?)");
+        $stmt->execute([(int)$user['id'], (int)$user['id'], $calendarId, (int)$user['id'], (int)$user['id']]);
+        $calendar = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$calendar) throw new RuntimeException('Calendar not found');
+        $permission = (string)($calendar['permission'] ?? '');
+        $rank = ['view' => 1, 'read' => 1, 'edit' => 2, 'admin' => 3, 'owner' => 4];
+        if (($rank[$permission] ?? 0) < ($rank[$level] ?? 1)) throw new RuntimeException('Calendar permission required');
+        return $calendar;
+    }
+
+    private function calendarShares(int $calendarId): array
+    {
+        $stmt = $this->db->prepare('SELECT s.user_id, s.permission, u.email, u.name FROM calendar_shares s JOIN users u ON u.id = s.user_id WHERE s.calendar_id = ? ORDER BY u.email');
+        $stmt->execute([$calendarId]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    private function eventAccess(array $user, int $eventId, string $level): array
+    {
+        $stmt = $this->db->prepare('SELECT e.*, c.name AS calendar_name, c.color AS calendar_color FROM calendar_events e JOIN calendars c ON c.id = e.calendar_id WHERE e.id = ?');
+        $stmt->execute([$eventId]);
+        $event = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$event) throw new RuntimeException('Event not found');
+        $this->calendarAccess($user, (int)$event['calendar_id'], $level);
+        return $event;
+    }
+
+    private function taskAccess(array $user, int $taskId, string $level): array
+    {
+        $stmt = $this->db->prepare('SELECT t.*, c.name AS calendar_name, c.color AS calendar_color FROM tasks t LEFT JOIN calendars c ON c.id = t.calendar_id WHERE t.id = ?');
+        $stmt->execute([$taskId]);
+        $task = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$task) throw new RuntimeException('Task not found');
+        if ((int)$task['user_id'] === (int)$user['id']) return $task;
+        if ((int)$task['private'] === 1 || empty($task['calendar_id'])) throw new RuntimeException('Task not found');
+        $this->calendarAccess($user, (int)$task['calendar_id'], $level);
+        return $task;
+    }
+
+    private function dateRangeFromQuery(): array
+    {
+        $start = $this->cleanDateTime($_GET['start'] ?? '') ?: gmdate('Y-m-01 00:00:00');
+        $end = $this->cleanDateTime($_GET['end'] ?? '') ?: gmdate('Y-m-t 23:59:59');
+        return [$start, $end];
+    }
+
+    private function cleanDateTime($value): ?string
+    {
+        if (!is_string($value) || trim($value) === '') return null;
+        $time = strtotime($value);
+        return $time ? gmdate('Y-m-d H:i:s', $time) : null;
+    }
+
+    private function cleanColor($value): string
+    {
+        $color = trim((string)$value);
+        return preg_match('/^#[0-9a-f]{6}$/i', $color) ? $color : '#635bff';
+    }
+
+    private function saveEventReminder(array $user, int $eventId, string $startsAt, $minutes): void
+    {
+        $this->db->prepare('DELETE FROM calendar_event_reminders WHERE event_id = ? AND user_id = ?')->execute([$eventId, (int)$user['id']]);
+        if ($minutes === null || $minutes === '' || (int)$minutes < 0) return;
+        $minutes = $this->boundedGenericInt($minutes, 0, 10080);
+        $remindAt = gmdate('Y-m-d H:i:s', strtotime($startsAt) - ($minutes * 60));
+        $this->db->prepare('INSERT INTO calendar_event_reminders (event_id, user_id, remind_at, offset_minutes) VALUES (?, ?, ?, ?)')->execute([$eventId, (int)$user['id'], $remindAt, $minutes]);
+    }
+
+    private function saveTaskReminder(array $user, int $taskId, ?string $dueAt, $minutes): void
+    {
+        $this->db->prepare('DELETE FROM task_reminders WHERE task_id = ? AND user_id = ?')->execute([$taskId, (int)$user['id']]);
+        if (!$dueAt || $minutes === null || $minutes === '' || (int)$minutes < 0) return;
+        $minutes = $this->boundedGenericInt($minutes, 0, 10080);
+        $remindAt = gmdate('Y-m-d H:i:s', strtotime($dueAt) - ($minutes * 60));
+        $this->db->prepare('INSERT INTO task_reminders (task_id, user_id, remind_at, offset_minutes) VALUES (?, ?, ?, ?)')->execute([$taskId, (int)$user['id'], $remindAt, $minutes]);
+    }
+
+    private function eventReminderMinutes(array $user, int $eventId): ?int
+    {
+        $stmt = $this->db->prepare('SELECT offset_minutes FROM calendar_event_reminders WHERE event_id = ? AND user_id = ? AND dismissed_at IS NULL ORDER BY id DESC LIMIT 1');
+        $stmt->execute([$eventId, (int)$user['id']]);
+        $value = $stmt->fetchColumn();
+        return $value === false ? null : (int)$value;
+    }
+
+    private function taskReminderMinutes(array $user, int $taskId): ?int
+    {
+        $stmt = $this->db->prepare('SELECT offset_minutes FROM task_reminders WHERE task_id = ? AND user_id = ? AND dismissed_at IS NULL ORDER BY id DESC LIMIT 1');
+        $stmt->execute([$taskId, (int)$user['id']]);
+        $value = $stmt->fetchColumn();
+        return $value === false ? null : (int)$value;
+    }
+
+    private function saveLinks(string $kind, int $id, array $user, $noteIds): void
+    {
+        $table = $kind === 'event' ? 'calendar_event_notes' : 'task_notes';
+        $idColumn = $kind === 'event' ? 'event_id' : 'task_id';
+        if (!is_array($noteIds)) return;
+        $validNoteIds = [];
+        foreach (array_unique(array_map('intval', $noteIds)) as $noteId) {
+            if ($noteId <= 0) continue;
+            $note = $this->note($noteId);
+            if ((int)$note['user_id'] !== (int)$user['id']) throw new RuntimeException('Note not found');
+            $validNoteIds[] = $noteId;
+        }
+        $this->db->prepare("DELETE FROM $table WHERE $idColumn = ? AND user_id = ?")->execute([$id, (int)$user['id']]);
+        foreach ($validNoteIds as $noteId) {
+            $this->db->prepare("INSERT OR IGNORE INTO $table ($idColumn, note_id, user_id) VALUES (?, ?, ?)")->execute([$id, $noteId, (int)$user['id']]);
+        }
+    }
+
+    private function linkedNotes(string $kind, int $id, array $user): array
+    {
+        $table = $kind === 'event' ? 'calendar_event_notes' : 'task_notes';
+        $idColumn = $kind === 'event' ? 'event_id' : 'task_id';
+        $stmt = $this->db->prepare("SELECT n.id, n.title FROM $table l JOIN notes n ON n.id = l.note_id WHERE l.$idColumn = ? AND n.user_id = ? AND n.deleted = 0 ORDER BY n.title");
+        $stmt->execute([$id, (int)$user['id']]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    private function expandRecurringEvents(array $events, string $rangeStart, string $rangeEnd): array
+    {
+        $expanded = [];
+        $rangeStartTs = strtotime($rangeStart) ?: 0;
+        $rangeEndTs = strtotime($rangeEnd) ?: time();
+        foreach ($events as $event) {
+            $rule = $this->parseRecurrenceRule((string)($event['recurrence_rule'] ?? ''));
+            if (!$rule) {
+                $expanded[] = $event;
+                continue;
+            }
+            $startTs = strtotime((string)$event['starts_at']);
+            if (!$startTs) continue;
+            $endTs = strtotime((string)($event['ends_at'] ?: $event['starts_at'])) ?: $startTs;
+            $duration = max(0, $endTs - $startTs);
+            $interval = max(1, (int)($rule['INTERVAL'] ?? 1));
+            $count = isset($rule['COUNT']) ? max(1, (int)$rule['COUNT']) : 732;
+            $untilTs = isset($rule['UNTIL']) ? ($this->icsDateToTimestamp((string)$rule['UNTIL']) ?: $rangeEndTs) : $rangeEndTs;
+            $limitTs = min($rangeEndTs, $untilTs);
+            $occurrenceTs = $startTs;
+            $seen = 0;
+            while ($occurrenceTs <= $limitTs && $seen < $count) {
+                $occurrenceEnd = $occurrenceTs + $duration;
+                if ($occurrenceEnd >= $rangeStartTs && $occurrenceTs <= $rangeEndTs) {
+                    $copy = $event;
+                    $copy['occurrence_id'] = $event['id'] . '-' . gmdate('YmdHis', $occurrenceTs);
+                    $copy['series_id'] = (int)$event['id'];
+                    $copy['starts_at'] = gmdate('Y-m-d H:i:s', $occurrenceTs);
+                    $copy['ends_at'] = gmdate('Y-m-d H:i:s', $occurrenceEnd);
+                    $expanded[] = $copy;
+                }
+                $seen++;
+                $occurrenceTs = $this->nextRecurrenceTimestamp($occurrenceTs, (string)($rule['FREQ'] ?? ''), $interval);
+                if (!$occurrenceTs) break;
+            }
+        }
+        usort($expanded, fn($a, $b) => strcmp((string)$a['starts_at'], (string)$b['starts_at']));
+        return $expanded;
+    }
+
+    private function parseRecurrenceRule(string $rule): array
+    {
+        $rule = trim($rule);
+        if ($rule === '') return [];
+        $parts = [];
+        foreach (explode(';', $rule) as $part) {
+            if (!str_contains($part, '=')) continue;
+            [$key, $value] = explode('=', $part, 2);
+            $parts[strtoupper(trim($key))] = strtoupper(trim($value));
+        }
+        return in_array($parts['FREQ'] ?? '', ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'], true) ? $parts : [];
+    }
+
+    private function nextRecurrenceTimestamp(int $timestamp, string $freq, int $interval): int
+    {
+        return match ($freq) {
+            'DAILY' => strtotime('+' . $interval . ' day', $timestamp) ?: 0,
+            'WEEKLY' => strtotime('+' . $interval . ' week', $timestamp) ?: 0,
+            'MONTHLY' => strtotime('+' . $interval . ' month', $timestamp) ?: 0,
+            'YEARLY' => strtotime('+' . $interval . ' year', $timestamp) ?: 0,
+            default => 0,
+        };
+    }
+
+    private function icsDateToTimestamp(string $value): ?int
+    {
+        $sql = $this->icsDateToSql($value);
+        return $sql ? (strtotime($sql . ' UTC') ?: null) : null;
+    }
+
+    private function parseIcsEvents(string $ics): array
+    {
+        $ics = preg_replace("/\r?\n[ \t]/", '', $ics) ?? $ics;
+        preg_match_all('/BEGIN:VEVENT\r?\n(.*?)\r?\nEND:VEVENT/s', $ics, $matches);
+        $events = [];
+        foreach ($matches[1] as $block) {
+            $fields = [];
+            foreach (preg_split('/\r?\n/', trim($block)) as $line) {
+                if (!str_contains($line, ':')) continue;
+                [$name, $value] = explode(':', $line, 2);
+                $key = strtoupper(strtok($name, ';'));
+                $fields[$key] = $this->icsUnescape($value);
+                if (str_contains(strtoupper($name), 'VALUE=DATE')) $fields[$key . '_ALL_DAY'] = '1';
+            }
+            $start = $this->icsDateToSql($fields['DTSTART'] ?? '');
+            if (!$start) continue;
+            $events[] = [
+                'uid' => substr($fields['UID'] ?? '', 0, 255),
+                'title' => substr(trim($fields['SUMMARY'] ?? '') ?: 'Imported event', 0, 255),
+                'description' => substr($fields['DESCRIPTION'] ?? '', 0, 5000),
+                'location' => substr($fields['LOCATION'] ?? '', 0, 255),
+                'starts_at' => $start,
+                'ends_at' => $this->icsDateToSql($fields['DTEND'] ?? '') ?: $start,
+                'all_day' => !empty($fields['DTSTART_ALL_DAY']) ? 1 : 0,
+                'recurrence_rule' => isset($fields['RRULE']) ? substr($fields['RRULE'], 0, 500) : null,
+            ];
+        }
+        return $events;
+    }
+
+    private function icsDateToSql(string $value): ?string
+    {
+        $value = trim($value);
+        if ($value === '') return null;
+        if (preg_match('/^\d{8}$/', $value)) return gmdate('Y-m-d 00:00:00', strtotime($value));
+        if (preg_match('/^\d{8}T\d{6}Z?$/', $value)) {
+            $time = strtotime(substr($value, 0, 8) . ' ' . substr($value, 9, 2) . ':' . substr($value, 11, 2) . ':' . substr($value, 13, 2) . (str_ends_with($value, 'Z') ? ' UTC' : ''));
+            return $time ? gmdate('Y-m-d H:i:s', $time) : null;
+        }
+        return $this->cleanDateTime($value);
+    }
+
+    private function icsEscape(string $value): string
+    {
+        return str_replace(["\\", "\r", "\n", ';', ','], ['\\\\', '', '\\n', '\\;', '\\,'], $value);
+    }
+
+    private function icsUnescape(string $value): string
+    {
+        return str_replace(['\\n', '\\N', '\\,', '\\;', '\\\\'], ["\n", "\n", ',', ';', '\\'], $value);
     }
 
     private function applyRetentionPolicy(): void
@@ -1297,6 +1915,7 @@ final class App
 
     private function export(array $user): void
     {
+        $this->requireAdmin($user);
         $this->audit((int)$user['id'], 'export.created', 'export', null);
         $data = [
             'exported_at' => gmdate('c'),
@@ -1304,6 +1923,10 @@ final class App
             'assets' => $this->db->query('SELECT id, client_id, type, name, status, asset_type, os, primary_ip, serial_number, expires_at, location, contact, username, notes, data_json, archived, created_at, updated_at FROM asset_records ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
             'clients' => $this->db->query('SELECT * FROM clients ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
             'files' => $this->db->query('SELECT id, note_id, original_name, mime, size, created_at FROM files ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+            'calendars' => $this->db->query('SELECT * FROM calendars ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+            'calendar_shares' => $this->db->query('SELECT * FROM calendar_shares ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+            'events' => $this->db->query('SELECT * FROM calendar_events ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
+            'tasks' => $this->db->query('SELECT * FROM tasks ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),
         ];
         header('Content-Type: application/json');
         header('Content-Disposition: ' . $this->contentDisposition('attachment', 'divault-export.json'));

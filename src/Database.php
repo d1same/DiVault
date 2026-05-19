@@ -172,6 +172,118 @@ CREATE TABLE IF NOT EXISTS sync_applied_mutations (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(client_id, mutation_id)
 );
+CREATE TABLE IF NOT EXISTS user_feature_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    feature TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    settings_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, feature)
+);
+CREATE TABLE IF NOT EXISTS calendars (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    color TEXT,
+    description TEXT,
+    visibility TEXT NOT NULL DEFAULT 'private',
+    timezone TEXT,
+    external_source TEXT,
+    external_uid TEXT,
+    archived INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS calendar_shares (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    permission TEXT NOT NULL DEFAULT 'read',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(calendar_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS calendar_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    calendar_id INTEGER NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    location TEXT,
+    starts_at TEXT NOT NULL,
+    ends_at TEXT,
+    all_day INTEGER NOT NULL DEFAULT 0,
+    timezone TEXT,
+    status TEXT NOT NULL DEFAULT 'confirmed',
+    recurrence_rule TEXT,
+    source TEXT,
+    import_uid TEXT,
+    import_source TEXT,
+    import_etag TEXT,
+    import_updated_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(calendar_id, import_source, import_uid)
+);
+CREATE TABLE IF NOT EXISTS calendar_event_reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL REFERENCES calendar_events(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    remind_at TEXT NOT NULL,
+    offset_minutes INTEGER,
+    method TEXT NOT NULL DEFAULT 'in_app',
+    sent_at TEXT,
+    dismissed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS calendar_event_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL REFERENCES calendar_events(id) ON DELETE CASCADE,
+    note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(event_id, note_id)
+);
+CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    calendar_id INTEGER REFERENCES calendars(id) ON DELETE SET NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    priority INTEGER NOT NULL DEFAULT 0,
+    due_at TEXT,
+    completed_at TEXT,
+    private INTEGER NOT NULL DEFAULT 1,
+    source TEXT,
+    import_uid TEXT,
+    import_source TEXT,
+    import_etag TEXT,
+    import_updated_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, import_source, import_uid)
+);
+CREATE TABLE IF NOT EXISTS task_reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    remind_at TEXT NOT NULL,
+    offset_minutes INTEGER,
+    method TEXT NOT NULL DEFAULT 'in_app',
+    sent_at TEXT,
+    dismissed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS task_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(task_id, note_id)
+);
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -183,12 +295,29 @@ SQL);
         $this->addColumnIfMissing('asset_categories', 'parent_id', 'INTEGER REFERENCES asset_categories(id) ON DELETE SET NULL');
         $this->addColumnIfMissing('asset_categories', 'icon', 'TEXT');
         $this->addColumnIfMissing('webauthn_credentials', 'last_used_at', 'TEXT');
+        $this->addColumnIfMissing('sync_events', 'user_id', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
+        $this->addColumnIfMissing('sync_applied_mutations', 'user_id', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_notes_category_id ON notes(category_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_asset_categories_parent ON asset_categories(parent_id)');
         $this->pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_webauthn_credentials_credential_id ON webauthn_credentials(credential_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_sync_events_id ON sync_events(id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_sync_events_entity ON sync_events(entity_type, entity_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_sync_applied_mutations_client ON sync_applied_mutations(client_id, mutation_id)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_user_feature_settings_user ON user_feature_settings(user_id)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_calendars_owner ON calendars(owner_user_id, archived)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_calendars_external ON calendars(external_source, external_uid)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_calendar_shares_user ON calendar_shares(user_id, permission)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_calendar_events_calendar_start ON calendar_events(calendar_id, starts_at)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_calendar_events_import ON calendar_events(import_source, import_uid)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_calendar_event_reminders_user_due ON calendar_event_reminders(user_id, remind_at, sent_at)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_calendar_event_reminders_event ON calendar_event_reminders(event_id)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_calendar_event_notes_note ON calendar_event_notes(note_id)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_tasks_user_status_due ON tasks(user_id, status, due_at)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_tasks_calendar_due ON tasks(calendar_id, due_at)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_tasks_import ON tasks(import_source, import_uid)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_task_reminders_user_due ON task_reminders(user_id, remind_at, sent_at)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_task_reminders_task ON task_reminders(task_id)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_task_notes_note ON task_notes(note_id)');
     }
 
     private function addColumnIfMissing(string $table, string $column, string $definition): void

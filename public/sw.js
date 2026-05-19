@@ -1,6 +1,6 @@
-const CACHE = 'divault-v126';
-const ASSETS = ['/', '/app.html', '/styles.css?v=126', '/app.js?v=126', '/manifest.webmanifest', '/assets/divault-logo.svg', '/assets/icon.svg'];
-const ASSET_PATHS = new Set(ASSETS);
+const CACHE = 'divault-v171';
+const ASSETS = ['/', '/app.html', '/styles.css?v=171', '/app.js?v=171', '/manifest.webmanifest', '/assets/divault-logo.svg', '/assets/icon.svg'];
+const ASSET_PATHS = new Set(ASSETS.map(asset => new URL(asset, self.location.origin).pathname));
 
 function cacheableRequest(request) {
   if (request.method !== 'GET') return false;
@@ -27,4 +27,23 @@ self.addEventListener('fetch', event => {
     }
     return response;
   }).catch(() => event.request.mode === 'navigate' ? caches.match('/app.html').then(match => match || caches.match('/')) : caches.match(event.request)));
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const targetUrl = event.notification.data && event.notification.data.url ? event.notification.data.url : '/';
+  let url = self.location.origin + '/';
+  try {
+    const target = new URL(targetUrl, self.location.origin);
+    url = target.origin === self.location.origin ? target.href : url;
+  } catch (err) {}
+
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
+    const sameOriginClient = clients.find(client => {
+      try { return new URL(client.url).origin === self.location.origin; }
+      catch (err) { return false; }
+    });
+    if (sameOriginClient) return sameOriginClient.focus().then(client => client.navigate ? client.navigate(url) : client);
+    return self.clients.openWindow(url);
+  }));
 });

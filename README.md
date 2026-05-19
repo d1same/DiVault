@@ -1,8 +1,8 @@
 # DiVault
 
-DiVault is a simple self-hosted vault for notes, client docs, files, scripts, and sensitive information.
+DiVault is a self-hosted private workspace for notes, files, secrets, calendars, tasks, reminders, and lightweight client documentation.
 
-Run it with Docker, open it in your browser, install the Windows desktop app, or build the Android client. Phones, desktops, and mobile apps can all use the same DiVault server so your notes stay in one place.
+Run it with Docker, open it in a browser, install it as a PWA, use the Windows desktop app, or connect with the Android client. Browser, desktop remote mode, Android, and PWA clients all use the same DiVault server and SQLite database.
 
 ![DiVault desktop showcase](docs/screenshots/desktop-showcase.png)
 
@@ -12,8 +12,6 @@ Run it with Docker, open it in your browser, install the Windows desktop app, or
 
 ### Docker Compose
 
-Start the server with Docker Compose:
-
 ```bash
 git clone https://github.com/d1same/DiVault.git
 cd DiVault
@@ -22,51 +20,13 @@ docker compose up -d --build
 
 Open `http://localhost:3443` and create the owner account.
 
-Prebuilt image for Unraid or Docker templates:
+### Prebuilt Image
 
 ```text
 ghcr.io/d1same/divault:latest
 ```
 
-For production, put it behind HTTPS with Pangolin, Nginx Proxy Manager, Caddy, or another reverse proxy.
-
-### Windows Desktop
-
-Download the Windows installer from GitHub Releases and run the `.exe` setup file:
-
-```text
-DiVault_*_x64-setup.exe
-```
-
-The `.msi` installer is also available for Windows users who prefer MSI packages.
-
-The desktop app works standalone and includes its own local runtime. For syncing across devices, run a DiVault server and point the desktop app to that same server URL.
-
-### Android
-
-Download the signed Android APK from GitHub Releases:
-
-```text
-DiVault_*_android-signed.apk
-```
-
-The Android app is a server-connected WebView client for your DiVault server. On first launch, enter your Docker/Pangolin DiVault URL, then Android uses that same synced server data as your browser and desktop clients.
-
-If you installed an older debug APK, Android may reject the signed APK as an update because the signing certificate changed. Uninstall the debug APK once, then install the signed APK. Future signed APK releases should update normally.
-
-## Features
-
-- Notes, quick notes, archive, and recycle bin
-- Client documentation and custom categories
-- File/photo/document attachments
-- Sensitive values are hidden and encrypted
-- Multi-user login with roles and optional 2FA
-- Browser PWA and Windows desktop app
-- Android WebView client
-- Backup, export, import, and audit log
-- AI review-note REST API
-
-## Docker Compose Example
+Example Compose service:
 
 ```yaml
 services:
@@ -82,35 +42,64 @@ services:
       APP_CONFIG_DIR: "/config"
       TRUST_PROXY: "true"
       SECURE_COOKIES: "true"
-      AI_REVIEW_API_TOKEN: "replace-with-a-long-random-token"
-      AI_REVIEW_USER_EMAIL: "owner@example.com"
       TZ: "America/New_York"
     restart: unless-stopped
 ```
 
-For local HTTP testing without a reverse proxy, set:
+For local plain-HTTP testing only:
 
 ```yaml
 SECURE_COOKIES: "false"
 ```
 
-Keep `SECURE_COOKIES` set to `true` in production. Use `false` only for local plain-HTTP testing.
+Keep `SECURE_COOKIES=true` in production.
 
-## Pangolin / Reverse Proxy Notes
+## Reverse Proxy
 
-Use Pangolin to proxy your public HTTPS domain to the container on port `3443`. The container listens on plain HTTP at port `3443`; Pangolin provides the public HTTPS layer.
+Put DiVault behind HTTPS with Pangolin, Caddy, Nginx Proxy Manager, Traefik, or another reverse proxy.
 
-Recommended environment values:
+Recommended production environment values:
 
 ```text
-APP_URL=https://notes.yourdomain.com
+APP_URL=https://notes.example.com
 TRUST_PROXY=true
 SECURE_COOKIES=true
 ```
 
-The app honors forwarded IP headers when `TRUST_PROXY=true`, uses secure cookies when `SECURE_COOKIES=true`, and supports passkey/WebAuthn sign-in after a user enrolls a passkey from Settings. Passkeys work best on HTTPS or localhost because browsers restrict WebAuthn on insecure origins.
+The container listens on HTTP port `3443`. Your reverse proxy provides public HTTPS.
 
-## Persistent Data Layout
+## Features
+
+- Home dashboard with recent notes and schedule summary
+- Notes, quick notes, archive, recycle bin, categories, and subcategories
+- Rich note blocks for text, headings, lists, checklists, code, tables, drawings, files, and secrets
+- File, photo, and document attachments
+- Auto-hidden encrypted sensitive lines such as passwords, tokens, API keys, and secrets
+- Optional Calendar and Tasks modules per user
+- Day, Week, Month, Year, and Schedule calendar views
+- Internal calendar sharing with `view`, `edit`, and `admin` permissions
+- Recurring calendar events and linked notes
+- Browser reminders for events and tasks
+- `.ics` calendar import/export for Google Calendar, Apple Calendar, Outlook, and Microsoft 365 workflows
+- Multi-user accounts with owner/admin/editor/viewer roles
+- Optional 2FA, recovery codes, sessions, audit log, and passkeys/WebAuthn
+- PWA, Windows desktop app, and Android WebView client
+- JSON export, full backup ZIPs, encrypted backup ZIPs, and restore staging
+- AI review-note REST API for external tools
+
+## First Run
+
+1. Start the container.
+2. Open DiVault locally or through your HTTPS reverse proxy.
+3. Create the owner account.
+4. Open Settings.
+5. Enable Calendar and Tasks if you want schedule features.
+6. Enable 2FA or passkeys if desired.
+7. Install the PWA from your browser menu if you want an app shortcut.
+
+## Persistent Data
+
+DiVault stores application data under `/config`:
 
 ```text
 /config/app.sqlite
@@ -123,64 +112,85 @@ The app honors forwarded IP headers when `TRUST_PROXY=true`, uses secure cookies
 /config/tmp/
 ```
 
-Keep `/config/keys/master.key` safe. If it is lost, encrypted sensitive values cannot be recovered. Full backup ZIPs include the SQLite database, uploaded files, and this master key, so protect backup ZIPs like production secrets.
+Keep `/config/keys/master.key` safe. If it is lost, encrypted sensitive values cannot be recovered.
 
-If you create an encrypted backup ZIP, store the backup passphrase outside DiVault, such as in your primary password manager or offline recovery notes. DiVault cannot recover a forgotten backup passphrase.
+Full backup ZIPs include the SQLite database, uploaded files, and the master key. Treat backup ZIPs like production secrets.
 
-## First Run
+## Notes And Secrets
 
-1. Start the container.
-2. Open DiVault through Pangolin or locally.
-3. Create the owner account.
-4. Enable 2FA from Security & data.
-5. Install the PWA on your phone from the browser menu.
+These lines are auto-hidden and encrypted when saved:
 
-## Quick Capture Workflow
+```text
+password: MySecret123
+pwd: MySecret123
+pass: MySecret123
+secret: value
+token: value
+api key: value
+key: value
+🔒 Password: MySecret123
+```
 
-1. Open DiVault on your phone.
-2. Tap `+`.
-3. Start typing immediately.
-4. Use the top icons only when needed: username, secret, URL, checklist, file, or code.
-5. Save to `All`.
-6. Review later and drag/drop into your own categories or subcategories.
-7. Use Archive or Recycle bin actions when a note is no longer active.
+The editor shows saved secrets as secure inline blocks with reveal/copy controls.
 
-## Joplin Markdown Import
+## Calendar And Tasks
 
-Export Joplin notebooks as `MD - Markdown + Front Matter`, then import them from `Settings` > `Import / export` > `Import Markdown folder`. DiVault reads the Markdown files locally in the browser, imports them directly, and maps subfolders to categories.
+Calendar and Tasks are optional per-user features.
 
-The importer keeps note titles, Markdown bodies, tags, and created/updated timestamps. Generated exports and import JSON contain full note contents, so treat them like sensitive backups and keep them out of source control.
+Calendar supports:
+
+- Personal calendars
+- Shared internal calendars
+- Day, Week, Month, Year, and Schedule views
+- Click/tap-to-add from calendar cells
+- Recurring events
+- Event reminders
+- Linked notes
+- `.ics` import/export
+
+Tasks support:
+
+- Private tasks
+- Tasks attached to shared calendars
+- Due dates and reminders
+- Done/open status
+- Linked notes
+- Calendar visibility when assigned to a date/calendar
+
+Google/Microsoft sync is intentionally simple: use `.ics` import/export instead of OAuth account sync.
 
 ## Desktop App
 
-Most Windows users should install DiVault by running the release `.exe` installer. You do not need Node, Rust, or the source code when using the installer.
+Download the Windows installer from GitHub Releases:
 
-Developer builds use Tauri. In local vault mode, the desktop app starts the bundled PHP runtime at `http://127.0.0.1:3444`, opens DiVault in a native window, and stores local desktop data in the current Windows user app-data folder by default.
+```text
+DiVault_*_x64-setup.exe
+```
 
-Desktop Settings shows the local data folder path so Windows users can quickly find standalone vault data, backups, logs, and configuration files.
+An `.msi` installer is also published for users who prefer MSI packages.
 
-For cross-device sync, point the desktop app at the same Docker/Pangolin DiVault URL used by phones, tablets, Android devices, and browsers. In that mode the desktop app opens the remote server directly instead of creating an isolated local SQLite vault.
+Desktop modes:
 
-Developer requirements:
+- Standalone local vault: runs the bundled PHP runtime at `http://127.0.0.1:3444` and stores local data in the Windows user app-data folder.
+- Server mode: opens your hosted DiVault server URL directly, sharing the same data as browser, PWA, and Android clients.
 
-- Node.js and npm
-- Rust/Cargo
-- PHP available on `PATH` only if you are building a new installer; release installers include PHP
-
-Run the desktop app in development:
+Developer commands:
 
 ```powershell
 npm install
 npm run desktop:dev
-```
-
-Build a desktop bundle:
-
-```powershell
 npm run desktop:build
 ```
 
-Optional desktop environment variables:
+Helper scripts:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\desktop-dev.ps1
+powershell -ExecutionPolicy Bypass -File scripts\desktop-build.ps1
+powershell -ExecutionPolicy Bypass -File scripts\desktop-smoke.ps1
+```
+
+Useful desktop environment variables:
 
 ```text
 DIVAULT_DESKTOP_CONFIG=C:\path\to\divault-desktop-data
@@ -188,94 +198,122 @@ DIVAULT_PHP_BIN=C:\path\to\php.exe
 DIVAULT_REMOTE_URL=https://notes.example.com
 ```
 
-Remote synced desktop mode:
+## Android App
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\desktop-dev.ps1 -RemoteUrl http://localhost:3443
+Download the signed APK from GitHub Releases:
+
+```text
+DiVault_*_android-signed.apk
 ```
 
-Local desktop mode is useful for a private standalone vault. To share the same notes with phones or other computers, connect the desktop app to your DiVault server URL instead of using a separate local vault.
+The Android app is a server-connected WebView client.
+
+- First launch asks for your DiVault server URL.
+- The server URL is saved on the device.
+- JavaScript, DOM storage, uploads, and Android share intents are enabled.
+- If the server is unavailable, Android shows retry and change-server actions.
+- Android Settings includes a Change server action.
+- Android system Back sends DiVault to the background.
+
+If Android rejects a signed APK update over an older debug APK, uninstall the debug APK once and install the signed APK.
+
+Build from source by opening `android/` in Android Studio with JDK 17 or newer.
 
 ## Sync Between Devices
 
-DiVault is server-backed. All phones, tablets, and computers sync through the same DiVault container and `/config/app.sqlite` database.
+DiVault is server-backed. Use the same DiVault URL on every device.
 
-- Open the same DiVault URL on each device.
-- Install the PWA from the browser menu if you want an app-like shortcut.
-- Notes save to the server immediately when you press Save.
-- Other devices refresh when the app gains focus, comes back online, or every 30 seconds while open.
-- The header sync pill shows `Synced`, `Syncing...`, or `Offline`.
+- Notes save to the server when saved or autosaved.
+- Devices refresh on focus, reconnect, and periodic sync while open.
+- The sync pill shows the current connection state.
+- Docker, browser/PWA, Android, and desktop server mode share the same server data.
 
-Current Docker/PWA/remote-desktop sync is online-first and server-authoritative. Offline viewing may work from the PWA cache, but offline note creation/editing is not yet conflict-safe. Full encrypted offline capture and local-desktop-to-server merge sync remain on the roadmap.
+Current sync API support is conservative:
 
-Platform-neutral sync API foundation:
+- Notes, clients, categories, assets, and files are included in the sync API foundation.
+- `POST /api/sync/push` supports idempotent note mutations.
+- Calendar, Tasks, reminders, and shares use normal online server APIs and are not offline sync-push entities yet.
 
-- `GET /api/sync/manifest` returns server time, the current sync watermark, supported entities, and capabilities.
-- `GET /api/sync/pull?since_event_id=0` returns a full snapshot for initial client hydration.
-- `GET /api/sync/pull?since_event_id={watermark}` returns incremental mutation events after that watermark.
-- `GET /api/sync/files/{id}` downloads attachment content for sync clients. Sync snapshots and file events include `download_url` and `preview_url`.
-- `POST /api/sync/push` accepts idempotent note mutations from offline-capable clients. Each request must include `client_id` and each mutation must include `mutation_id`; duplicate mutations return the original result. Note updates with a stale `base_updated_at` return `status: "conflict"` and the current server record instead of overwriting.
+Emergency/offline snapshots are for device-local note recovery. Calendar and Tasks should be treated as online server-backed data for this release.
 
-Current push support is intentionally conservative: note create/update/archive/recycle/restore are supported first. Attachments, assets, categories, and full conflict UI remain future phases.
+## Joplin Markdown Import
 
-Phones, Android wrappers, desktop wrappers, PWAs, and future native clients should all use the same Docker/Pangolin DiVault server and this shared sync contract rather than platform-specific sync paths.
+Export Joplin notebooks as `MD - Markdown + Front Matter`, then import from Settings > Import / export > Import Markdown folder.
 
-## Android App
+The importer keeps note titles, Markdown bodies, tags, created/updated timestamps, and maps subfolders to categories.
 
-The Android project is intentionally small and server-connected:
+## Backups And Restores
 
-- First launch asks for your DiVault server URL.
-- The saved server URL is stored on the device.
-- DiVault opens in a WebView with JavaScript, DOM storage, and file uploads enabled.
-- Android status and navigation bars stay visible, and DiVault adds native safe-area padding so content does not render behind them.
-- If the saved server is unavailable, Android shows retry and change-server actions.
-- Android share intents can send text into DiVault after you are signed in.
-- Android system Back sends DiVault to the background instead of navigating WebView history.
-- Android Settings includes a Change server action when opened inside the Android app.
+Full backup ZIPs include:
 
-Release APKs are signed with the project Android release key configured in GitHub Actions secrets. Debug APKs are for development only and may not update cleanly across machines.
+- `/config/app.sqlite`
+- `/config/keys/master.key`
+- Uploaded files from `/config/files/`
 
-Build it by opening `android/` in Android Studio. Android Studio should use JDK 17 or newer for Android Gradle Plugin 8.7.3.
+The database includes notes, users, settings, categories, assets, calendars, calendar shares, events, tasks, reminders, and audit records.
 
-## Desktop Signing
+Restore options:
 
-Windows desktop installers are built and smoke-tested automatically for each release. They are not Authenticode-signed yet, so Windows SmartScreen may show a warning until a real code-signing certificate is added to the release workflow.
+1. Upload or stage a backup as `/config/restore-pending.zip`.
+2. If encrypted, place the passphrase in `/config/restore-passphrase`.
+3. Restart the container.
+4. The entrypoint applies the pending restore before Apache starts.
 
-The release workflow already supports optional Authenticode signing. Add these GitHub Actions secrets when a Windows code-signing certificate is available:
+Example encrypted restore staging:
 
-- `WINDOWS_CERT_BASE64`
-- `WINDOWS_CERT_PASSWORD`
+```powershell
+Copy-Item .\backup-20260512-120000.zip .\config\restore-pending.zip
+Set-Content -LiteralPath .\config\restore-passphrase -Value "your backup passphrase" -NoNewline
+docker restart divault-notes
+```
 
-See `docs/windows-code-signing.md` for certificate conversion and SmartScreen notes.
+Do not store restore passphrases in Compose files, shell history, source control, or long-lived files.
+
+## Migration
+
+Preferred migration between servers:
+
+1. Stop the old container.
+2. Copy the full `/config` directory to the new server.
+3. Start the new container with the copied `/config` mounted.
+4. Update reverse proxy routing if the hostname changed.
+5. Verify login, notes, files, calendars, tasks, backups, and secret reveal.
+
+## Security Notes
+
+- `owner`, `admin`, and `editor` users can create and edit content.
+- `viewer` users can read normal notes but cannot reveal encrypted secrets or mutate data.
+- Login is rate-limited by IP.
+- Mutating browser API requests use double-submit CSRF protection.
+- Calendar sharing is internal-only and permission checked server-side.
+- Export/import/backup/admin tools require admin-level access where appropriate.
+- 2FA recovery codes are shown once. Store them outside DiVault.
+- Sensitive security actions may require fresh 2FA reauthentication.
 
 ## AI Review Notes API
 
-External AI tools can create review notes without browser cookies or CSRF by using a dedicated API token.
+External tools can create review notes using a dedicated API token.
 
-Docker/server API URL:
+Server URL:
 
 ```text
 https://notes.example.com/api/integrations/ai/review-notes
 ```
 
-Windows desktop local API URL:
+Desktop local URL:
 
 ```text
 http://127.0.0.1:3444/api/integrations/ai/review-notes
 ```
 
-The desktop app must be running for the local API to be available. In local desktop mode, open Settings, enable the AI review API, and save the token that DiVault copies to your clipboard. Local tokens can be copied later from Settings after confirming your current password; environment-managed server tokens cannot be revealed in Settings. You can disable, regenerate, and test tokens from Settings.
-
-Configure the server:
+Server environment variables:
 
 ```text
 AI_REVIEW_API_TOKEN=use-a-long-random-token
 AI_REVIEW_USER_EMAIL=owner@example.com
 ```
 
-`AI_REVIEW_API_TOKEN` enables the endpoint. `AI_REVIEW_USER_EMAIL` is optional; when omitted, DiVault attributes the note to the first enabled owner/admin/editor account.
-
-Create a review note:
+Example request:
 
 ```bash
 curl -X POST "https://notes.example.com/api/integrations/ai/review-notes" \
@@ -294,139 +332,19 @@ curl -X POST "https://notes.example.com/api/integrations/ai/review-notes" \
   }'
 ```
 
-The endpoint creates a normal DiVault note in `All` with type `review`, tags including `ai-review`, and an audit entry. It also accepts `client_id` inside `review` when the AI note should be attached to an existing client record.
-
-`Authorization: Bearer ...` is also accepted when your reverse proxy forwards that header to PHP, but `X-DiVault-AI-Token` is the most reliable option through Apache and common proxy setups.
-
-## Emergency Device Recovery
-
-Emergency JSON snapshots are opt-in per browser. Create one from Security & data and choose a snapshot passphrase; while that browser tab/session remembers the passphrase, DiVault refreshes the encrypted local snapshot after successful sync. If the server is unreachable but the PWA shell is cached, DiVault opens an offline recovery screen where you can:
-
-- Download the last synced emergency JSON from that device.
-- Capture pending offline notes locally.
-- Retry the server when it comes back online.
-
-Pending offline notes sync automatically after login/session recovery when the server is reachable again.
-
-Important limitation: encrypted secret values and uploaded file contents are protected by the server-side `/config/keys/master.key` and `/config/files`. Emergency snapshots can help recover the last synced notes and metadata available to that browser, but they are offline, device-local, and cannot replace the full server backup set. For full disaster recovery, keep scheduled/full backups of `/config` or DiVault backup ZIPs outside the server.
-
-## Sensitive Values
-
-These are auto-hidden and encrypted when saved:
-
-```text
-password: MySecret123
-pwd: MySecret123
-pass: MySecret123
-secret: value
-token: value
-api key: value
-key: value
-🔒 Password: MySecret123
-```
-
-The visible editor hides saved `[hidden secret]` lines and shows encrypted values as inline secure blocks with reveal/copy controls.
-
-## Code Blocks
-
-Use the `⌘ Code` selector in the note editor to add script/snippet blocks. DiVault detects fenced code blocks and provides copy/download actions.
-
-Examples:
-
-````text
-```powershell
-Get-Service | Where-Object Status -eq Running
-```
-````
-
-PowerShell downloads as `.ps1`, HTML as `.html`, JavaScript as `.js`, and so on.
-
-## Security Notes
-
-- `owner`, `admin`, and `editor` users can create/edit notes and reveal encrypted secrets.
-- `viewer` users can read normal notes but cannot reveal secrets or mutate data.
-- Login is rate-limited by IP.
-- Mutating API requests use a double-submit CSRF token.
-- 2FA recovery codes are shown once when generated. Store them outside the app.
-- Sensitive security actions may require fresh 2FA reauthentication. If prompted, enter a current authenticator code or a stored recovery code before continuing.
-
-## Backups and Restores
-
-Full backup ZIPs contain:
-
-- `/config/app.sqlite`
-- `/config/keys/master.key`
-- Uploaded files from `/config/files/`
-
-When backup passphrase protection is available, create backups with a strong unique passphrase. The passphrase protects the ZIP archive in storage and transit, but anyone who can restore and run the backup with the included `keys/master.key` can decrypt DiVault secrets inside the restored app.
-
-Restore handling:
-
-1. Plaintext backup ZIPs restore normally from `/config/restore-pending.zip` on the next container restart.
-2. Encrypted backup ZIPs require the passphrase to be placed in `/config/restore-passphrase` before restart.
-3. The entrypoint uses PHP `ZipArchive` with `/config/restore-passphrase` during the pending restore, so AES-encrypted ZIPs produced by DiVault can be restored.
-4. `/config/restore-passphrase` is deleted after the restore attempt succeeds or fails, so recreate it before retrying a failed encrypted restore.
-
-Example encrypted restore staging:
-
-```powershell
-Copy-Item .\backup-20260512-120000.zip .\config\restore-pending.zip
-Set-Content -LiteralPath .\config\restore-passphrase -Value "your backup passphrase" -NoNewline
-docker restart divault-notes
-```
-
-Do not keep restore passphrases in Compose files, shell history, source control, or long-lived files. Prefer a temporary file with restrictive host permissions, then restart the container immediately.
-
-## Migration
-
-Preferred migration between servers:
-
-1. Stop the old container.
-2. Copy the full `/config` directory to the new server.
-3. Start the new container with the copied `/config` mounted.
-4. Update Pangolin routing if the hostname changed.
-5. Verify login, files, notes, backups, and secret reveal.
-
-Alternative migration:
-
-1. Create a backup from Security & data.
-2. Move the backup ZIP to the new server.
-3. Restore/copy its contents into `/config` before starting the container. If the backup ZIP is encrypted, provide `/config/restore-passphrase` before starting the container or decrypt it in a trusted offline environment first.
-
-In-app restore:
-
-1. Open Security & data.
-2. Schedule a backup restore.
-3. Restart the container.
-4. The entrypoint applies `/config/restore-pending.zip` before Apache starts.
-
-## Desktop Helper Scripts
-
-These wrappers keep desktop commands consistent from PowerShell:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\desktop-dev.ps1
-powershell -ExecutionPolicy Bypass -File scripts\desktop-build.ps1
-powershell -ExecutionPolicy Bypass -File scripts\desktop-smoke.ps1
-```
-
-Pass `-PhpBin`, `-ConfigDir`, or `-RemoteUrl` to the desktop scripts to set `DIVAULT_PHP_BIN`, `DIVAULT_DESKTOP_CONFIG`, or `DIVAULT_REMOTE_URL` for that run.
-
-`desktop-smoke.ps1` starts the built desktop executable, waits for `http://127.0.0.1:3444/api/health`, then stops the app and its local PHP server. Run `desktop-build.ps1` first if the release executable does not exist yet.
+`Authorization: Bearer ...` is also accepted when your reverse proxy forwards that header, but `X-DiVault-AI-Token` is the most reliable option through Apache and common proxy setups.
 
 ## Smoke Testing
 
-After starting a local test container on port `3443`, run:
+After starting a local container on port `3443`, run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\smoke.ps1
 ```
 
-The smoke test covers health, setup, login, CSRF, client creation, custom categories, encrypted note secrets, file upload/preview, backup creation/list/download, sessions, asset records, encrypted asset secrets, sync manifest/snapshot/pagination, file sync URLs, idempotent sync push, and conflict detection.
+The smoke test covers health, setup, login, CSRF, notes, categories, encrypted note secrets, file upload/preview, backups, sessions, asset records, encrypted asset secrets, sync manifest/snapshot/pagination, file sync URLs, idempotent sync push, and conflict detection.
 
 ## Clean First-Run Test
-
-To test first-run setup without touching your normal `./config` directory, run a separate container with an isolated config directory:
 
 ```powershell
 docker run --rm -d --name divault-clean-test -p 3453:3443 -v "${PWD}\tmp-clean-config:/config" -e SECURE_COOKIES=false notes-notes:latest
@@ -436,14 +354,13 @@ docker rm -f divault-clean-test
 
 ## Roadmap
 
-- Make secret/code/file blocks fully inline editable without raw text syntax
-- Offline encrypted PWA cache
+- Conflict-safe offline sync beyond notes
+- Calendar/task sync-push support for offline-capable clients
+- Browser extension capture
 - Google Keep Takeout import
 - OCR for PDFs and images
-- OnlyOffice integration as an optional extra container
-- S3-compatible storage option
-- Add local-desktop-to-server conflict-safe merge sync
-- Browser extension and mobile share-sheet capture
+- Optional S3-compatible file storage
+- Optional document editing integration
 
 ## License
 

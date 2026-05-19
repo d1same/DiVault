@@ -1,6 +1,6 @@
 # DiVault Android
 
-Android client for `com.divault.mobile`. It is a WebView wrapper for an existing DiVault server, so Android uses the same synced notes as your browser and desktop clients.
+Android client for `com.divault.mobile`. It is a WebView wrapper for an existing DiVault server, so Android uses the same notes, calendars, tasks, files, and settings as your browser and desktop server-mode clients.
 
 The app keeps Android status and navigation bars visible, so phone system controls remain accessible. DiVault applies native safe-area padding around the WebView so content does not render behind the top status bar or bottom navigation bar.
 
@@ -14,11 +14,11 @@ On first launch, enter the same server address you use for DiVault in the browse
 
 The app stores that URL on the device. If the saved server is unavailable, the retry screen lets you retry or change the saved server URL.
 
-## Uploads And Sync
+## Uploads, Calendar, Tasks, And Sync
 
-File uploads, notes, login, and sync all happen through the configured DiVault server. Changing the saved URL changes the server the Android app uses.
+File uploads, notes, login, Calendar, Tasks, reminders, and sync all happen through the configured DiVault server. Changing the saved URL changes the server the Android app uses.
 
-The Android app is online-first. Use the browser PWA cache for limited offline viewing, but create/edit workflows should be treated as server-backed.
+The Android app is online-first. Use the browser PWA cache for limited offline viewing, but create/edit workflows and schedule data should be treated as server-backed.
 
 ## Sharing Into DiVault
 
