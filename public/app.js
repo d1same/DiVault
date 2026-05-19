@@ -1,5 +1,5 @@
 const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
-Object.assign(state, { features: null, calendars: [], events: [], tasks: [], calendarDate: new Date(), miniCalendarDate: new Date(), calendarView: localStorage.getItem('divault_calendar_view') || 'schedule', reminders: [], reminderTimer: null, linkableNotesLoaded: false, routeNoteId: null });
+Object.assign(state, { features: null, calendars: [], calendarFeeds: [], events: [], tasks: [], calendarDate: new Date(), miniCalendarDate: new Date(), calendarView: localStorage.getItem('divault_calendar_view') || 'schedule', reminders: [], reminderTimer: null, linkableNotesLoaded: false, routeNoteId: null });
 if (state.calendarView === 'agenda') state.calendarView = 'schedule';
 const app = document.querySelector('#app');
 
@@ -2272,7 +2272,9 @@ function openEventDetailDialog(event = {}) {
   if (!event.id) return;
   const modal = document.createElement('div');
   modal.className = 'editor';
+  const readOnly = event.source === 'ics_feed' || event.import_source === 'ics_feed';
   const rows = [
+    detailRow('Source', readOnly ? 'External read-only feed' : ''),
     detailRow('Calendar', event.calendar_name),
     detailRow('Starts', formatScheduleDateTime(event.starts_at)),
     detailRow('Ends', event.ends_at ? formatScheduleDateTime(event.ends_at) : ''),
@@ -2282,12 +2284,13 @@ function openEventDetailDialog(event = {}) {
     locationDetailRow(event.location)
   ].join('');
   const notes = linkedNoteDetailList(event.notes || []);
-  modal.innerHTML = `<section class="editor-panel small-panel detail-dialog"><div class="topbar"><div><p class="breadcrumb">Event</p><h2>${esc(event.title || 'Untitled event')}</h2></div><div class="btn-row"><button class="btn ghost icon-only-btn" type="button" data-print-detail aria-label="Print" title="Print">${toolIcon('print', 'Print')}</button><button class="btn ghost icon-only-btn" type="button" data-edit-detail aria-label="Edit" title="Edit">${toolIcon('draw', 'Edit')}</button><button class="btn danger icon-only-btn" type="button" data-delete-detail aria-label="Delete" title="Delete">${toolIcon('trash', 'Delete')}</button><button class="btn ghost" type="button" data-close>Close</button></div></div><div class="detail-grid">${rows}</div>${event.description ? `<div class="detail-description"><h3>Description</h3><p>${esc(event.description)}</p></div>` : ''}<section class="detail-notes"><h3>Related notes</h3>${notes}</section></section>`;
+  const editControls = readOnly ? '<span class="pill">read-only</span>' : `<button class="btn ghost icon-only-btn" type="button" data-edit-detail aria-label="Edit" title="Edit">${toolIcon('draw', 'Edit')}</button><button class="btn danger icon-only-btn" type="button" data-delete-detail aria-label="Delete" title="Delete">${toolIcon('trash', 'Delete')}</button>`;
+  modal.innerHTML = `<section class="editor-panel small-panel detail-dialog"><div class="topbar"><div><p class="breadcrumb">Event</p><h2>${esc(event.title || 'Untitled event')}</h2></div><div class="btn-row"><button class="btn ghost icon-only-btn" type="button" data-print-detail aria-label="Print" title="Print">${toolIcon('print', 'Print')}</button>${editControls}<button class="btn ghost" type="button" data-close>Close</button></div></div><div class="detail-grid">${rows}</div>${event.description ? `<div class="detail-description"><h3>Description</h3><p>${esc(event.description)}</p></div>` : ''}<section class="detail-notes"><h3>Related notes</h3>${notes}</section></section>`;
   document.body.appendChild(modal);
   setupAccessibleModal(modal, '[data-close]');
-  modal.querySelector('[data-edit-detail]').addEventListener('click', () => { modal.remove(); openEventDialog(event); });
+  modal.querySelector('[data-edit-detail]')?.addEventListener('click', () => { modal.remove(); openEventDialog(event); });
   modal.querySelector('[data-print-detail]').addEventListener('click', () => printDetail(event.title || 'Event', rows, notes, event.description));
-  modal.querySelector('[data-delete-detail]').addEventListener('click', async () => {
+  modal.querySelector('[data-delete-detail]')?.addEventListener('click', async () => {
     if (!await confirmDialog({ title: 'Delete event?', message: 'Delete this calendar event?', confirmText: 'Delete' })) return;
     await runUserAction(async () => {
       await api(`/events/${event.id}`, { method: 'DELETE' });
@@ -3984,7 +3987,7 @@ async function openSettings(options = {}) {
   if (options.route !== false) syncSectionRoute();
   renderApp();
   const isAdmin = canAdminSettings();
-  const [users, audit, sessions, backups, syncManifest, retentionSettings, aiIntegration, desktopServer, passkeys] = await Promise.all([
+  const [users, audit, sessions, backups, syncManifest, retentionSettings, aiIntegration, desktopServer, passkeys, calendarFeeds] = await Promise.all([
     isAdmin ? api('/users').catch(() => ({ users: [] })) : { users: [] },
     isAdmin ? api('/audit').catch(() => ({ audit: [] })) : { audit: [] },
     api('/sessions').catch(() => ({ sessions: [] })),
@@ -3993,8 +3996,10 @@ async function openSettings(options = {}) {
     isAdmin ? api('/retention-settings').catch(() => ({ settings: { version_limit: 3, trash_days: 30 } })) : { settings: { version_limit: 3, trash_days: 30 } },
     isAdmin ? api('/integrations/ai/status').catch(() => null) : null,
     state.desktop && isAdmin ? api('/desktop/server').catch(() => ({ server_url: '' })) : { server_url: '' },
-    api('/webauthn/credentials').catch(() => ({ credentials: [] }))
+    api('/webauthn/credentials').catch(() => ({ credentials: [] })),
+    api('/calendar-feeds').catch(() => ({ feeds: [] }))
   ]);
+  state.calendarFeeds = calendarFeeds.feeds || [];
   const adminDataCards = isAdmin ? `<div class="card stack"><h3>Import / export</h3><div class="btn-row"><a class="btn" href="/api/export">Export JSON</a><button class="btn" id="backupBtn">Create full backup</button></div><p class="small muted">Optional backup passphrases encrypt backups. Keep the passphrase; encrypted backups cannot be restored without it.</p><label class="field"><span>Import Markdown notes</span><input id="markdownImportFiles" type="file" accept=".md,text/markdown" multiple></label><label class="field"><span>Import Markdown folder</span><input id="markdownImportFolder" type="file" accept=".md,text/markdown" webkitdirectory multiple></label><button class="btn" id="importMarkdownBtn">Import Markdown</button><p class="small muted">Markdown files are read locally in this browser and imported directly. Folder imports map subfolders to categories.</p><label class="field"><span>Import JSON notes</span><textarea id="importJson" placeholder='{"notes":[{"title":"Imported","body":"Hello"}]}'></textarea></label><button class="btn" id="importBtn">Import JSON</button></div>
         <div class="card stack"><h3>Backups</h3>${backups.pending_restore ? '<p class="pill secret">Restore pending. Restart container to apply.</p>' : ''}<div class="btn-row"><input id="restoreUpload" type="file" accept=".zip,application/zip"><button class="btn danger" id="uploadRestoreBtn">Upload restore ZIP</button></div>${backups.backups.map(b => `<div class="file-row"><span>${esc(b.file)}<br><span class="small muted">${Math.ceil(Number(b.size) / 1024)} KB</span></span><span class="btn-row"><a class="btn" href="/api/backups/${esc(b.file)}">Download</a><button class="btn danger" data-restore="${esc(b.file)}">Schedule restore</button></span></div>`).join('') || '<p class="small muted">No backups yet.</p>'}</div>` : '';
   const adminSidebarCards = isAdmin ? `<div class="card stack"><h3>Add user</h3><form id="userForm" class="stack"><input name="name" placeholder="Name"><input name="email" type="email" placeholder="Email"><input name="password" type="password" minlength="10" placeholder="Temporary password"><select name="role"><option>editor</option><option>viewer</option><option>admin</option></select><button class="btn">Create user</button></form></div>
@@ -4033,6 +4038,7 @@ async function openSettings(options = {}) {
       </section>
       <section class="settings-tab-panel ${state.settingsTab === 'features' ? '' : 'hidden'}" data-settings-panel="features" role="tabpanel">
         <div class="card stack"><h3>Calendar, tasks, and home widgets</h3>${renderFeatureSettings()}</div>
+        <div class="card stack"><h3>Read-only calendar feeds</h3>${renderCalendarFeedSettings(state.calendarFeeds)}</div>
       </section>
       <section class="settings-tab-panel ${state.settingsTab === 'sync' ? '' : 'hidden'}" data-settings-panel="sync" role="tabpanel">
         <div class="stack">
@@ -4133,6 +4139,53 @@ async function openSettings(options = {}) {
       openSettings();
     }, 'Feature settings failed');
   });
+  modal.querySelector('#calendarFeedForm')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    await runUserAction(async () => {
+      const form = new FormData(e.target);
+      const payload = { ...Object.fromEntries(form), enabled: form.has('enabled'), sync_now: form.has('sync_now') };
+      const id = form.get('id');
+      const result = await api(id ? `/calendar-feeds/${id}` : '/calendar-feeds', { method: id ? 'PATCH' : 'POST', body: payload });
+      state.calendars = [];
+      toast(result.sync_error ? `Feed saved. Sync failed: ${result.sync_error}` : (id ? 'Calendar feed saved' : 'Calendar feed added'));
+      await loadCalendarData();
+      openSettings();
+    }, 'Calendar feed save failed');
+  });
+  modal.querySelectorAll('[data-edit-feed]').forEach(button => button.addEventListener('click', () => {
+    const feed = state.calendarFeeds.find(item => String(item.id) === String(button.dataset.editFeed));
+    if (!feed) return;
+    modal.querySelector('#calendarFeedId').value = feed.id;
+    modal.querySelector('#calendarFeedName').value = feed.name || '';
+    modal.querySelector('#calendarFeedUrl').value = feed.url || '';
+    modal.querySelector('#calendarFeedColor').value = feed.color || '#22c55e';
+    modal.querySelector('#calendarFeedRefresh').value = feed.refresh_minutes || 360;
+    modal.querySelector('#calendarFeedEnabled').checked = Number(feed.enabled) === 1;
+    modal.querySelector('#calendarFeedSaveBtn').textContent = 'Save feed';
+  }));
+  modal.querySelector('#calendarFeedResetBtn')?.addEventListener('click', () => {
+    modal.querySelector('#calendarFeedId').value = '';
+    modal.querySelector('#calendarFeedSaveBtn').textContent = 'Add feed';
+  });
+  modal.querySelectorAll('[data-sync-feed]').forEach(button => button.addEventListener('click', async () => {
+    await runUserAction(async () => {
+      const result = await api(`/calendar-feeds/${button.dataset.syncFeed}/sync`, { method: 'POST', body: {} });
+      state.calendars = [];
+      toast(result.message || 'Calendar feed synced');
+      await loadCalendarData();
+      openSettings();
+    }, 'Calendar feed sync failed');
+  }));
+  modal.querySelectorAll('[data-delete-feed]').forEach(button => button.addEventListener('click', async () => {
+    if (!await confirmDialog({ title: 'Remove calendar feed?', message: 'Remove this read-only feed and hide its synced calendar from DiVault?', confirmText: 'Remove' })) return;
+    await runUserAction(async () => {
+      await api(`/calendar-feeds/${button.dataset.deleteFeed}`, { method: 'DELETE' });
+      state.calendars = [];
+      toast('Calendar feed removed');
+      await loadCalendarData();
+      openSettings();
+    }, 'Calendar feed removal failed');
+  }));
   modal.querySelector('#desktopServerSettingsForm')?.addEventListener('submit', async e => {
     e.preventDefault();
     await runUserAction(async () => {
@@ -4380,6 +4433,12 @@ function renderFeatureSettings() {
     <label class="checkline"><input name="tasks_reminders_enabled" type="checkbox" ${tasks.settings.reminders_enabled ? 'checked' : ''}> Task reminders</label>
     <label class="checkline"><input name="tasks_shared_calendar_tasks" type="checkbox" ${tasks.settings.shared_calendar_tasks ? 'checked' : ''}> Shared-calendar tasks</label>
   </div><div class="editor-grid"><label class="field"><span>Default calendar reminder minutes</span><input name="calendar_default_reminder_minutes" type="number" min="0" max="10080" value="${esc(calendar.settings.default_reminder_minutes ?? 10)}"></label><label class="field"><span>Default task reminder minutes</span><input name="tasks_default_reminder_minutes" type="number" min="0" max="10080" value="${esc(tasks.settings.default_reminder_minutes ?? 10)}"></label></div><button class="btn primary">Save feature settings</button></form>`;
+}
+
+function renderCalendarFeedSettings(feeds = []) {
+  const rows = feeds.map(feed => `<div class="file-row calendar-feed-row"><span><b>${esc(feed.name)}</b><br><span class="small muted">${esc(feed.url)}${feed.last_synced_at ? ` · synced ${esc(feed.last_synced_at)}` : ''}${feed.last_error ? ` · ${esc(feed.last_error)}` : ''}</span></span><span class="btn-row"><span class="pill" style="--calendar-color:${esc(feed.color || '#22c55e')}">${Number(feed.enabled) === 1 ? 'on' : 'off'}</span><button class="btn ghost" type="button" data-edit-feed="${feed.id}">Edit</button><button class="btn" type="button" data-sync-feed="${feed.id}">Sync</button><button class="btn danger" type="button" data-delete-feed="${feed.id}">Remove</button></span></div>`).join('') || '<p class="small muted">No external calendar feeds yet.</p>';
+  return `<p class="muted small">Add private ICS/iCalendar subscription links from Microsoft, Google, Apple, Proton, or another calendar provider. These are read-only one-way pulls into your DiVault account. Other DiVault users do not see your synced calendars unless you share the resulting DiVault calendar with them.</p>
+    <form id="calendarFeedForm" class="stack"><input id="calendarFeedId" name="id" type="hidden"><div class="editor-grid"><label class="field"><span>Feed name</span><input id="calendarFeedName" name="name" placeholder="Work Outlook" required></label><label class="field"><span>Color</span><input id="calendarFeedColor" name="color" type="color" value="#22c55e"></label></div><label class="field"><span>ICS subscription URL</span><input id="calendarFeedUrl" name="url" type="url" placeholder="https://.../calendar.ics" autocomplete="off" required></label><div class="editor-grid"><label class="field"><span>Refresh minutes</span><input id="calendarFeedRefresh" name="refresh_minutes" type="number" min="15" max="10080" value="360"></label><label class="checkline"><input id="calendarFeedEnabled" name="enabled" type="checkbox" checked> Feed enabled</label></div><label class="checkline"><input name="sync_now" type="checkbox" checked> Sync after saving</label><div class="btn-row"><button class="btn primary" id="calendarFeedSaveBtn">Add feed</button><button class="btn ghost" id="calendarFeedResetBtn" type="reset">Clear</button></div></form><div class="stack">${rows}</div>`;
 }
 
 function renderAiIntegrationSettings(status) {

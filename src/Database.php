@@ -226,6 +226,21 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(calendar_id, import_source, import_uid)
 );
+CREATE TABLE IF NOT EXISTS calendar_feeds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    calendar_id INTEGER REFERENCES calendars(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    color TEXT,
+    refresh_minutes INTEGER NOT NULL DEFAULT 360,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_synced_at TEXT,
+    last_status TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS calendar_event_reminders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id INTEGER NOT NULL REFERENCES calendar_events(id) ON DELETE CASCADE,
@@ -299,6 +314,8 @@ SQL);
         $this->addColumnIfMissing('sync_events', 'user_id', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
         $this->addColumnIfMissing('sync_applied_mutations', 'user_id', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
         $this->addColumnIfMissing('tasks', 'location', 'TEXT');
+        $this->addColumnIfMissing('calendar_feeds', 'color', 'TEXT');
+        $this->addColumnIfMissing('calendar_feeds', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_notes_category_id ON notes(category_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_asset_categories_parent ON asset_categories(parent_id)');
         $this->pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_webauthn_credentials_credential_id ON webauthn_credentials(credential_id)');
@@ -307,6 +324,7 @@ SQL);
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_sync_applied_mutations_client ON sync_applied_mutations(client_id, mutation_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_user_feature_settings_user ON user_feature_settings(user_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_calendars_owner ON calendars(owner_user_id, archived)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_calendar_feeds_user ON calendar_feeds(user_id, enabled)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_calendars_external ON calendars(external_source, external_uid)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_calendar_shares_user ON calendar_shares(user_id, permission)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_calendar_events_calendar_start ON calendar_events(calendar_id, starts_at)');

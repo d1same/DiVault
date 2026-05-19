@@ -99,6 +99,11 @@ final class App
         if ($method === 'DELETE' && preg_match('#^/calendars/(\d+)$#', $path, $m)) $this->deleteCalendar($user, (int)$m[1]);
         if ($method === 'POST' && preg_match('#^/calendars/(\d+)/share$#', $path, $m)) $this->shareCalendar($user, (int)$m[1]);
         if ($method === 'DELETE' && preg_match('#^/calendars/(\d+)/share/(\d+)$#', $path, $m)) $this->unshareCalendar($user, (int)$m[1], (int)$m[2]);
+        if ($method === 'GET' && $path === '/calendar-feeds') $this->listCalendarFeeds($user);
+        if ($method === 'POST' && $path === '/calendar-feeds') $this->saveCalendarFeed($user);
+        if ($method === 'PATCH' && preg_match('#^/calendar-feeds/(\d+)$#', $path, $m)) $this->saveCalendarFeed($user, (int)$m[1]);
+        if ($method === 'POST' && preg_match('#^/calendar-feeds/(\d+)/sync$#', $path, $m)) $this->syncCalendarFeed($user, (int)$m[1]);
+        if ($method === 'DELETE' && preg_match('#^/calendar-feeds/(\d+)$#', $path, $m)) $this->deleteCalendarFeed($user, (int)$m[1]);
         if ($method === 'GET' && $path === '/events') $this->listEvents($user);
         if ($method === 'POST' && $path === '/events') $this->saveEvent($user);
         if ($method === 'GET' && preg_match('#^/events/(\d+)$#', $path, $m)) $this->getEvent($user, (int)$m[1]);
@@ -1052,11 +1057,73 @@ final class App
     private function listEvents(array $user): void
     {
         $this->ensureDefaultCalendar($user);
+        $this->syncDueCalendarFeeds($user);
         [$start, $end] = $this->dateRangeFromQuery();
         $args = [(int)$user['id'], (int)$user['id'], (int)$user['id'], $end, $start, $end];
         $stmt = $this->db->prepare("SELECT e.*, c.name AS calendar_name, c.color AS calendar_color FROM calendar_events e JOIN calendars c ON c.id = e.calendar_id LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?) AND ((e.recurrence_rule IS NULL AND e.starts_at <= ? AND COALESCE(e.ends_at, e.starts_at) >= ?) OR (e.recurrence_rule IS NOT NULL AND e.starts_at <= ?)) ORDER BY e.starts_at ASC");
         $stmt->execute($args);
         $this->json(['events' => $this->expandRecurringEvents($stmt->fetchAll(PDO::FETCH_ASSOC), $start, $end)]);
+    }
+
+    private function listCalendarFeeds(array $user): void
+    {
+        $stmt = $this->db->prepare('SELECT f.*, c.archived AS calendar_archived FROM calendar_feeds f LEFT JOIN calendars c ON c.id = f.calendar_id WHERE f.user_id = ? ORDER BY f.name COLLATE NOCASE');
+        $stmt->execute([(int)$user['id']]);
+        $this->json(['feeds' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+    }
+
+    private function saveCalendarFeed(array $user, int $id = 0): void
+    {
+        $this->requireEditor($user);
+        $data = $this->input();
+        $current = $id > 0 ? $this->calendarFeed($user, $id) : null;
+        $name = trim((string)($data['name'] ?? ($current['name'] ?? '')));
+        if ($name === '') $name = 'External calendar';
+        $url = trim((string)($data['url'] ?? ($current['url'] ?? '')));
+        $this->validateCalendarFeedUrl($url);
+        $color = $this->cleanColor($data['color'] ?? ($current['color'] ?? '#22c55e'));
+        $refresh = $this->boundedGenericInt($data['refresh_minutes'] ?? ($current['refresh_minutes'] ?? 360), 15, 10080);
+        $enabled = !array_key_exists('enabled', $data) || !empty($data['enabled']) ? 1 : 0;
+        if ($current) {
+            $calendarId = (int)($current['calendar_id'] ?: 0);
+            if ($calendarId) {
+                $this->db->prepare('UPDATE calendars SET name = ?, color = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_user_id = ?')->execute([$name, $color, 'Read-only external calendar feed.', $calendarId, (int)$user['id']]);
+            }
+            $this->db->prepare('UPDATE calendar_feeds SET name=?, url=?, color=?, refresh_minutes=?, enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?')->execute([$name, $url, $color, $refresh, $enabled, $id, (int)$user['id']]);
+            $this->audit((int)$user['id'], 'calendar_feed.updated', 'calendar_feed', $id);
+        } else {
+            $this->db->prepare('INSERT INTO calendars (owner_user_id, name, color, description, timezone, external_source) VALUES (?, ?, ?, ?, ?, ?)')->execute([(int)$user['id'], $name, $color, 'Read-only external calendar feed.', date_default_timezone_get() ?: 'UTC', 'ics_feed']);
+            $calendarId = (int)$this->db->lastInsertId();
+            $this->db->prepare('INSERT INTO calendar_feeds (user_id, calendar_id, name, url, color, refresh_minutes, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)')->execute([(int)$user['id'], $calendarId, $name, $url, $color, $refresh, $enabled]);
+            $id = (int)$this->db->lastInsertId();
+            $this->audit((int)$user['id'], 'calendar_feed.created', 'calendar_feed', $id);
+        }
+        $syncError = null;
+        if (!empty($data['sync_now'])) {
+            try {
+                $this->syncCalendarFeedInternal($user, $id);
+            } catch (Throwable $e) {
+                $syncError = $e->getMessage();
+            }
+        }
+        $this->json(['feed' => $this->calendarFeed($user, $id), 'sync_error' => $syncError]);
+    }
+
+    private function syncCalendarFeed(array $user, int $id): void
+    {
+        $this->requireEditor($user);
+        $result = $this->syncCalendarFeedInternal($user, $id);
+        $this->json($result);
+    }
+
+    private function deleteCalendarFeed(array $user, int $id): void
+    {
+        $this->requireEditor($user);
+        $feed = $this->calendarFeed($user, $id);
+        $this->db->prepare('DELETE FROM calendar_feeds WHERE id = ? AND user_id = ?')->execute([$id, (int)$user['id']]);
+        if (!empty($feed['calendar_id'])) $this->db->prepare('UPDATE calendars SET archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_user_id = ?')->execute([(int)$feed['calendar_id'], (int)$user['id']]);
+        $this->audit((int)$user['id'], 'calendar_feed.deleted', 'calendar_feed', $id);
+        $this->json(['ok' => true]);
     }
 
     private function getEvent(array $user, int $id): void
@@ -1074,6 +1141,7 @@ final class App
         $calendarId = (int)($data['calendar_id'] ?? 0);
         if ($id > 0) {
             $current = $this->eventAccess($user, $id, 'edit');
+            if (($current['source'] ?? '') === 'ics_feed') throw new RuntimeException('Synced calendar events are read-only');
             $calendarId = $calendarId ?: (int)$current['calendar_id'];
         }
         if (!$calendarId) $calendarId = $this->ensureDefaultCalendar($user);
@@ -1099,7 +1167,8 @@ final class App
 
     private function deleteEvent(array $user, int $id): void
     {
-        $this->eventAccess($user, $id, 'edit');
+        $event = $this->eventAccess($user, $id, 'edit');
+        if (($event['source'] ?? '') === 'ics_feed') throw new RuntimeException('Synced calendar events are read-only');
         $this->db->prepare('DELETE FROM calendar_events WHERE id = ?')->execute([$id]);
         $this->audit((int)$user['id'], 'event.deleted', 'event', $id);
         $this->json(['ok' => true]);
@@ -1181,6 +1250,101 @@ final class App
             $this->db->prepare("UPDATE $table SET remind_at = datetime('now', ?), sent_at = NULL WHERE id = ? AND user_id = ?")->execute(['+' . $minutes . ' minutes', $id, (int)$user['id']]);
         }
         $this->json(['ok' => true]);
+    }
+
+    private function calendarFeed(array $user, int $id): array
+    {
+        $stmt = $this->db->prepare('SELECT * FROM calendar_feeds WHERE id = ? AND user_id = ?');
+        $stmt->execute([$id, (int)$user['id']]);
+        $feed = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$feed) throw new RuntimeException('Calendar feed not found');
+        return $feed;
+    }
+
+    private function syncCalendarFeedInternal(array $user, int $id): array
+    {
+        $feed = $this->calendarFeed($user, $id);
+        if ((int)($feed['enabled'] ?? 1) !== 1) throw new RuntimeException('Calendar feed is disabled');
+        $calendarId = (int)($feed['calendar_id'] ?? 0);
+        if (!$calendarId) throw new RuntimeException('Calendar feed has no calendar');
+        $this->calendarAccess($user, $calendarId, 'admin');
+        try {
+            $ics = $this->fetchCalendarFeed((string)$feed['url']);
+            $events = $this->parseIcsEvents($ics);
+            $seen = [];
+            $imported = 0;
+            $updated = 0;
+            $total = 0;
+            foreach ($events as $event) {
+                $total++;
+                if ($total > 1000) throw new RuntimeException('ICS feed is limited to 1000 events');
+                $uid = $event['uid'] ?: hash('sha256', json_encode($event));
+                $seen[] = $uid;
+                $existing = $this->db->prepare('SELECT id FROM calendar_events WHERE calendar_id = ? AND import_source = ? AND import_uid = ?');
+                $existing->execute([$calendarId, 'ics_feed', $uid]);
+                $existingId = (int)$existing->fetchColumn();
+                if ($existingId) {
+                    $stmt = $this->db->prepare('UPDATE calendar_events SET title=?, description=?, location=?, starts_at=?, ends_at=?, all_day=?, recurrence_rule=?, source=?, import_updated_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?');
+                    $stmt->execute([$event['title'], $event['description'], $event['location'], $event['starts_at'], $event['ends_at'], $event['all_day'], $event['recurrence_rule'], 'ics_feed', $existingId]);
+                    $updated++;
+                } else {
+                    $stmt = $this->db->prepare('INSERT OR IGNORE INTO calendar_events (calendar_id, created_by_user_id, title, description, location, starts_at, ends_at, all_day, recurrence_rule, source, import_source, import_uid, import_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)');
+                    $stmt->execute([$calendarId, (int)$user['id'], $event['title'], $event['description'], $event['location'], $event['starts_at'], $event['ends_at'], $event['all_day'], $event['recurrence_rule'], 'ics_feed', 'ics_feed', $uid]);
+                    if ($stmt->rowCount() > 0) $imported++;
+                }
+            }
+            if ($seen) {
+                $placeholders = implode(',', array_fill(0, count($seen), '?'));
+                $args = array_merge([$calendarId, 'ics_feed'], $seen);
+                $this->db->prepare("DELETE FROM calendar_events WHERE calendar_id = ? AND import_source = ? AND import_uid NOT IN ($placeholders)")->execute($args);
+            } else {
+                $this->db->prepare('DELETE FROM calendar_events WHERE calendar_id = ? AND import_source = ?')->execute([$calendarId, 'ics_feed']);
+            }
+            $message = "Synced $total event" . ($total === 1 ? '' : 's');
+            $this->db->prepare('UPDATE calendar_feeds SET last_synced_at=CURRENT_TIMESTAMP, last_status=?, last_error=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?')->execute([$message, $id]);
+            $this->audit((int)$user['id'], 'calendar_feed.synced', 'calendar_feed', $id);
+            return ['ok' => true, 'total' => $total, 'imported' => $imported, 'updated' => $updated, 'message' => $message, 'feed' => $this->calendarFeed($user, $id)];
+        } catch (Throwable $e) {
+            $this->db->prepare('UPDATE calendar_feeds SET last_status=?, last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')->execute(['Sync failed', substr($e->getMessage(), 0, 500), $id]);
+            throw $e;
+        }
+    }
+
+    private function syncDueCalendarFeeds(array $user): void
+    {
+        $stmt = $this->db->prepare("SELECT id FROM calendar_feeds WHERE user_id = ? AND enabled = 1 AND (last_synced_at IS NULL OR datetime(last_synced_at, '+' || refresh_minutes || ' minutes') <= CURRENT_TIMESTAMP) ORDER BY COALESCE(last_synced_at, '1970-01-01') ASC LIMIT 3");
+        $stmt->execute([(int)$user['id']]);
+        foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $feedId) {
+            try {
+                $this->syncCalendarFeedInternal($user, (int)$feedId);
+            } catch (Throwable $e) {
+                // Feed errors are saved on the feed and should not block opening Calendar.
+            }
+        }
+    }
+
+    private function validateCalendarFeedUrl(string $url): void
+    {
+        $parts = parse_url($url);
+        if (!$parts || !in_array(strtolower((string)($parts['scheme'] ?? '')), ['http', 'https'], true) || empty($parts['host'])) throw new RuntimeException('Enter a valid HTTP or HTTPS calendar URL');
+        $host = strtolower((string)$parts['host']);
+        if (in_array($host, ['localhost', '127.0.0.1', '::1'], true) || str_ends_with($host, '.local')) throw new RuntimeException('Local calendar feed URLs are not allowed');
+        $addresses = filter_var($host, FILTER_VALIDATE_IP) ? [$host] : (gethostbynamel($host) ?: []);
+        foreach ($addresses as $address) {
+            if (!filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) throw new RuntimeException('Private network calendar feed URLs are not allowed');
+        }
+    }
+
+    private function fetchCalendarFeed(string $url): string
+    {
+        $this->validateCalendarFeedUrl($url);
+        $context = stream_context_create(['http' => ['timeout' => 15, 'user_agent' => 'DiVault Calendar Feed/1.0', 'follow_location' => 0]]);
+        $maxBytes = 1024 * 1024;
+        $ics = @file_get_contents($url, false, $context, 0, $maxBytes + 1);
+        if ($ics === false || trim((string)$ics) === '') throw new RuntimeException('Calendar feed could not be fetched');
+        if (strlen((string)$ics) > $maxBytes) throw new RuntimeException('Calendar feed is too large');
+        if (!str_contains(strtoupper((string)$ics), 'BEGIN:VCALENDAR')) throw new RuntimeException('Calendar feed is not a valid ICS calendar');
+        return (string)$ics;
     }
 
     private function importCalendar(array $user): void
