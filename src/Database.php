@@ -251,6 +251,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     calendar_id INTEGER REFERENCES calendars(id) ON DELETE SET NULL,
     title TEXT NOT NULL,
     description TEXT,
+    location TEXT,
     status TEXT NOT NULL DEFAULT 'open',
     priority INTEGER NOT NULL DEFAULT 0,
     due_at TEXT,
@@ -297,6 +298,7 @@ SQL);
         $this->addColumnIfMissing('webauthn_credentials', 'last_used_at', 'TEXT');
         $this->addColumnIfMissing('sync_events', 'user_id', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
         $this->addColumnIfMissing('sync_applied_mutations', 'user_id', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
+        $this->addColumnIfMissing('tasks', 'location', 'TEXT');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_notes_category_id ON notes(category_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_asset_categories_parent ON asset_categories(parent_id)');
         $this->pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_webauthn_credentials_credential_id ON webauthn_credentials(credential_id)');

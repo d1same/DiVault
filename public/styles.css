@@ -1287,13 +1287,8 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
     min-width: 46px;
     min-height: 44px;
     padding-inline: 0;
-    border: 1px solid color-mix(in srgb, var(--primary) 36%, var(--border-soft));
     border-radius: var(--radius-lg);
-    background: color-mix(in srgb, var(--primary) 10%, var(--surface));
-    color: var(--primary-dark);
-    box-shadow: none;
   }
-  .calendar-add-row .action-fab:hover { box-shadow: none; }
   .calendar-view-toggle { display: none; }
   .calendar-view-select { display: block; min-height: 44px; font-weight: 900; text-align: center; text-align-last: center; }
   .calendar-page-grid { grid-template-columns: 1fr; }
@@ -1355,6 +1350,7 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .block-editor .block-move-controls { left: 4px; top: 18px; }
   .editor-block[data-block="paragraph"] textarea { min-height: 110px; font-size: 1rem; }
   .secret-editor-block { grid-template-columns: 1fr; align-items: stretch; }
+  .linked-note-create { grid-template-columns: 1fr; }
   .drawing-block canvas { height: 260px; }
   .editor-sync { flex: 1 1 100%; order: -1; }
   .tool-chip b { display: none; }

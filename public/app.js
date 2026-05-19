@@ -644,7 +644,7 @@ async function pollReminders() {
   const enabled = feature('calendar').settings.reminders_enabled || feature('tasks').settings.reminders_enabled;
   if (!enabled) return;
   const res = await api('/reminders/due').catch(() => ({ reminders: [] }));
-  for (const reminder of res.reminders || []) showReminder(reminder);
+  for (const reminder of res.reminders || []) await showReminder(reminder);
 }
 
 async function showReminder(reminder) {
@@ -652,7 +652,13 @@ async function showReminder(reminder) {
   const body = `${reminder.title}${reminder.due_at ? ` · ${formatDateTime(reminder.due_at)}` : ''}`;
   if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission().catch(() => null);
   if ('Notification' in window && Notification.permission === 'granted') {
-    navigator.serviceWorker?.ready?.then(reg => reg.showNotification(title, { body, tag: `divault-${reminder.kind}-${reminder.id}`, data: { url: reminder.kind === 'task' ? '/#tasks' : '/#calendar' } })).catch(() => new Notification(title, { body }));
+    try {
+      const reg = await navigator.serviceWorker?.ready;
+      if (reg?.showNotification) await reg.showNotification(title, { body, tag: `divault-${reminder.kind}-${reminder.id}`, data: { url: reminder.kind === 'task' ? '/#tasks' : '/#calendar' } });
+      else new Notification(title, { body });
+    } catch {
+      toast(`${title}: ${reminder.title}`);
+    }
   } else {
     toast(`${title}: ${reminder.title}`);
   }
@@ -1395,12 +1401,10 @@ function renderAgendaItems(items, spacious = false, options = {}) {
   return items.map(entry => {
     if (entry.kind === 'task') {
       const task = entry.item;
-      if (readonly) return `<button class="agenda-item agenda-link ${spacious ? 'large' : ''} ${task.status === 'done' ? 'done' : ''}" data-open-task="${task.id}" type="button"><span class="agenda-kind task-kind">Task</span><span><b>${esc(task.title)}</b><br><span class="small muted">Due ${formatScheduleDateTime(task.due_at)}${task.calendar_name ? ` · ${esc(task.calendar_name)}` : ''}</span></span></button>`;
-      return `<div class="agenda-item ${spacious ? 'large' : ''} ${task.status === 'done' ? 'done' : ''}"><span class="agenda-kind task-kind">Task</span><span><b>${esc(task.title)}</b><br><span class="small muted">Due ${formatScheduleDateTime(task.due_at)}${task.calendar_name ? ` · ${esc(task.calendar_name)}` : ''}</span></span><div class="btn-row agenda-actions"><button class="btn ghost" data-open-task="${task.id}" type="button">Open</button>${task.status !== 'done' ? `<button class="btn primary" data-task-complete="${task.id}" type="button">Done</button>` : ''}</div></div>`;
+      return `<button class="agenda-item agenda-link ${spacious ? 'large' : ''} ${task.status === 'done' ? 'done' : ''}" data-open-task="${task.id}" type="button"><span class="agenda-kind task-kind">Task</span><span><b>${esc(task.title)}</b><br><span class="small muted">Due ${formatScheduleDateTime(task.due_at)}${task.calendar_name ? ` · ${esc(task.calendar_name)}` : ''}</span></span></button>`;
     }
     const event = entry.item;
-    if (readonly) return `<button class="agenda-item agenda-link ${spacious ? 'large' : ''}" data-open-event="${event.series_id || event.id}" type="button"><span class="agenda-kind event-kind">Event</span><span><b>${esc(event.title)}${event.recurrence_rule ? ' (recurs)' : ''}</b><br><span class="small muted">${formatScheduleDateTime(event.starts_at)}${event.calendar_name ? ` · ${esc(event.calendar_name)}` : ''}</span></span></button>`;
-    return `<div class="agenda-item ${spacious ? 'large' : ''}"><span class="agenda-kind event-kind">Event</span><span><b>${esc(event.title)}${event.recurrence_rule ? ' (recurs)' : ''}</b><br><span class="small muted">${formatScheduleDateTime(event.starts_at)}${event.calendar_name ? ` · ${esc(event.calendar_name)}` : ''}</span></span><button class="btn ghost" data-open-event="${event.series_id || event.id}" type="button">Open</button></div>`;
+    return `<button class="agenda-item agenda-link ${spacious ? 'large' : ''}" data-open-event="${event.series_id || event.id}" type="button"><span class="agenda-kind event-kind">Event</span><span><b>${esc(event.title)}${event.recurrence_rule ? ' (recurs)' : ''}</b><br><span class="small muted">${formatScheduleDateTime(event.starts_at)}${event.calendar_name ? ` · ${esc(event.calendar_name)}` : ''}</span></span></button>`;
   }).join('');
 }
 
@@ -2206,6 +2210,13 @@ function detailRow(label, value) {
   return `<div class="detail-row"><span>${esc(label)}</span><b>${esc(text)}</b></div>`;
 }
 
+function locationDetailRow(locationText) {
+  const text = String(locationText ?? '').trim();
+  if (!text) return '';
+  const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(text)}`;
+  return `<div class="detail-row"><span>Location</span><b>${esc(text)} <a class="small" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Direction</a></b></div>`;
+}
+
 function linkedNoteDetailList(notes = []) {
   if (!notes.length) return '<p class="small muted">No linked notes.</p>';
   return `<div class="linked-note-picks detail-note-list">${notes.map(note => `<span class="linked-note-pill"><span>${esc(note.title || 'Untitled note')}</span><button type="button" data-open-linked-note="${esc(note.id)}">View</button></span>`).join('')}</div>`;
@@ -2244,7 +2255,7 @@ function openEventDetailDialog(event = {}) {
     detailRow('All day', Number(event.all_day) ? 'Yes' : ''),
     detailRow('Repeats', recurrenceLabel(event.recurrence_rule)),
     detailRow('Reminder', reminderLabel(event.reminder_minutes)),
-    detailRow('Location', event.location)
+    locationDetailRow(event.location)
   ].join('');
   const notes = linkedNoteDetailList(event.notes || []);
   modal.innerHTML = `<section class="editor-panel small-panel detail-dialog"><div class="topbar"><div><p class="breadcrumb">Event</p><h2>${esc(event.title || 'Untitled event')}</h2></div><div class="btn-row"><button class="btn ghost icon-only-btn" type="button" data-print-detail aria-label="Print" title="Print">${toolIcon('print', 'Print')}</button><button class="btn ghost icon-only-btn" type="button" data-edit-detail aria-label="Edit" title="Edit">${toolIcon('draw', 'Edit')}</button><button class="btn danger icon-only-btn" type="button" data-delete-detail aria-label="Delete" title="Delete">${toolIcon('trash', 'Delete')}</button><button class="btn ghost" type="button" data-close>Close</button></div></div><div class="detail-grid">${rows}</div>${event.description ? `<div class="detail-description"><h3>Description</h3><p>${esc(event.description)}</p></div>` : ''}<section class="detail-notes"><h3>Related notes</h3>${notes}</section></section>`;
@@ -2277,7 +2288,8 @@ function openTaskDetailDialog(task = {}) {
     detailRow('Due', task.due_at ? formatScheduleDateTime(task.due_at) : 'No due date'),
     detailRow('Calendar', task.calendar_name || (Number(task.private) ? 'Private task' : '')),
     detailRow('Priority', task.priority ? task.priority : ''),
-    detailRow('Reminder', reminderLabel(task.reminder_minutes))
+    detailRow('Reminder', reminderLabel(task.reminder_minutes)),
+    locationDetailRow(task.location)
   ].join('');
   const notes = linkedNoteDetailList(task.notes || []);
   modal.innerHTML = `<section class="editor-panel small-panel detail-dialog"><div class="topbar"><div><p class="breadcrumb">Task</p><h2>${esc(task.title || 'Untitled task')}</h2></div><div class="btn-row"><button class="btn ghost icon-only-btn" type="button" data-print-detail aria-label="Print" title="Print">${toolIcon('print', 'Print')}</button><button class="btn ghost icon-only-btn" type="button" data-edit-detail aria-label="Edit" title="Edit">${toolIcon('draw', 'Edit')}</button><button class="btn danger icon-only-btn" type="button" data-delete-detail aria-label="Delete" title="Delete">${toolIcon('trash', 'Delete')}</button><button class="btn ghost" type="button" data-close>Close</button></div></div><div class="detail-grid">${rows}</div>${task.description ? `<div class="detail-description"><h3>Description</h3><p>${esc(task.description)}</p></div>` : ''}<section class="detail-notes"><h3>Related notes</h3>${notes}</section></section>`;
@@ -2306,12 +2318,16 @@ function enhanceLinkedNotes(modal) {
   if (!select || select.dataset.enhanced === '1') return;
   select.dataset.enhanced = '1';
   select.classList.add('linked-note-select');
-  select.insertAdjacentHTML('afterend', `<div class="linked-note-tools"><div class="linked-note-picks" data-linked-note-picks></div><div class="linked-note-search"><input type="search" data-linked-note-search placeholder="Search notes to link"><div class="linked-note-results" data-linked-note-results></div></div><div class="linked-note-create"><input type="text" data-linked-note-title placeholder="New linked note title"><button class="btn" type="button" data-add-linked-note>Add note</button></div></div>`);
+  select.insertAdjacentHTML('afterend', `<div class="linked-note-tools"><div class="linked-note-picks" data-linked-note-picks></div><div class="small muted" data-linked-note-status role="status">Linked-note changes apply when you save this item.</div><div class="linked-note-search"><input type="search" data-linked-note-search aria-label="Search notes to link" placeholder="Search notes to link"><div class="linked-note-results" data-linked-note-results aria-live="polite"></div></div><div class="linked-note-create"><input type="text" data-linked-note-title aria-label="New linked note title" placeholder="New linked note title"><button class="btn" type="button" data-add-linked-note>Add note</button></div></div>`);
   const selectedIds = () => new Set([...select.selectedOptions].map(option => String(option.value)));
   const noteById = id => state.notes.find(note => String(note.id) === String(id));
   const setSelected = (id, selected) => {
     const option = [...select.options].find(item => String(item.value) === String(id));
     if (option) option.selected = selected;
+  };
+  const markPending = () => {
+    const status = modal.querySelector('[data-linked-note-status]');
+    if (status) status.textContent = 'Unsaved linked-note changes. Save this item to apply them.';
   };
   const renderPicks = () => {
     const picks = [...select.selectedOptions].map(option => `<span class="linked-note-pill"><span>${esc(option.textContent || 'Untitled note')}</span><button type="button" data-open-linked-note="${esc(option.value)}">View</button><button type="button" data-remove-linked-note="${esc(option.value)}" aria-label="Unlink ${esc(option.textContent || 'linked note')}" title="Unlink from this item on save">Unlink</button></span>`).join('');
@@ -2320,12 +2336,17 @@ function enhanceLinkedNotes(modal) {
   };
   const renderResults = () => {
     const query = String(modal.querySelector('[data-linked-note-search]')?.value || '').trim().toLowerCase();
+    const target = modal.querySelector('[data-linked-note-results]');
+    if (!target) return;
+    if (!query) {
+      target.innerHTML = '<span class="small muted">Start typing to find notes to link.</span>';
+      return;
+    }
     const selected = selectedIds();
     const matches = state.notes
       .filter(note => !selected.has(String(note.id)))
-      .filter(note => !query || String(note.title || '').toLowerCase().includes(query))
+      .filter(note => String(note.title || '').toLowerCase().includes(query))
       .slice(0, 8);
-    const target = modal.querySelector('[data-linked-note-results]');
     if (target) target.innerHTML = matches.map(note => `<button class="linked-note-result" type="button" data-pick-linked-note="${note.id}"><b>${esc(note.title || 'Untitled note')}</b><span>${esc(note.updated_at || '')}</span></button>`).join('') || '<span class="small muted">No matching notes.</span>';
   };
   select.addEventListener('change', renderPicks);
@@ -2334,6 +2355,7 @@ function enhanceLinkedNotes(modal) {
     const pick = e.target.closest('[data-pick-linked-note]');
     if (pick) {
       setSelected(pick.dataset.pickLinkedNote, true);
+      markPending();
       const search = modal.querySelector('[data-linked-note-search]');
       if (search) search.value = '';
       renderPicks();
@@ -2343,6 +2365,7 @@ function enhanceLinkedNotes(modal) {
     const remove = e.target.closest('[data-remove-linked-note]');
     if (remove) {
       setSelected(remove.dataset.removeLinkedNote, false);
+      markPending();
       renderPicks();
       renderResults();
       return;
@@ -2368,6 +2391,7 @@ function enhanceLinkedNotes(modal) {
       option.textContent = title;
       option.selected = true;
       select.prepend(option);
+      markPending();
       if (input) input.value = '';
       renderPicks();
       renderResults();
@@ -2416,7 +2440,7 @@ async function openTaskDialog(task = {}) {
   const calendarOptions = '<option value="">Private task</option>' + state.calendars.map(calendar => `<option value="${calendar.id}" ${String(calendar.id) === String(task.calendar_id || '') ? 'selected' : ''}>${esc(calendar.name)}</option>`).join('');
   const sharedChecked = task.id ? Number(task.private) === 0 : Boolean(task.calendar_id);
   const reminderMinutes = task.id ? (task.reminder_minutes ?? -1) : (feature('tasks').settings.default_reminder_minutes ?? 10);
-  modal.innerHTML = `<section class="editor-panel small-panel"><div class="topbar"><div><h2>${task.id ? 'Edit task' : 'New task'}</h2></div><button class="btn ghost" type="button" data-close>Cancel</button></div><form id="taskForm" class="stack"><label class="field"><span>Title</span><input name="title" value="${esc(task.title || '')}" required></label><label class="field"><span>Calendar</span><select name="calendar_id">${calendarOptions}</select></label><label class="checkline"><input name="shared" type="checkbox" ${sharedChecked ? 'checked' : ''}> Show on calendar</label><label class="field"><span>Due</span><input name="due_at" type="datetime-local" value="${esc(dateInputValue(task.due_at || ''))}"></label><label class="field"><span>Priority</span><input name="priority" type="number" min="0" max="5" value="${esc(task.priority || 0)}"></label><label class="field"><span>Reminder minutes before</span><input name="reminder_minutes" type="number" min="-1" max="10080" value="${esc(reminderMinutes)}"></label><label class="field"><span>Linked notes</span><select name="note_ids" multiple size="5">${noteLinkOptions(task.notes || [])}</select></label><label class="field"><span>Description</span><textarea name="description">${esc(task.description || '')}</textarea></label><div class="btn-row"><button class="btn primary">Save task</button>${task.id ? '<button class="btn danger" type="button" id="deleteTaskBtn">Delete</button>' : ''}</div></form></section>`;
+  modal.innerHTML = `<section class="editor-panel small-panel"><div class="topbar"><div><h2>${task.id ? 'Edit task' : 'New task'}</h2></div><button class="btn ghost" type="button" data-close>Cancel</button></div><form id="taskForm" class="stack"><label class="field"><span>Title</span><input name="title" value="${esc(task.title || '')}" required></label><label class="field"><span>Calendar</span><select name="calendar_id">${calendarOptions}</select></label><label class="checkline"><input name="shared" type="checkbox" ${sharedChecked ? 'checked' : ''}> Show on calendar</label><label class="field"><span>Due</span><input name="due_at" type="datetime-local" value="${esc(dateInputValue(task.due_at || ''))}"></label><label class="field"><span>Priority</span><input name="priority" type="number" min="0" max="5" value="${esc(task.priority || 0)}"></label><label class="field"><span>Reminder minutes before</span><input name="reminder_minutes" type="number" min="-1" max="10080" value="${esc(reminderMinutes)}"></label><label class="field"><span>Location</span><input name="location" value="${esc(task.location || '')}"></label><label class="field"><span>Linked notes</span><select name="note_ids" multiple size="5">${noteLinkOptions(task.notes || [])}</select></label><label class="field"><span>Description</span><textarea name="description">${esc(task.description || '')}</textarea></label><div class="btn-row"><button class="btn primary">Save task</button>${task.id ? '<button class="btn danger" type="button" id="deleteTaskBtn">Delete</button>' : ''}</div></form></section>`;
   document.body.appendChild(modal);
   setupAccessibleModal(modal, 'input[name="title"]');
   enhanceLinkedNotes(modal);
@@ -3383,8 +3407,19 @@ function bindSecretActions(root) {
   root.querySelectorAll('[data-inline-secret-reveal]').forEach(btn => btn.addEventListener('click', () => {
     const target = root.querySelector(`#${CSS.escape(btn.dataset.inlineSecretReveal)}`);
     if (!target) return;
+    if (btn.dataset.revealed === '1') {
+      clearTimeout(Number(btn.dataset.hideTimer || 0));
+      target.textContent = '••••••••••';
+      btn.dataset.revealed = '0';
+      return;
+    }
     target.textContent = btn.dataset.secretValue || '';
-    setTimeout(() => { target.textContent = '••••••••••'; }, 30000);
+    btn.dataset.revealed = '1';
+    clearTimeout(Number(btn.dataset.hideTimer || 0));
+    btn.dataset.hideTimer = String(setTimeout(() => {
+      target.textContent = '••••••••••';
+      btn.dataset.revealed = '0';
+    }, 30000));
   }));
   root.querySelectorAll('[data-inline-secret-copy]').forEach(btn => btn.addEventListener('click', async () => {
     await navigator.clipboard.writeText(btn.dataset.secretValue || '');
@@ -3392,9 +3427,22 @@ function bindSecretActions(root) {
   }));
   root.querySelectorAll('[data-secret]').forEach(btn => btn.addEventListener('click', async () => {
     const row = btn.closest('.secret-row');
+    const target = row?.querySelector('.secret-value');
+    if (!target) return;
+    if (btn.dataset.revealed === '1') {
+      clearTimeout(Number(btn.dataset.hideTimer || 0));
+      target.textContent = '••••••••••';
+      btn.dataset.revealed = '0';
+      return;
+    }
     const value = await api(`/secrets/${btn.dataset.secret}/reveal`, { method: 'POST', body: {} });
-    row.querySelector('.secret-value').textContent = value.value;
-    setTimeout(() => row.querySelector('.secret-value').textContent = '••••••••••', 30000);
+    target.textContent = value.value;
+    btn.dataset.revealed = '1';
+    clearTimeout(Number(btn.dataset.hideTimer || 0));
+    btn.dataset.hideTimer = String(setTimeout(() => {
+      target.textContent = '••••••••••';
+      btn.dataset.revealed = '0';
+    }, 30000));
   }));
   root.querySelectorAll('[data-copy-secret]').forEach(btn => btn.addEventListener('click', async () => {
     const value = await api(`/secrets/${btn.dataset.copySecret}/reveal`, { method: 'POST', body: {} });

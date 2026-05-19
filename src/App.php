@@ -1137,13 +1137,14 @@ final class App
         $status = in_array(($data['status'] ?? ''), ['open', 'done'], true) ? $data['status'] : ($current['status'] ?? 'open');
         $completedAt = $status === 'done' ? ($current['completed_at'] ?? gmdate('Y-m-d H:i:s')) : null;
         $dueAt = $this->cleanDateTime($data['due_at'] ?? ($current['due_at'] ?? ''));
+        $location = trim((string)($data['location'] ?? $current['location'] ?? ''));
         if ($id > 0) {
-            $stmt = $this->db->prepare('UPDATE tasks SET calendar_id=?, title=?, description=?, status=?, priority=?, due_at=?, completed_at=?, private=?, updated_at=CURRENT_TIMESTAMP WHERE id=?');
-            $stmt->execute([$calendarId ?: null, $title, (string)($data['description'] ?? $current['description'] ?? ''), $status, (int)($data['priority'] ?? $current['priority'] ?? 0), $dueAt, $completedAt, $private, $id]);
+            $stmt = $this->db->prepare('UPDATE tasks SET calendar_id=?, title=?, description=?, location=?, status=?, priority=?, due_at=?, completed_at=?, private=?, updated_at=CURRENT_TIMESTAMP WHERE id=?');
+            $stmt->execute([$calendarId ?: null, $title, (string)($data['description'] ?? $current['description'] ?? ''), $location, $status, (int)($data['priority'] ?? $current['priority'] ?? 0), $dueAt, $completedAt, $private, $id]);
             $this->audit((int)$user['id'], 'task.updated', 'task', $id);
         } else {
-            $stmt = $this->db->prepare('INSERT INTO tasks (user_id, calendar_id, title, description, status, priority, due_at, completed_at, private, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-            $stmt->execute([(int)$user['id'], $calendarId ?: null, $title, (string)($data['description'] ?? ''), $status, (int)($data['priority'] ?? 0), $dueAt, $completedAt, $private, 'manual']);
+            $stmt = $this->db->prepare('INSERT INTO tasks (user_id, calendar_id, title, description, location, status, priority, due_at, completed_at, private, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            $stmt->execute([(int)$user['id'], $calendarId ?: null, $title, (string)($data['description'] ?? ''), $location, $status, (int)($data['priority'] ?? 0), $dueAt, $completedAt, $private, 'manual']);
             $id = (int)$this->db->lastInsertId();
             $this->audit((int)$user['id'], 'task.created', 'task', $id);
         }
