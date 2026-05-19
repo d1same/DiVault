@@ -606,6 +606,12 @@ body.sidebar-collapsed .layout { grid-template-columns: 56px minmax(0, 1fr); }
 .notification-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); padding: 8px; background: var(--surface-card); }
 .notification-link { color: var(--text); text-align: left; cursor: pointer; }
 .notification-link:hover { border-color: color-mix(in srgb, var(--primary) 42%, var(--border-soft)); background: color-mix(in srgb, var(--primary) 6%, var(--surface)); }
+.task-complete-btn { width: 34px; min-width: 34px; height: 34px; display: inline-grid; place-items: center; border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--surface-soft) 72%, transparent); color: var(--muted); padding: 0; box-shadow: inset 0 1px 0 color-mix(in srgb, white 10%, transparent); }
+.task-complete-btn::before { content: ''; width: 16px; height: 16px; border: 2px solid currentColor; border-radius: 5px; opacity: .72; box-sizing: border-box; }
+.task-complete-btn:hover, .task-complete-btn:focus { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, var(--surface)); color: var(--ok); }
+.task-complete-btn.is-complete { border-color: color-mix(in srgb, var(--ok) 86%, var(--border)); background: linear-gradient(135deg, var(--ok), color-mix(in srgb, var(--ok) 72%, #0f5132)); color: #fff; box-shadow: 0 8px 18px color-mix(in srgb, var(--ok) 24%, transparent); }
+.task-complete-btn.is-complete::before { width: 15px; height: 9px; border: 0; border-left: 3px solid currentColor; border-bottom: 3px solid currentColor; border-radius: 0; opacity: 1; transform: rotate(-45deg) translate(1px, -1px); }
+.task-complete-btn .tool-icon { display: none; }
 .sidebar-sync { min-width: 0; overflow: hidden; text-overflow: ellipsis; box-shadow: none; }
 .sidebar-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .sidebar-footer .sidebar-action {
@@ -1281,10 +1287,10 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .home-hero { grid-template-columns: 1fr; }
   .home-stat-row { justify-content: flex-start; }
   .feature-toggle-grid { grid-template-columns: 1fr; }
-  .calendar-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: stretch; width: 100%; }
+  .calendar-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 106px; gap: 10px; align-items: stretch; width: 100%; }
   .calendar-toolbar .btn-row { width: auto; }
   .calendar-nav-row { grid-column: 1 / -1; display: grid; grid-template-columns: 44px minmax(120px, 1fr) 44px; gap: 6px; }
-  .calendar-add-row { display: grid; grid-template-columns: 46px 46px; gap: 8px; }
+  .calendar-add-row { display: grid; grid-template-columns: 46px 46px; justify-content: space-between; gap: 12px; }
   .calendar-add-row .action-fab {
     min-width: 46px;
     min-height: 44px;

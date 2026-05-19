@@ -1110,7 +1110,7 @@ function renderNotificationDropdown() {
   return `<div class="notification-menu" id="notificationMenu"><div class="section-title-row"><h3>Notifications</h3><span class="small muted">${items.length}</span></div>${items.length ? items.slice(0, 12).map(entry => {
     if (entry.kind === 'task') {
       const task = entry.item;
-      return `<div class="notification-row notification-link" data-open-task="${task.id}" role="button" tabindex="0"><span class="agenda-kind task-kind">Task</span><span><b>${esc(task.title)}</b><br><span class="small muted">Due ${formatScheduleDateTime(task.due_at)}</span></span><button class="btn primary mini-btn" data-task-complete="${task.id}" type="button">Complete</button></div>`;
+      return `<div class="notification-row notification-link" data-open-task="${task.id}" role="button" tabindex="0"><span class="agenda-kind task-kind">Task</span><span><b>${esc(task.title)}</b><br><span class="small muted">Due ${formatScheduleDateTime(task.due_at)}</span></span><button class="task-complete-btn" data-task-complete="${task.id}" type="button" aria-label="Complete task" title="Complete task">${toolIcon('check', 'Complete task')}</button></div>`;
     }
     const event = entry.item;
       return `<div class="notification-row notification-link" data-open-event="${event.series_id || event.id}" role="button" tabindex="0"><span class="agenda-kind event-kind">Event</span><span><b>${esc(event.title)}</b><br><span class="small muted">${formatScheduleDateTime(event.starts_at)}</span></span></div>`;
@@ -1122,6 +1122,15 @@ async function completeTask(task, after = async () => {}) {
   await runUserAction(async () => {
     await api(`/tasks/${task.id}`, { method: 'PATCH', body: { ...task, status: 'done', shared: Number(task.private) === 0 } });
     await after();
+  }, 'Task update failed');
+}
+
+async function toggleTaskStatus(task, after = async () => {}) {
+  if (!task) return;
+  const status = task.status === 'done' ? 'open' : 'done';
+  await runUserAction(async () => {
+    await api(`/tasks/${task.id}`, { method: 'PATCH', body: { ...task, status, shared: Number(task.private) === 0 } });
+    await after(status);
   }, 'Task update failed');
 }
 
@@ -2307,17 +2316,18 @@ function openTaskDetailDialog(task = {}) {
     locationDetailRow(task.location)
   ].join('');
   const notes = linkedNoteDetailList(task.notes || []);
-  const completeButton = task.status !== 'done' ? '<button class="btn primary" type="button" data-complete-detail>Complete</button>' : '';
+  const isDone = task.status === 'done';
+  const completeButton = `<button class="task-complete-btn ${isDone ? 'is-complete' : ''}" type="button" data-complete-detail aria-label="${isDone ? 'Reopen task' : 'Complete task'}" title="${isDone ? 'Reopen task' : 'Complete task'}">${toolIcon('check', isDone ? 'Reopen task' : 'Complete task')}</button>`;
   modal.innerHTML = `<section class="editor-panel small-panel detail-dialog"><div class="topbar"><div><p class="breadcrumb">Task</p><h2>${esc(task.title || 'Untitled task')}</h2></div><div class="btn-row">${completeButton}<button class="btn ghost icon-only-btn" type="button" data-print-detail aria-label="Print" title="Print">${toolIcon('print', 'Print')}</button><button class="btn ghost icon-only-btn" type="button" data-edit-detail aria-label="Edit" title="Edit">${toolIcon('draw', 'Edit')}</button><button class="btn danger icon-only-btn" type="button" data-delete-detail aria-label="Delete" title="Delete">${toolIcon('trash', 'Delete')}</button><button class="btn ghost" type="button" data-close>Close</button></div></div><div class="detail-grid">${rows}</div>${task.description ? `<div class="detail-description"><h3>Description</h3><p>${esc(task.description)}</p></div>` : ''}<section class="detail-notes"><h3>Related notes</h3>${notes}</section></section>`;
   document.body.appendChild(modal);
   setupAccessibleModal(modal, '[data-close]');
   modal.querySelector('[data-complete-detail]')?.addEventListener('click', async () => {
-    await completeTask(task, async () => {
+    await toggleTaskStatus(task, async status => {
       modal.remove();
       await loadNotificationData();
       await loadCurrentSection();
       renderApp();
-      toast('Task completed');
+      toast(status === 'done' ? 'Task completed' : 'Task reopened');
     });
   });
   modal.querySelector('[data-edit-detail]').addEventListener('click', () => { modal.remove(); openTaskDialog(task); });
