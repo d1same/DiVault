@@ -1470,6 +1470,10 @@ final class App
     private function cleanDateTime($value): ?string
     {
         if (!is_string($value) || trim($value) === '') return null;
+        $value = trim($value);
+        if (preg_match('/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::(\d{2}))?$/', $value, $match)) {
+            return $match[1] . ' ' . $match[2] . ':' . ($match[3] ?? '00');
+        }
         $time = strtotime($value);
         return $time ? gmdate('Y-m-d H:i:s', $time) : null;
     }
@@ -1526,7 +1530,7 @@ final class App
             if ((int)$note['user_id'] !== (int)$user['id']) throw new RuntimeException('Note not found');
             $validNoteIds[] = $noteId;
         }
-        $this->db->prepare("DELETE FROM $table WHERE $idColumn = ? AND user_id = ?")->execute([$id, (int)$user['id']]);
+        $this->db->prepare("DELETE FROM $table WHERE $idColumn = ? AND (user_id = ? OR user_id IS NULL)")->execute([$id, (int)$user['id']]);
         foreach ($validNoteIds as $noteId) {
             $this->db->prepare("INSERT OR IGNORE INTO $table ($idColumn, note_id, user_id) VALUES (?, ?, ?)")->execute([$id, $noteId, (int)$user['id']]);
         }

@@ -100,6 +100,11 @@ function normalizeDate(value) {
 }
 
 function dateInputValue(value) {
+  if (typeof value === 'string') {
+    const raw = value.trim();
+    const match = raw.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/);
+    if (match && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw)) return `${match[1]}T${match[2]}`;
+  }
   const date = value instanceof Date ? value : new Date(normalizeDate(value));
   if (Number.isNaN(date.getTime())) return '';
   const pad = number => String(number).padStart(2, '0');
