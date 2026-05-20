@@ -6,6 +6,8 @@ Run it with Docker, open it in a browser, install it as a PWA, use the Windows d
 
 ![DiVault desktop showcase](docs/screenshots/desktop-showcase.png)
 
+![DiVault task planning showcase](docs/screenshots/tasks-showcase.png)
+
 ![DiVault Android showcase](docs/screenshots/android-showcase.png)
 
 ## Quick Install
