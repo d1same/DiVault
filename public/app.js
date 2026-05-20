@@ -218,7 +218,12 @@ function setupAccessibleModal(modal, initialFocusSelector = '[data-close], butto
     originalRemove();
     if (previousFocus && document.contains(previousFocus)) previousFocus.focus();
   };
-  modal.querySelector('[data-close]')?.addEventListener('click', close);
+  modal.querySelectorAll('[data-close]').forEach(btn => {
+    btn.classList.add('dialog-close');
+    btn.setAttribute('aria-label', btn.getAttribute('aria-label') || 'Close dialog');
+    btn.setAttribute('title', btn.getAttribute('title') || 'Close');
+    btn.addEventListener('click', close);
+  });
   modal.addEventListener('click', e => { if (e.target === modal) close(); });
   document.addEventListener('keydown', onKeydown);
   setTimeout(() => (modal.querySelector(initialFocusSelector) || modal.querySelector(focusableSelector))?.focus(), 0);
@@ -2336,11 +2341,35 @@ function detailRow(label, value) {
   return `<div class="detail-row"><span>${esc(label)}</span><b>${esc(text)}</b></div>`;
 }
 
+function normalizeLocationUrl(text) {
+  const value = String(text || '').trim();
+  if (!value) return '';
+  const match = value.match(/(?:https?:\/\/|www\.)\S+/i);
+  if (!match) return '';
+  const url = match[0].replace(/[),.;]+$/, '');
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
+
+function isLikelyAddress(text) {
+  const value = String(text || '').trim();
+  if (!value) return false;
+  if (normalizeLocationUrl(value)) return false;
+  if (/\b(zoom|teams|meet|webex|skype|facetime|phone call|video call|conference call|online|virtual)\b/i.test(value)) return false;
+  if (/\d+\s+[^,]+\b(st|street|ave|avenue|rd|road|dr|drive|blvd|boulevard|ln|lane|ct|court|pl|place|way|pkwy|parkway|hwy|highway|suite|ste|unit|apt)\b/i.test(value)) return true;
+  if (/\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/.test(value)) return true;
+  return value.includes(',') && /\d/.test(value) && /[a-z]/i.test(value);
+}
+
 function locationDetailRow(locationText) {
   const text = String(locationText ?? '').trim();
   if (!text) return '';
-  const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(text)}`;
-  return `<div class="detail-row"><span>Location</span><b>${esc(text)} <a class="small" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Direction</a></b></div>`;
+  const meetingUrl = normalizeLocationUrl(text);
+  const action = meetingUrl
+    ? `<a class="small detail-action-link" href="${esc(meetingUrl)}" target="_blank" rel="noopener noreferrer">Open link</a>`
+    : isLikelyAddress(text)
+      ? `<a class="small detail-action-link" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(text)}" target="_blank" rel="noopener noreferrer">Directions</a>`
+      : '';
+  return `<div class="detail-row"><span>Location</span><b>${esc(text)}${action ? ` ${action}` : ''}</b></div>`;
 }
 
 function linkedNoteDetailList(notes = []) {

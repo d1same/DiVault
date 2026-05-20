@@ -92,6 +92,7 @@ public class MainActivity extends Activity {
                 bottom = insets.getSystemWindowInsetBottom();
             }
             view.setPadding(left, top, right, bottom);
+            injectSystemInsets(left, top, right, bottom);
             return insets;
         });
 
@@ -328,6 +329,15 @@ public class MainActivity extends Activity {
 
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density);
+    }
+
+    private void injectSystemInsets(int left, int top, int right, int bottom) {
+        if (webView == null) return;
+        String js = "document.documentElement.style.setProperty('--android-system-left','" + left + "px');"
+                + "document.documentElement.style.setProperty('--android-system-top','" + top + "px');"
+                + "document.documentElement.style.setProperty('--android-system-right','" + right + "px');"
+                + "document.documentElement.style.setProperty('--android-system-bottom','" + bottom + "px');";
+        webView.post(() -> webView.evaluateJavascript(js, null));
     }
 
     private void ensureNotificationChannel() {
