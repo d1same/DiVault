@@ -2020,9 +2020,15 @@ final class App
         if ($folderId) $this->driveFolderAccess($user, $folderId, 'edit');
         if (empty($_FILES['file'])) throw new RuntimeException('No file uploaded');
         $file = $_FILES['file'];
-        if (($file['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) throw new RuntimeException('Upload failed');
-        if (($file['size'] ?? 0) <= 0 || (int)$file['size'] > 250 * 1024 * 1024) throw new RuntimeException('Invalid file size');
-        $dir = Config::dir() . '/drive-files';
+        $error = $file['error'] ?? UPLOAD_ERR_OK;
+        if ($error !== UPLOAD_ERR_OK) {
+            if (in_array($error, [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true)) {
+                throw new RuntimeException('Upload failed: file exceeds the server upload limit');
+            }
+            throw new RuntimeException('Upload failed');
+        }
+        if (($file['size'] ?? 0) <= 0 || (int)$file['size'] > Config::driveUploadMaxBytes()) throw new RuntimeException('Invalid file size');
+        $dir = Config::driveFilesDir();
         if (!is_dir($dir) && !mkdir($dir, 0775, true)) throw new RuntimeException('Upload storage unavailable');
         $mime = (new finfo(FILEINFO_MIME_TYPE))->file($file['tmp_name']) ?: 'application/octet-stream';
         $name = preg_replace('/[^a-zA-Z0-9._-]/', '_', basename((string)$file['name'])) ?: 'upload.bin';
@@ -2066,7 +2072,7 @@ final class App
         $data = $this->input();
         $content = (string)($data['content'] ?? '');
         if (strlen($content) > 2 * 1024 * 1024) throw new RuntimeException('Editable files must be 2 MB or smaller');
-        $path = Config::dir() . '/drive-files/' . basename((string)$file['stored_name']);
+        $path = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
         if (!is_file($path)) throw new RuntimeException('File not found');
         if (file_put_contents($path, $content, LOCK_EX) === false) throw new RuntimeException('File update failed');
         @chmod($path, 0600);
@@ -2080,7 +2086,7 @@ final class App
     private function driveDownloadFile(array $user, int $id, bool $inline = false): void
     {
         $file = $this->driveFileAccess($user, $id, 'view');
-        $path = Config::dir() . '/drive-files/' . basename((string)$file['stored_name']);
+        $path = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
         if (!is_file($path)) throw new RuntimeException('File not found');
         $this->audit((int)$user['id'], $inline ? 'drive_file.previewed' : 'drive_file.downloaded', 'drive_file', $id);
         header_remove('Content-Type');
@@ -2530,7 +2536,7 @@ final class App
             foreach (glob($filesDir . '/*') ?: [] as $file) {
                 if (is_file($file)) $this->addBackupFile($zip, $file, 'files/' . basename($file), $encrypt);
             }
-            $driveFilesDir = Config::dir() . '/drive-files';
+            $driveFilesDir = Config::driveFilesDir();
             foreach (glob($driveFilesDir . '/*') ?: [] as $file) {
                 if (is_file($file)) $this->addBackupFile($zip, $file, 'drive-files/' . basename($file), $encrypt);
             }
@@ -2666,11 +2672,16 @@ final class App
         if ($zip->open($path) !== true) throw new RuntimeException('Invalid backup ZIP');
         if ($passphrase !== '') $zip->setPassword($passphrase);
         $configDir = Config::dir();
-        foreach (['files', 'drive-files', 'keys'] as $dir) {
+        $driveFilesDir = Config::driveFilesDir();
+        foreach (['files', 'keys'] as $dir) {
             if (!is_dir($configDir . '/' . $dir) && !mkdir($configDir . '/' . $dir, 0775, true)) {
                 $zip->close();
                 throw new RuntimeException('Unable to prepare restore directory');
             }
+        }
+        if (!is_dir($driveFilesDir) && !mkdir($driveFilesDir, 0775, true)) {
+            $zip->close();
+            throw new RuntimeException('Unable to prepare restore directory');
         }
         $db = $zip->getFromName('app.sqlite');
         if ($db === false) {
@@ -2693,7 +2704,7 @@ final class App
         foreach (glob($configDir . '/files/*') ?: [] as $oldFile) {
             if (is_file($oldFile)) @unlink($oldFile);
         }
-        foreach (glob($configDir . '/drive-files/*') ?: [] as $oldFile) {
+        foreach (glob($driveFilesDir . '/*') ?: [] as $oldFile) {
             if (is_file($oldFile)) @unlink($oldFile);
         }
         for ($i = 0; $i < $zip->numFiles; $i++) {
@@ -2704,11 +2715,12 @@ final class App
                 $zip->close();
                 throw new RuntimeException('Unable to restore file attachment');
             }
-            if (file_put_contents($configDir . '/' . $entry, $content) === false) {
+            $target = preg_match('#^drive-files/[^/]+$#', $entry) ? $driveFilesDir . '/' . basename($entry) : $configDir . '/' . $entry;
+            if (file_put_contents($target, $content) === false) {
                 $zip->close();
                 throw new RuntimeException('Unable to restore file attachment');
             }
-            @chmod($configDir . '/' . $entry, 0600);
+            @chmod($target, 0600);
         }
         $zip->close();
     }

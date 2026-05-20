@@ -9,6 +9,8 @@ services:
     environment:
       APP_URL: "https://notes.example.com"
       APP_CONFIG_DIR: "/config"
+      DRIVE_FILES_DIR: "${DRIVE_FILES_DIR:-/config/drive-files}"
+      DRIVE_UPLOAD_MAX_MB: "${DRIVE_UPLOAD_MAX_MB:-250}"
       TRUST_PROXY: "${TRUST_PROXY:-false}"
       SECURE_COOKIES: "${SECURE_COOKIES:-false}"
       AI_REVIEW_API_TOKEN: "${AI_REVIEW_API_TOKEN:-}"

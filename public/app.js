@@ -370,6 +370,9 @@ const icon = name => ({
   secret: '<svg viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2M6 10h12v10H6zM12 14v2"/></svg>',
   draw: '<svg viewBox="0 0 24 24"><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20ZM14 7l3 3"/></svg>',
   file: '<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v5h5M9 13h6M9 17h6"/></svg>',
+  upload: '<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>',
+  folderPlus: '<svg viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v11H3zM12 14h6M15 11v6"/></svg>',
+  textFile: '<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v5h5M9 13h6M9 17h4"/></svg>',
   bold: '<svg viewBox="0 0 24 24"><path d="M8 5h5a3.5 3.5 0 0 1 0 7H8zM8 12h6a3.5 3.5 0 0 1 0 7H8z"/></svg>',
   italic: '<svg viewBox="0 0 24 24"><path d="M10 5h8M6 19h8M14 5l-4 14"/></svg>',
   underline: '<svg viewBox="0 0 24 24"><path d="M7 5v6a5 5 0 0 0 10 0V5M5 21h14"/></svg>',
@@ -1179,11 +1182,15 @@ function renderFilterBar(panelOpen) {
   if (state.section === 'home') return '';
   if (state.section === 'calendar') return `<div class="filterbar calendar-filter"><div class="calendar-toolbar"><div class="btn-row calendar-nav-row"><button class="btn icon-only-btn" id="prevCalendarMonth" type="button" aria-label="Previous">‹</button><button class="btn" id="todayCalendarMonth" type="button">Today</button><button class="btn icon-only-btn" id="nextCalendarMonth" type="button" aria-label="Next">›</button></div><select class="calendar-view-select" id="calendarViewSelect" aria-label="Calendar view"><option value="day" ${state.calendarView === 'day' ? 'selected' : ''}>Day</option><option value="week" ${state.calendarView === 'week' ? 'selected' : ''}>Week</option><option value="month" ${state.calendarView === 'month' ? 'selected' : ''}>Month</option><option value="year" ${state.calendarView === 'year' ? 'selected' : ''}>Year</option><option value="schedule" ${state.calendarView === 'schedule' ? 'selected' : ''}>Schedule</option></select><div class="calendar-view-toggle" role="group" aria-label="Calendar view"><button class="btn ghost ${state.calendarView === 'day' ? 'active' : ''}" data-calendar-view="day" type="button">Day</button><button class="btn ghost ${state.calendarView === 'week' ? 'active' : ''}" data-calendar-view="week" type="button">Week</button><button class="btn ghost ${state.calendarView === 'month' ? 'active' : ''}" data-calendar-view="month" type="button">Month</button><button class="btn ghost ${state.calendarView === 'year' ? 'active' : ''}" data-calendar-view="year" type="button">Year</button><button class="btn ghost ${state.calendarView === 'schedule' ? 'active' : ''}" data-calendar-view="schedule" type="button">Schedule</button></div><div class="btn-row calendar-add-row"><button class="btn primary icon-only-btn action-fab" id="newEventBtn" type="button" aria-label="New event" title="New event">${toolIcon('calendar', 'New event')}</button><button class="btn primary icon-only-btn action-fab" id="newCalendarTaskBtn" type="button" aria-label="New task" title="New task">${toolIcon('check', 'New task')}</button></div></div></div>`;
   if (state.section === 'tasks') return `<div class="filterbar task-filter"><input class="search" id="search" aria-label="Search tasks" placeholder="Search tasks..." value="${esc(state.q)}"><button class="btn primary" id="newTaskBtn" type="button">New task</button></div>`;
-  if (state.section === 'drive') return `<div class="filterbar drive-filter"><input class="search" id="search" type="search" aria-label="Search files" placeholder="Search files and folders...  Q" value="${esc(state.q)}"><div class="filter-actions"><button class="btn" id="newDriveFolderBtn" type="button">New folder</button><label class="btn primary drive-upload-label">Upload<input id="driveUploadInput" type="file" multiple></label><div class="note-layout-toggle drive-layout-toggle" role="group" aria-label="Drive layout"><button class="btn ghost ${state.driveLayout === 'grid' ? 'active' : ''}" data-drive-layout="grid" type="button">Grid</button><button class="btn ghost ${state.driveLayout === 'list' ? 'active' : ''}" data-drive-layout="list" type="button">List</button></div></div></div>`;
+  if (state.section === 'drive') return renderDriveFilterBar();
   if (isNoteSection(state.section)) {
     return `<div class="filterbar notes-filter"><div class="filter-actions filter-actions-left">${state.notes.length && !state.selectionMode ? '<button class="btn" type="button" id="startSelectNotes">Select</button>' : ''}${renderNoteLayoutToggle()}${renderNoteSortSelect()}${state.section === 'notes:trash' ? '<button class="btn danger" id="emptyTrashBtn" type="button">Empty recycle bin</button>' : ''}</div><input class="search" id="search" aria-label="Search notes. Press Q to focus search." title="Press Q to search" placeholder="Search ${esc(sectionLabel(state.section))}...  Q" value="${esc(state.q)}"><div class="filter-actions note-filter-actions"><button class="btn ghost icon-only-btn" id="shortcutsHelpBtn" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">?</button><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick notes" title="Quick notes (K)">${toolIcon('quick', 'Quick notes')}</button><button class="btn primary icon-only-btn action-fab" id="newBtn" aria-label="New note" title="New full note (N or +)">+</button></div></div>`;
   }
   return `<div class="filterbar"><select id="clientFilter" aria-label="Organization"><option value="">All organizations</option>${state.clients.map(c => `<option value="${c.id}" ${String(c.id) === String(state.clientId) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select><input class="search" id="search" aria-label="Search. Press Q to focus search." title="Press Q to search" placeholder="Search ${esc(sectionLabel(state.section))}...  Q" value="${esc(state.q)}"><label class="checkline"><input type="checkbox" id="includeArchive" ${state.includeArchive ? 'checked' : ''}> Include archive</label></div>`;
+}
+
+function renderDriveFilterBar() {
+  return `<div class="filterbar drive-filter"><input class="search" id="search" type="search" aria-label="Search files" placeholder="Search files and folders...  Q" value="${esc(state.q)}"><div class="filter-actions drive-commandbar"><label class="btn primary drive-upload-label drive-tool-btn icon-only-btn" title="Upload" aria-label="Upload">${toolIcon('upload', 'Upload')}<input id="driveUploadInput" type="file" multiple></label><button class="btn drive-tool-btn icon-only-btn" id="newDriveFolderBtn" type="button" aria-label="New folder" title="New folder">${toolIcon('folderPlus', 'New folder')}</button><button class="btn drive-tool-btn icon-only-btn" id="newDriveTextBtn" type="button" aria-label="Text file" title="Text file">${toolIcon('textFile', 'Text file')}</button><div class="note-layout-toggle drive-layout-toggle" role="group" aria-label="Drive layout"><button class="btn ghost ${state.driveLayout === 'grid' ? 'active' : ''}" data-drive-layout="grid" type="button">Grid</button><button class="btn ghost ${state.driveLayout === 'list' ? 'active' : ''}" data-drive-layout="list" type="button">List</button></div></div></div>`;
 }
 
 function notificationItems() {
@@ -2102,6 +2109,15 @@ function bindDriveActions() {
     document.querySelector('#contentArea').innerHTML = renderDrive();
     bindContentActions();
   }));
+  document.querySelectorAll('[data-drive-sort]').forEach(btn => btn.addEventListener('click', () => {
+    const field = btn.dataset.driveSort || 'name';
+    const [currentField, currentDir] = String(state.driveSort || 'name_asc').split('_');
+    const dir = currentField === field && currentDir === 'asc' ? 'desc' : 'asc';
+    state.driveSort = `${field}_${dir}`;
+    localStorage.setItem('divault_drive_sort', state.driveSort);
+    document.querySelector('#contentArea').innerHTML = renderDrive();
+    bindContentActions();
+  }));
   document.querySelectorAll('[data-drive-folder]').forEach(btn => btn.addEventListener('click', async () => {
     state.driveFolderId = btn.dataset.driveFolder || '';
     localStorage.setItem('divault_drive_folder_id', state.driveFolderId);
@@ -2109,17 +2125,15 @@ function bindDriveActions() {
     renderApp();
   }));
   document.querySelector('#newDriveFolderBtn')?.addEventListener('click', createDriveFolder);
+  document.querySelector('#newDriveTextBtn')?.addEventListener('click', createDriveTextFile);
   document.querySelector('#driveUploadInput')?.addEventListener('change', e => uploadDriveFiles([...e.target.files]));
-  document.querySelector('#driveDropInput')?.addEventListener('change', e => uploadDriveFiles([...e.target.files]));
-  const dropzone = document.querySelector('#driveDropzone');
-  dropzone?.addEventListener('submit', e => e.preventDefault());
-  dropzone?.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
-  dropzone?.addEventListener('dragleave', e => { if (!dropzone.contains(e.relatedTarget)) dropzone.classList.remove('drag-over'); });
-  dropzone?.addEventListener('drop', e => {
-    e.preventDefault();
-    dropzone.classList.remove('drag-over');
-    uploadDriveFiles([...e.dataTransfer.files]);
-  });
+  document.querySelectorAll('.drive-menu-toggle').forEach(btn => btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const menu = btn.closest('.drive-actions');
+    document.querySelectorAll('.drive-actions.open').forEach(item => { if (item !== menu) item.classList.remove('open'); });
+    menu?.classList.toggle('open');
+  }));
+  document.addEventListener('click', closeDriveMenus, { once: true });
   document.querySelectorAll('[data-rename-drive-folder]').forEach(btn => btn.addEventListener('click', () => renameDriveItem('folder', btn.dataset.renameDriveFolder, btn.dataset.name)));
   document.querySelectorAll('[data-delete-drive-folder]').forEach(btn => btn.addEventListener('click', () => deleteDriveItem('folder', btn.dataset.deleteDriveFolder, btn.dataset.name)));
   document.querySelectorAll('[data-rename-drive-file]').forEach(btn => btn.addEventListener('click', () => renameDriveItem('file', btn.dataset.renameDriveFile, btn.dataset.name)));
@@ -2127,6 +2141,10 @@ function bindDriveActions() {
   document.querySelectorAll('[data-share-drive-folder]').forEach(btn => btn.addEventListener('click', () => openDriveShareDialog('folder', btn.dataset.shareDriveFolder, btn.dataset.name)));
   document.querySelectorAll('[data-share-drive-file]').forEach(btn => btn.addEventListener('click', () => openDriveShareDialog('file', btn.dataset.shareDriveFile, btn.dataset.name)));
   document.querySelectorAll('[data-edit-drive-file]').forEach(btn => btn.addEventListener('click', () => openDriveTextEditor(btn.dataset.editDriveFile, btn.dataset.name)));
+}
+
+function closeDriveMenus() {
+  document.querySelectorAll('.drive-actions.open').forEach(menu => menu.classList.remove('open'));
 }
 
 async function createDriveFolder() {
@@ -2138,6 +2156,14 @@ async function createDriveFolder() {
     await loadDrive();
     renderApp();
   }, 'Create folder failed');
+}
+
+async function createDriveTextFile() {
+  const name = await promptDialog({ title: 'New text file', label: 'File name', value: 'Untitled.txt' });
+  if (!name) return;
+  const safeName = /\.txt$/i.test(name) ? name : `${name}.txt`;
+  const file = new File(['New text file\n'], safeName, { type: 'text/plain' });
+  await uploadDriveFiles([file]);
 }
 
 async function uploadDriveFiles(files) {
@@ -2967,20 +2993,43 @@ async function moveNotesToCategory(ids, categoryId) {
 }
 
 function renderDrive() {
-  const folders = state.driveFolders || [];
-  const files = state.driveFiles || [];
+  const folders = sortDriveItems(state.driveFolders || [], 'folder');
+  const files = sortDriveItems(state.driveFiles || [], 'file');
   const crumbs = renderDriveBreadcrumbs();
   const empty = !folders.length && !files.length;
   return `<section class="drive-shell ${state.driveLayout === 'list' ? 'list-view' : 'grid-view'}">
-    <div class="drive-header card"><div><p class="breadcrumb">DiVault Drive</p><h2>${esc(state.driveFolderId ? driveCurrentFolderName() : 'Files')}</h2>${crumbs}</div><div class="drive-stats"><span class="pill">${folders.length} folder${folders.length === 1 ? '' : 's'}</span><span class="pill">${files.length} file${files.length === 1 ? '' : 's'}</span></div></div>
-    <form class="drive-dropzone" id="driveDropzone"><input id="driveDropInput" type="file" multiple><div><b>Drop files to upload</b><span class="small muted">or use the Upload button above</span></div></form>
-    ${empty ? `<div class="empty card"><h2>${state.q ? 'No matching files' : 'No files yet'}</h2><p>${state.q ? 'Try another search term.' : 'Upload files or create a folder to start organizing Drive.'}</p></div>` : `<div class="drive-items">${folders.map(renderDriveFolder).join('')}${files.map(renderDriveFile).join('')}</div>`}
+    <div class="drive-header card"><div class="drive-path-line">${crumbs}</div><div class="drive-stats"><span class="pill">${folders.length} folder${folders.length === 1 ? '' : 's'}</span><span class="pill">${files.length} file${files.length === 1 ? '' : 's'}</span></div></div>
+    ${empty ? `<div class="empty card drive-empty"><h2>${state.q ? 'No matching files' : 'This folder is empty'}</h2><p>${state.q ? 'Try another search term.' : 'Use Upload, New folder, or Text file to add content.'}</p></div>` : `<div class="drive-list-card"><div class="drive-list-head">${renderDriveSortHeader('name', 'Name')}${renderDriveSortHeader('size', 'Size')}${renderDriveSortHeader('type', 'Type')}${renderDriveSortHeader('date', 'Modified')}<span>Actions</span></div><div class="drive-items">${folders.map(renderDriveFolder).join('')}${files.map(renderDriveFile).join('')}</div></div>`}
   </section>`;
+}
+
+function renderDriveSortHeader(field, label) {
+  const [currentField, dir] = String(state.driveSort || 'name_asc').split('_');
+  const active = currentField === field;
+  return `<button class="drive-sort-head ${active ? 'active' : ''}" data-drive-sort="${field}" type="button">${esc(label)}${active ? `<span>${dir === 'desc' ? '↓' : '↑'}</span>` : ''}</button>`;
+}
+
+function sortDriveItems(items, kind) {
+  const [field, dir = 'asc'] = String(state.driveSort || 'name_asc').split('_');
+  const sign = dir === 'desc' ? -1 : 1;
+  return [...items].sort((a, b) => {
+    const left = driveSortValue(a, kind, field);
+    const right = driveSortValue(b, kind, field);
+    if (typeof left === 'number' || typeof right === 'number') return ((Number(left) || 0) - (Number(right) || 0)) * sign;
+    return String(left || '').localeCompare(String(right || ''), undefined, { numeric: true, sensitivity: 'base' }) * sign;
+  });
+}
+
+function driveSortValue(item, kind, field) {
+  if (field === 'size') return kind === 'folder' ? -1 : Number(item.size || item.bytes || 0);
+  if (field === 'type') return kind === 'folder' ? 'folder' : driveFileExtension(item.original_name || item.name || item.filename || '');
+  if (field === 'date') return new Date(normalizeDate(item.updated_at || item.created_at || 0)).getTime() || 0;
+  return kind === 'folder' ? (item.name || item.title || '') : (item.original_name || item.name || item.filename || '');
 }
 
 function renderDriveBreadcrumbs() {
   const crumbs = normalizeDriveBreadcrumbs();
-  if (!crumbs.length) return `<div class="drive-breadcrumbs"><button class="link-button" data-drive-folder="" type="button">Root</button></div>`;
+  if (!crumbs.length) return `<div class="drive-breadcrumbs"><span class="drive-path-label">Path</span><button class="link-button" data-drive-folder="" type="button">Root</button></div>`;
   return `<div class="drive-breadcrumbs"><button class="link-button" data-drive-folder="" type="button">Root</button>${crumbs.map(crumb => `<span>/</span><button class="link-button" data-drive-folder="${esc(crumb.id || '')}" type="button">${esc(crumb.name || 'Folder')}</button>`).join('')}</div>`;
 }
 
@@ -2997,7 +3046,8 @@ function renderDriveFolder(folder) {
   const name = folder.name || folder.title || 'Untitled folder';
   const updated = folder.updated_at || folder.created_at || '';
   const canManage = driveCanManage(folder);
-  return `<article class="drive-item folder-item" data-drive-folder-card="${esc(folder.id)}"><button class="drive-main" data-drive-folder="${esc(folder.id)}" type="button"><span class="drive-icon">${icon('folder')}</span><span><b>${esc(name)}</b><small>${updated ? esc(formatDateTime(updated)) : 'Folder'}</small></span></button><div class="drive-actions"><button class="icon-btn" data-rename-drive-folder="${esc(folder.id)}" data-name="${esc(name)}" type="button">rename</button>${canManage ? `<button class="icon-btn" data-share-drive-folder="${esc(folder.id)}" data-name="${esc(name)}" type="button">share</button>` : ''}<button class="icon-btn" data-delete-drive-folder="${esc(folder.id)}" data-name="${esc(name)}" type="button">delete</button></div></article>`;
+  const actions = `<button class="icon-btn" data-rename-drive-folder="${esc(folder.id)}" data-name="${esc(name)}" type="button">Rename</button>${canManage ? `<button class="icon-btn" data-share-drive-folder="${esc(folder.id)}" data-name="${esc(name)}" type="button">Share</button>` : ''}<button class="icon-btn danger-link" data-delete-drive-folder="${esc(folder.id)}" data-name="${esc(name)}" type="button">Delete</button>`;
+  return `<article class="drive-item folder-item" data-drive-folder-card="${esc(folder.id)}"><button class="drive-main" data-drive-folder="${esc(folder.id)}" type="button"><span class="drive-icon">${icon('folder')}</span><span><b>${esc(name)}</b></span></button><span class="drive-size">-</span><span class="drive-kind">Folder</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
 }
 
 function renderDriveFile(file) {
@@ -3011,7 +3061,13 @@ function renderDriveFile(file) {
   const editable = isDriveEditable(name, mime);
   const thumb = isImage(mime) ? `<img class="drive-thumb" src="${previewUrl}" alt="${esc(name)}">` : `<span class="drive-file-mark">${driveFileExtension(name)}</span>`;
   const canManage = driveCanManage(file);
-  return `<article class="drive-item file-item"><button class="drive-main" ${previewable ? `data-preview-file="${previewUrl}" data-file-name="${esc(name)}" data-file-mime="${esc(mime)}"` : ''} type="button" ${previewable ? '' : 'disabled'}>${thumb}<span><b>${esc(name)}</b><small>${esc(mime || 'file')} ${size ? `· ${esc(size)}` : ''}</small></span></button><div class="drive-actions"><a class="icon-btn" href="${downloadUrl}">download</a>${previewable ? `<button class="icon-btn" data-preview-file="${previewUrl}" data-file-name="${esc(name)}" data-file-mime="${esc(mime)}" type="button">preview</button>` : ''}${editable ? `<button class="icon-btn" data-edit-drive-file="${esc(id)}" data-name="${esc(name)}" type="button">edit</button>` : ''}<button class="icon-btn" data-rename-drive-file="${esc(id)}" data-name="${esc(name)}" type="button">rename</button>${canManage ? `<button class="icon-btn" data-share-drive-file="${esc(id)}" data-name="${esc(name)}" type="button">share</button>` : ''}<button class="icon-btn" data-delete-drive-file="${esc(id)}" data-name="${esc(name)}" type="button">delete</button></div></article>`;
+  const updated = file.updated_at || file.created_at || '';
+  const actions = `<a class="icon-btn" href="${downloadUrl}">Download</a>${previewable ? `<button class="icon-btn" data-preview-file="${previewUrl}" data-file-name="${esc(name)}" data-file-mime="${esc(mime)}" type="button">Preview</button>` : ''}${editable ? `<button class="icon-btn" data-edit-drive-file="${esc(id)}" data-name="${esc(name)}" type="button">Edit</button>` : ''}<button class="icon-btn" data-rename-drive-file="${esc(id)}" data-name="${esc(name)}" type="button">Rename</button>${canManage ? `<button class="icon-btn" data-share-drive-file="${esc(id)}" data-name="${esc(name)}" type="button">Share</button>` : ''}<button class="icon-btn danger-link" data-delete-drive-file="${esc(id)}" data-name="${esc(name)}" type="button">Delete</button>`;
+  return `<article class="drive-item file-item"><button class="drive-main" ${previewable ? `data-preview-file="${previewUrl}" data-file-name="${esc(name)}" data-file-mime="${esc(mime)}"` : ''} type="button" ${previewable ? '' : 'disabled'}>${thumb}<span><b>${esc(name)}</b></span></button><span class="drive-size">${size ? esc(size) : '-'}</span><span class="drive-kind">${esc(driveFileExtension(name))}</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
+}
+
+function renderDriveActionMenu(actions) {
+  return `<div class="drive-actions"><button class="drive-menu-toggle" type="button" aria-label="More actions">...</button><div class="drive-action-menu">${actions}</div></div>`;
 }
 
 function driveCanManage(item) {

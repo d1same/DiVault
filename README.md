@@ -44,6 +44,8 @@ services:
     environment:
       APP_URL: "https://notes.example.com"
       APP_CONFIG_DIR: "/config"
+      DRIVE_FILES_DIR: "/config/drive-files"
+      DRIVE_UPLOAD_MAX_MB: "250"
       TRUST_PROXY: "true"
       SECURE_COOKIES: "true"
       TZ: "America/New_York"
@@ -109,6 +111,7 @@ DiVault stores application data under `/config`:
 ```text
 /config/app.sqlite
 /config/files/
+/config/drive-files/
 /config/backups/
 /config/exports/
 /config/imports/
@@ -142,8 +145,28 @@ Privacy model:
 Backup model:
 
 - Drive metadata is stored in the SQLite database.
-- Drive uploads are stored under `/config/drive-files/`.
-- Full backup ZIPs and encrypted backup ZIPs include Drive data because they include `/config/app.sqlite`, `/config/files/`, `/config/drive-files/`, and `/config/keys/master.key`.
+- Drive uploads are stored under `/config/drive-files/` by default.
+- Full backup ZIPs and encrypted backup ZIPs include Drive data because they include `/config/app.sqlite`, `/config/files/`, the configured Drive files directory, and `/config/keys/master.key`.
+
+Storage and upload limits:
+
+- `DRIVE_FILES_DIR` changes where Drive file contents are stored. Leave it unset for the default `/config/drive-files` path.
+- `DRIVE_UPLOAD_MAX_MB` controls the app-level Drive upload limit. The Docker default is `250` MB.
+- The Docker image PHP upload ceiling is higher (`upload_max_filesize=2G`, `post_max_size=2G`, `max_execution_time=600`, `max_input_time=600`, `memory_limit=512M`) so the app limit can be raised without rebuilding the image.
+
+Example external Drive storage mount:
+
+```yaml
+services:
+  notes:
+    volumes:
+      - /mnt/user/appdata/divault:/config
+      - /mnt/user/divault-drive-files:/drive-files
+    environment:
+      APP_CONFIG_DIR: "/config"
+      DRIVE_FILES_DIR: "/drive-files"
+      DRIVE_UPLOAD_MAX_MB: "1024"
+```
 
 Office-editing roadmap:
 

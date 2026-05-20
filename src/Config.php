@@ -12,6 +12,18 @@ final class Config
         return rtrim(getenv('APP_URL') ?: '', '/');
     }
 
+    public static function driveFilesDir(): string
+    {
+        $dir = rtrim(getenv('DRIVE_FILES_DIR') ?: self::dir() . '/drive-files', '/');
+        return $dir !== '' ? $dir : self::dir() . '/drive-files';
+    }
+
+    public static function driveUploadMaxBytes(): int
+    {
+        $mb = (int)(getenv('DRIVE_UPLOAD_MAX_MB') ?: 250);
+        return max(1, $mb) * 1024 * 1024;
+    }
+
     public static function secureCookies(): bool
     {
         return filter_var(getenv('SECURE_COOKIES') ?: 'true', FILTER_VALIDATE_BOOL);
@@ -39,11 +51,15 @@ final class Config
 
     public static function ensureDirs(): void
     {
-        foreach (['', '/files', '/drive-files', '/backups', '/exports', '/imports', '/keys', '/logs', '/tmp'] as $path) {
+        foreach (['', '/files', '/backups', '/exports', '/imports', '/keys', '/logs', '/tmp'] as $path) {
             $dir = self::dir() . $path;
             if (!is_dir($dir)) {
                 mkdir($dir, 0770, true);
             }
+        }
+        $driveFilesDir = self::driveFilesDir();
+        if (!is_dir($driveFilesDir)) {
+            mkdir($driveFilesDir, 0770, true);
         }
     }
 }

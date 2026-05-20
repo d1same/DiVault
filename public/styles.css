@@ -992,33 +992,61 @@ body.resizing-note-pane { cursor: col-resize; user-select: none; }
 .asset-table th { color: var(--muted); font-size: .74rem; font-weight: 800; background: var(--surface-card); }
 .asset-table tr:hover td { background: var(--surface-soft); }
 .link-button, .icon-btn { border: 0; background: transparent; color: var(--primary-dark); padding: 0; font: inherit; font-weight: 700; }
-.drive-filter { grid-template-columns: minmax(220px, 1fr) auto; }
+.drive-filter { grid-template-columns: minmax(260px, 1fr) auto; padding: 10px 12px; }
+.drive-commandbar { align-items: center; gap: 8px; }
+.drive-filter .search { min-height: 40px; max-width: 420px; }
+.drive-commandbar .btn { min-height: 36px; padding: 7px 11px; }
+.drive-tool-btn { display: inline-grid; place-items: center; min-width: 38px; }
+.drive-tool-btn .tool-icon,
+.drive-tool-btn .tool-icon svg { width: 16px; height: 16px; color: currentColor; stroke: currentColor; }
+.drive-tool-btn .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .drive-upload-label { position: relative; overflow: hidden; cursor: pointer; }
 .drive-upload-label input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-.drive-shell { display: grid; gap: 14px; }
-.drive-header { display: flex; justify-content: space-between; gap: 12px; align-items: start; padding: 16px; }
+.drive-shell { display: grid; gap: 10px; }
+.drive-header { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 9px 14px; box-shadow: none; }
 .drive-header h2 { margin: 0; }
 .drive-stats, .drive-breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
-.drive-breadcrumbs { margin-top: 8px; color: var(--muted); font-size: .84rem; }
-.drive-dropzone { position: relative; display: grid; place-items: center; min-height: 104px; border: 1px dashed color-mix(in srgb, var(--primary) 34%, var(--border)); border-radius: var(--radius-xl); background: color-mix(in srgb, var(--surface-card) 86%, var(--primary)); color: var(--text); text-align: center; }
-.drive-dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-.drive-dropzone.drag-over { border-color: var(--primary); background: color-mix(in srgb, var(--surface-card) 72%, var(--primary)); }
+.drive-path-line { min-width: 0; }
+.drive-breadcrumbs { margin: 0; color: var(--muted); font-size: .84rem; }
+.drive-path-label { color: var(--muted); font-weight: 800; }
+.drive-empty { box-shadow: none; }
 .drive-editor-panel { width: min(980px, calc(100vw - 28px)); }
 .drive-text-editor { min-height: 58vh; font-family: var(--mono); font-size: 13px; line-height: 1.55; resize: vertical; }
+.drive-list-card { overflow: hidden; border: 1px solid var(--border-soft); border-radius: var(--radius-xl); background: var(--surface-card); box-shadow: var(--shadow); }
+.drive-list-head { display: none; grid-template-columns: minmax(320px, 1.5fr) minmax(90px, .45fr) minmax(100px, .5fr) minmax(180px, .75fr) 72px; gap: 18px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border-soft); background: var(--surface-soft); color: var(--muted); font-size: .72rem; font-weight: 900; text-transform: uppercase; letter-spacing: .04em; }
+.drive-sort-head { display: inline-flex; align-items: center; gap: 5px; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; text-transform: inherit; letter-spacing: inherit; cursor: pointer; }
+.drive-sort-head:hover, .drive-sort-head.active { color: var(--primary-dark); }
+.drive-sort-head span { color: var(--primary); font-size: .85rem; }
 .drive-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
-.drive-item { min-width: 0; display: grid; gap: 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-xl); padding: 12px; background: var(--surface-card); box-shadow: var(--shadow); }
+.drive-list-card .drive-items { padding: 12px; }
+.drive-item { min-width: 0; display: grid; gap: 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); padding: 12px; background: var(--surface-card); box-shadow: none; }
+.drive-item:hover { border-color: color-mix(in srgb, var(--primary) 28%, var(--border)); background: color-mix(in srgb, var(--surface-card) 94%, var(--primary)); }
 .drive-main { min-width: 0; display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; align-items: center; border: 0; padding: 0; background: transparent; color: var(--text); text-align: left; }
 .drive-main:disabled { cursor: default; }
 .drive-main b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drive-main small { display: block; margin-top: 3px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drive-icon, .drive-file-mark, .drive-thumb { width: 44px; height: 44px; border-radius: var(--radius-lg); }
-.drive-icon, .drive-file-mark { display: grid; place-items: center; background: var(--surface-soft); color: var(--primary-dark); font-size: .7rem; font-weight: 900; }
+.drive-icon, .drive-file-mark { display: grid; place-items: center; border: 1px solid var(--border-soft); background: var(--surface-soft); color: var(--primary-dark); font-size: .68rem; font-weight: 900; }
+.drive-icon { background: color-mix(in srgb, var(--surface-soft) 70%, var(--primary)); color: #8ee9f0; }
+.drive-file-mark { background: color-mix(in srgb, var(--surface-card) 88%, var(--primary)); color: var(--primary-dark); letter-spacing: .02em; }
 .drive-icon svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .drive-thumb { display: block; object-fit: cover; border: 1px solid var(--border); background: var(--field-bg); }
-.drive-actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; padding-top: 8px; border-top: 1px solid var(--border-soft); }
-.drive-actions .icon-btn { min-height: 30px; margin-left: 0; border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 5px 9px; background: var(--surface); font-size: .76rem; text-decoration: none; }
+.drive-size, .drive-kind, .drive-modified { display: none; min-width: 0; color: var(--muted); font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.drive-kind { font-weight: 900; color: var(--primary-dark); }
+.drive-actions { position: relative; display: flex; justify-content: flex-end; align-items: center; padding-top: 8px; border-top: 1px solid var(--border-soft); }
+.drive-menu-toggle { min-width: 38px; min-height: 34px; border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--surface); color: var(--primary-dark); font-size: 1rem; font-weight: 900; cursor: pointer; }
+.drive-menu-toggle:hover, .drive-menu-toggle:focus-visible { border-color: var(--primary); background: var(--surface-soft); outline: none; }
+.drive-action-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; display: none; min-width: 150px; padding: 6px; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--surface-card); box-shadow: var(--shadow); }
+.drive-actions.open .drive-action-menu, .drive-actions:focus-within .drive-action-menu { display: grid; gap: 4px; }
+.drive-actions .icon-btn { min-height: 34px; margin-left: 0; border: 0; border-radius: var(--radius-md); padding: 7px 9px; background: transparent; color: var(--text); font-size: .78rem; text-align: left; text-decoration: none; }
+.drive-actions .icon-btn:hover, .drive-actions .icon-btn:focus-visible { background: var(--surface-soft); color: var(--primary-dark); outline: none; }
+.danger-link { color: var(--danger) !important; }
 .drive-shell.list-view .drive-items { grid-template-columns: 1fr; }
-.drive-shell.list-view .drive-item { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.drive-shell.list-view .drive-list-card .drive-items { padding: 0; gap: 0; }
+.drive-shell.list-view .drive-list-head { display: grid; }
+.drive-shell.list-view .drive-item { grid-template-columns: minmax(320px, 1.5fr) minmax(90px, .45fr) minmax(100px, .5fr) minmax(180px, .75fr) 72px; gap: 18px; align-items: center; border-width: 0 0 1px; border-radius: 0; padding: 10px 14px; }
+.drive-shell.list-view .drive-item:last-child { border-bottom: 0; }
+.drive-shell.list-view .drive-size, .drive-shell.list-view .drive-kind, .drive-shell.list-view .drive-modified { display: block; }
 .drive-shell.list-view .drive-actions { border-top: 0; padding-top: 0; justify-content: flex-end; }
 .icon-btn { color: var(--muted); font-size: .76rem; margin-left: 8px; }
 .row-actions { text-align: right; }
@@ -1311,6 +1339,15 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .filterbar.notes-filter,
   .filterbar.task-filter { grid-template-columns: 1fr; }
   .filter-actions { justify-content: flex-start; flex-wrap: wrap; }
+  .drive-filter { grid-template-columns: minmax(260px, 1fr) auto; }
+  .drive-filter .drive-commandbar { display: flex; justify-content: flex-end; flex-wrap: nowrap; }
+  .drive-filter .drive-commandbar .drive-tool-btn { min-width: 52px; min-height: 52px; padding: 12px; border-radius: var(--radius-lg); }
+  .drive-filter .drive-commandbar .drive-tool-btn .tool-icon,
+  .drive-filter .drive-commandbar .drive-tool-btn .tool-icon svg { width: 22px; height: 22px; }
+  .drive-filter .drive-layout-toggle .btn { min-height: 52px; }
+  .drive-shell.list-view .drive-list-head { grid-template-columns: minmax(220px, 1.4fr) 70px 82px minmax(132px, .85fr) 56px; gap: 12px; }
+  .drive-shell.list-view .drive-item { grid-template-columns: minmax(220px, 1.4fr) 70px 82px minmax(132px, .85fr) 56px; gap: 12px; }
+  .drive-menu-toggle { min-width: 42px; }
   .home-grid,
   .refined-home,
   .calendar-page-grid,
@@ -1466,8 +1503,13 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .filterbar.notes-filter .search { max-width: none; }
   .filter-actions { gap: 8px; }
   .filter-actions { justify-content: stretch; }
-  .drive-filter .filter-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .drive-filter .filter-actions .btn, .drive-layout-toggle { min-width: 0; }
+  .drive-filter .filter-actions { display: grid; grid-template-columns: repeat(3, 54px) minmax(118px, 1fr); align-items: center; gap: 9px; overflow: visible; padding-bottom: 1px; }
+  .drive-filter .filter-actions .btn, .drive-layout-toggle { flex: 0 0 auto; min-width: 0; }
+  .drive-filter .drive-commandbar .drive-tool-btn { min-width: 54px; min-height: 54px; padding: 12px; border-radius: var(--radius-lg); }
+  .drive-filter .drive-commandbar .drive-tool-btn .tool-icon,
+  .drive-filter .drive-commandbar .drive-tool-btn .tool-icon svg { width: 23px; height: 23px; }
+  .drive-layout-toggle { justify-self: end; gap: 6px; }
+  .drive-layout-toggle .btn { min-width: 52px; min-height: 48px; padding-inline: 12px; }
   .filter-actions-left { display: grid; grid-template-columns: minmax(76px, 1fr) 92px minmax(132px, 1.2fr); justify-content: stretch; align-items: center; }
   .filter-actions .btn,
   .filter-actions .note-layout-toggle,
@@ -1546,10 +1588,16 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .grid { grid-template-columns: minmax(0, 1fr); }
   .drive-header { display: grid; padding: 12px; }
   .drive-stats { justify-content: flex-start; }
-  .drive-dropzone { min-height: 86px; border-radius: var(--radius-lg); }
   .drive-items { grid-template-columns: minmax(0, 1fr); }
-  .drive-shell.list-view .drive-item { grid-template-columns: minmax(0, 1fr); }
-  .drive-shell.list-view .drive-actions { justify-content: flex-start; padding-top: 8px; border-top: 1px solid var(--border-soft); }
+  .drive-list-card .drive-items { padding: 10px; }
+  .drive-shell.list-view .drive-list-head { display: none; }
+  .drive-item,
+  .drive-shell.list-view .drive-item { grid-template-columns: minmax(0, 1fr) 44px; gap: 10px; align-items: center; padding: 10px 12px; }
+  .drive-main { grid-template-columns: 44px minmax(0, 1fr); }
+  .drive-shell.list-view .drive-size, .drive-shell.list-view .drive-kind, .drive-shell.list-view .drive-modified { display: none; }
+  .drive-actions,
+  .drive-shell.list-view .drive-actions { justify-content: flex-end; padding-top: 0; border-top: 0; }
+  .drive-menu-toggle { min-width: 38px; min-height: 36px; }
   .notes-workspace,
   .notes-workspace.editor-open { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 0; }
   .notes-workspace:not(.editor-open) .inline-editor-slot { display: none; }
