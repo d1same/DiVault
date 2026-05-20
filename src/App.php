@@ -450,7 +450,7 @@ final class App
 
         $this->db->beginTransaction();
         try {
-            $current = $id > 0 ? $this->noteOrNull($id) : null;
+            $current = $id > 0 ? $this->noteOrNull($id, $user) : null;
             if ($current && $baseUpdatedAt !== '' && (string)$current['updated_at'] !== $baseUpdatedAt) {
                 $this->db->rollBack();
                 return ['status' => 'conflict', 'entity_type' => 'note', 'entity_id' => $id, 'server' => $current];
@@ -458,15 +458,15 @@ final class App
 
             if ($action === 'delete') {
                 if (!$current) throw new RuntimeException('Note not found');
-                $this->db->prepare('UPDATE notes SET deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$id]);
+                $this->db->prepare('UPDATE notes SET deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')->execute([$id, (int)$user['id']]);
                 $this->audit((int)$user['id'], 'note.deleted', 'note', $id);
             } elseif ($action === 'archive') {
                 if (!$current) throw new RuntimeException('Note not found');
-                $this->db->prepare('UPDATE notes SET archived = 1, deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$id]);
+                $this->db->prepare('UPDATE notes SET archived = 1, deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')->execute([$id, (int)$user['id']]);
                 $this->audit((int)$user['id'], 'note.archived', 'note', $id);
             } elseif ($action === 'restore') {
                 if (!$current) throw new RuntimeException('Note not found');
-                $this->db->prepare('UPDATE notes SET archived = 0, deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$id]);
+                $this->db->prepare('UPDATE notes SET archived = 0, deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')->execute([$id, (int)$user['id']]);
                 $this->audit((int)$user['id'], 'note.restored', 'note', $id);
             } elseif ($action === 'upsert') {
                 $id = $this->upsertNoteFromSync($user, $record, $current);
@@ -474,7 +474,7 @@ final class App
                 throw new RuntimeException('Unsupported note sync action');
             }
 
-            $fresh = $this->noteOrNull($id);
+            $fresh = $this->noteOrNull($id, $user);
             $this->db->commit();
             return ['status' => 'applied', 'entity_type' => 'note', 'entity_id' => $id, 'record' => $fresh];
         } catch (Throwable $e) {
@@ -507,8 +507,8 @@ final class App
         if ($current) {
             $this->db->prepare('INSERT INTO note_versions (note_id, user_id, title, body) VALUES (?, ?, ?, ?)')->execute([$id, (int)$user['id'], $current['title'], $current['body']]);
             $this->pruneNoteVersions($id);
-            $stmt = $this->db->prepare('UPDATE notes SET title=?, body=?, type=?, section=?, category_id=?, category=?, tags=?, client_id=?, pinned=?, archived=?, deleted=?, updated_at=CURRENT_TIMESTAMP WHERE id=?');
-            $stmt->execute([$fields['title'], $fields['body'], $fields['type'], $fields['section'], $fields['category_id'], $fields['category'], $fields['tags'], $fields['client_id'], $fields['pinned'], $fields['archived'], $fields['deleted'], $id]);
+            $stmt = $this->db->prepare('UPDATE notes SET title=?, body=?, type=?, section=?, category_id=?, category=?, tags=?, client_id=?, pinned=?, archived=?, deleted=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?');
+            $stmt->execute([$fields['title'], $fields['body'], $fields['type'], $fields['section'], $fields['category_id'], $fields['category'], $fields['tags'], $fields['client_id'], $fields['pinned'], $fields['archived'], $fields['deleted'], $id, (int)$user['id']]);
             $this->db->prepare('DELETE FROM note_secrets WHERE note_id = ?')->execute([$id]);
             $this->audit((int)$user['id'], 'note.updated', 'note', $id);
         } else {
@@ -592,8 +592,8 @@ final class App
         $q = trim($_GET['q'] ?? '');
         $view = trim($_GET['view'] ?? 'all');
         $categoryId = isset($_GET['category_id']) && $_GET['category_id'] !== '' ? (int)$_GET['category_id'] : null;
-        $where = [];
-        $args = [];
+        $where = ['n.user_id = ?'];
+        $args = [(int)$user['id']];
         if ($view === 'trash') {
             $where[] = 'n.deleted = 1';
         } else {
@@ -611,7 +611,7 @@ final class App
             }
         }
         if ($q !== '') { $where[] = '(n.title LIKE ? OR n.body LIKE ? OR n.tags LIKE ?)'; array_push($args, "%$q%", "%$q%", "%$q%"); }
-        if (!empty($_GET['has_file'])) $where[] = 'EXISTS (SELECT 1 FROM files f WHERE f.note_id = n.id)';
+        if (!empty($_GET['has_file'])) $where[] = 'EXISTS (SELECT 1 FROM files f WHERE f.note_id = n.id AND f.user_id = n.user_id)';
         if (!empty($_GET['has_secret'])) $where[] = 'EXISTS (SELECT 1 FROM note_secrets s WHERE s.note_id = n.id)';
         if (!empty($_GET['has_code'])) $where[] = "n.body LIKE '%```%'";
         $sort = $_GET['sort'] ?? 'updated_desc';
@@ -623,7 +623,7 @@ final class App
             'title_desc' => 'n.pinned DESC, lower(n.title) DESC, n.updated_at DESC',
             default => 'n.pinned DESC, n.updated_at DESC, n.id DESC',
         };
-        $sql = 'SELECT n.*, ac.name AS category_name, ac.slug AS category_slug, c.name AS client_name, (SELECT COUNT(*) FROM files f WHERE f.note_id = n.id) AS file_count, (SELECT COUNT(*) FROM note_secrets s WHERE s.note_id = n.id) AS secret_count FROM notes n LEFT JOIN asset_categories ac ON ac.id = n.category_id LEFT JOIN clients c ON c.id = n.client_id WHERE ' . implode(' AND ', $where) . ' ORDER BY ' . $order . ' LIMIT 200';
+        $sql = 'SELECT n.*, ac.name AS category_name, ac.slug AS category_slug, c.name AS client_name, (SELECT COUNT(*) FROM files f WHERE f.note_id = n.id AND f.user_id = n.user_id) AS file_count, (SELECT COUNT(*) FROM note_secrets s WHERE s.note_id = n.id) AS secret_count FROM notes n LEFT JOIN asset_categories ac ON ac.id = n.category_id LEFT JOIN clients c ON c.id = n.client_id WHERE ' . implode(' AND ', $where) . ' ORDER BY ' . $order . ' LIMIT 200';
         $stmt = $this->db->prepare($sql);
         $stmt->execute($args);
         $this->json(['notes' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
@@ -632,15 +632,25 @@ final class App
     private function assetCounts(array $user): void
     {
         $counts = [];
-        $stmt = $this->db->query('SELECT type, COUNT(*) AS count FROM asset_records WHERE archived = 0 GROUP BY type');
+        $stmt = $this->db->prepare('SELECT type, COUNT(*) AS count FROM asset_records WHERE user_id = ? AND archived = 0 GROUP BY type');
+        $stmt->execute([(int)$user['id']]);
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             $counts[$row['type']] = (int)$row['count'];
         }
-        $counts['notes:all'] = (int)$this->db->query('SELECT COUNT(*) FROM notes WHERE deleted = 0 AND archived = 0')->fetchColumn();
-        $counts['notes:quick'] = (int)$this->db->query('SELECT COUNT(*) FROM notes WHERE deleted = 0 AND archived = 0 AND category_id IS NULL')->fetchColumn();
-        $counts['notes:archive'] = (int)$this->db->query('SELECT COUNT(*) FROM notes WHERE deleted = 0 AND archived = 1')->fetchColumn();
-        $counts['notes:trash'] = (int)$this->db->query('SELECT COUNT(*) FROM notes WHERE deleted = 1')->fetchColumn();
-        $noteCounts = $this->db->query('SELECT category_id, COUNT(*) AS count FROM notes WHERE deleted = 0 AND archived = 0 AND category_id IS NOT NULL GROUP BY category_id')->fetchAll(PDO::FETCH_ASSOC);
+        $countStmt = $this->db->prepare('SELECT COUNT(*) FROM notes WHERE user_id = ? AND deleted = ? AND archived = ?');
+        $countStmt->execute([(int)$user['id'], 0, 0]);
+        $counts['notes:all'] = (int)$countStmt->fetchColumn();
+        $quickStmt = $this->db->prepare('SELECT COUNT(*) FROM notes WHERE user_id = ? AND deleted = 0 AND archived = 0 AND category_id IS NULL');
+        $quickStmt->execute([(int)$user['id']]);
+        $counts['notes:quick'] = (int)$quickStmt->fetchColumn();
+        $countStmt->execute([(int)$user['id'], 0, 1]);
+        $counts['notes:archive'] = (int)$countStmt->fetchColumn();
+        $trashStmt = $this->db->prepare('SELECT COUNT(*) FROM notes WHERE user_id = ? AND deleted = 1');
+        $trashStmt->execute([(int)$user['id']]);
+        $counts['notes:trash'] = (int)$trashStmt->fetchColumn();
+        $noteCountsStmt = $this->db->prepare('SELECT category_id, COUNT(*) AS count FROM notes WHERE user_id = ? AND deleted = 0 AND archived = 0 AND category_id IS NOT NULL GROUP BY category_id');
+        $noteCountsStmt->execute([(int)$user['id']]);
+        $noteCounts = $noteCountsStmt->fetchAll(PDO::FETCH_ASSOC);
         foreach ($noteCounts as $row) {
             $counts['notes:cat:' . $row['category_id']] = (int)$row['count'];
         }
@@ -688,8 +698,8 @@ final class App
         $this->requireEditor($user);
         $category = $this->category($id);
         $slug = $category['slug'];
-        $this->db->prepare('UPDATE asset_records SET archived = 1 WHERE type = ?')->execute([$slug]);
-        $this->db->prepare('UPDATE notes SET category_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE category_id = ?')->execute([$id]);
+        $this->db->prepare('UPDATE asset_records SET archived = 1 WHERE type = ? AND user_id = ?')->execute([$slug, (int)$user['id']]);
+        $this->db->prepare('UPDATE notes SET category_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE category_id = ? AND user_id = ?')->execute([$id, (int)$user['id']]);
         $this->db->prepare('UPDATE asset_categories SET parent_id = NULL WHERE parent_id = ?')->execute([$id]);
         $this->db->prepare('DELETE FROM asset_categories WHERE id = ?')->execute([$id]);
         $this->audit((int)$user['id'], 'category.deleted', 'category', $id);
@@ -702,8 +712,8 @@ final class App
         $q = trim($_GET['q'] ?? '');
         $clientId = isset($_GET['client_id']) && $_GET['client_id'] !== '' ? (int)$_GET['client_id'] : null;
         $includeArchive = !empty($_GET['include_archive']);
-        $where = ['a.type = ?'];
-        $args = [$type];
+        $where = ['a.user_id = ?', 'a.type = ?'];
+        $args = [(int)$user['id'], $type];
         if ($clientId) {
             $where[] = 'a.client_id = ?';
             $args[] = $clientId;
@@ -721,8 +731,8 @@ final class App
 
     private function getAsset(array $user, int $id): void
     {
-        $stmt = $this->db->prepare('SELECT a.id, a.client_id, c.name AS client_name, a.type, a.name, a.status, a.asset_type, a.os, a.primary_ip, a.serial_number, a.expires_at, a.location, a.contact, a.username, a.notes, a.data_json, a.archived, a.created_at, a.updated_at, CASE WHEN a.secret_ciphertext IS NULL THEN 0 ELSE 1 END AS has_secret FROM asset_records a LEFT JOIN clients c ON c.id = a.client_id WHERE a.id = ?');
-        $stmt->execute([$id]);
+        $stmt = $this->db->prepare('SELECT a.id, a.client_id, c.name AS client_name, a.type, a.name, a.status, a.asset_type, a.os, a.primary_ip, a.serial_number, a.expires_at, a.location, a.contact, a.username, a.notes, a.data_json, a.archived, a.created_at, a.updated_at, CASE WHEN a.secret_ciphertext IS NULL THEN 0 ELSE 1 END AS has_secret FROM asset_records a LEFT JOIN clients c ON c.id = a.client_id WHERE a.id = ? AND a.user_id = ?');
+        $stmt->execute([$id, (int)$user['id']]);
         $asset = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$asset) throw new RuntimeException('Asset not found');
         $asset['data'] = $asset['data_json'] ? json_decode($asset['data_json'], true) : [];
@@ -740,8 +750,8 @@ final class App
         if (!empty($data['password'])) {
             $secretCipher = $this->crypto->encrypt((string)$data['password']);
         } elseif ($id > 0 && empty($data['clear_password'])) {
-            $stmt = $this->db->prepare('SELECT secret_ciphertext FROM asset_records WHERE id = ?');
-            $stmt->execute([$id]);
+            $stmt = $this->db->prepare('SELECT secret_ciphertext FROM asset_records WHERE id = ? AND user_id = ?');
+            $stmt->execute([$id, (int)$user['id']]);
             $secretCipher = $stmt->fetchColumn() ?: null;
         }
         $fields = [
@@ -761,8 +771,9 @@ final class App
             'archived' => !empty($data['archived']) ? 1 : 0,
         ];
         if ($id > 0) {
-            $stmt = $this->db->prepare('UPDATE asset_records SET client_id=?, type=?, name=?, status=?, asset_type=?, os=?, primary_ip=?, serial_number=?, expires_at=?, location=?, contact=?, username=?, secret_ciphertext=?, notes=?, data_json=?, archived=?, updated_at=CURRENT_TIMESTAMP WHERE id=?');
-            $stmt->execute([$fields['client_id'], $type, $fields['name'], $fields['status'], $fields['asset_type'], $fields['os'], $fields['primary_ip'], $fields['serial_number'], $fields['expires_at'], $fields['location'], $fields['contact'], $fields['username'], $secretCipher, $fields['notes'], $fields['data_json'], $fields['archived'], $id]);
+            $stmt = $this->db->prepare('UPDATE asset_records SET client_id=?, type=?, name=?, status=?, asset_type=?, os=?, primary_ip=?, serial_number=?, expires_at=?, location=?, contact=?, username=?, secret_ciphertext=?, notes=?, data_json=?, archived=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?');
+            $stmt->execute([$fields['client_id'], $type, $fields['name'], $fields['status'], $fields['asset_type'], $fields['os'], $fields['primary_ip'], $fields['serial_number'], $fields['expires_at'], $fields['location'], $fields['contact'], $fields['username'], $secretCipher, $fields['notes'], $fields['data_json'], $fields['archived'], $id, (int)$user['id']]);
+            if ($stmt->rowCount() === 0) throw new RuntimeException('Asset not found');
             $this->audit((int)$user['id'], 'asset.updated', 'asset', $id);
         } else {
             $stmt = $this->db->prepare('INSERT INTO asset_records (user_id, client_id, type, name, status, asset_type, os, primary_ip, serial_number, expires_at, location, contact, username, secret_ciphertext, notes, data_json, archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
@@ -776,7 +787,9 @@ final class App
     private function deleteAsset(array $user, int $id): void
     {
         $this->requireEditor($user);
-        $this->db->prepare('UPDATE asset_records SET archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$id]);
+        $stmt = $this->db->prepare('UPDATE asset_records SET archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?');
+        $stmt->execute([$id, (int)$user['id']]);
+        if ($stmt->rowCount() === 0) throw new RuntimeException('Asset not found');
         $this->audit((int)$user['id'], 'asset.archived', 'asset', $id);
         $this->json(['ok' => true]);
     }
@@ -784,8 +797,8 @@ final class App
     private function revealAssetSecret(array $user, int $id): void
     {
         $this->requireEditor($user);
-        $stmt = $this->db->prepare('SELECT secret_ciphertext FROM asset_records WHERE id = ?');
-        $stmt->execute([$id]);
+        $stmt = $this->db->prepare('SELECT secret_ciphertext FROM asset_records WHERE id = ? AND user_id = ?');
+        $stmt->execute([$id, (int)$user['id']]);
         $cipher = $stmt->fetchColumn();
         if (!$cipher) throw new RuntimeException('No secret stored');
         $this->audit((int)$user['id'], 'asset.secret_revealed', 'asset', $id);
@@ -794,9 +807,9 @@ final class App
 
     private function getNote(array $user, int $id): void
     {
-        $note = $this->note($id);
-        $files = $this->db->prepare('SELECT id, original_name, mime, size, created_at FROM files WHERE note_id = ? ORDER BY id DESC');
-        $files->execute([$id]);
+        $note = $this->note($id, $user);
+        $files = $this->db->prepare('SELECT id, original_name, mime, size, created_at FROM files WHERE note_id = ? AND user_id = ? ORDER BY id DESC');
+        $files->execute([$id, (int)$user['id']]);
         $secrets = $this->db->prepare('SELECT id, label, created_at FROM note_secrets WHERE note_id = ? ORDER BY id');
         $secrets->execute([$id]);
         $versions = $this->db->prepare('SELECT id, title, created_at FROM note_versions WHERE note_id = ? ORDER BY id DESC LIMIT 20');
@@ -823,11 +836,11 @@ final class App
         $this->db->beginTransaction();
         try {
             if ($id > 0) {
-                $old = $this->note($id);
+                $old = $this->note($id, $user);
                 $this->db->prepare('INSERT INTO note_versions (note_id, user_id, title, body) VALUES (?, ?, ?, ?)')->execute([$id, (int)$user['id'], $old['title'], $old['body']]);
                 $this->pruneNoteVersions($id);
-                $stmt = $this->db->prepare('UPDATE notes SET title=?, body=?, type=?, section=?, category_id=?, category=?, tags=?, client_id=?, pinned=?, archived=?, deleted=0, updated_at=CURRENT_TIMESTAMP WHERE id=?');
-                $stmt->execute([$title, $parsed['body'], $type, $section, $categoryId, $category, $tags, $clientId, $pinned, $archived, $id]);
+                $stmt = $this->db->prepare('UPDATE notes SET title=?, body=?, type=?, section=?, category_id=?, category=?, tags=?, client_id=?, pinned=?, archived=?, deleted=0, updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?');
+                $stmt->execute([$title, $parsed['body'], $type, $section, $categoryId, $category, $tags, $clientId, $pinned, $archived, $id, (int)$user['id']]);
                 $this->db->prepare('DELETE FROM note_secrets WHERE note_id = ?')->execute([$id]);
                 $this->audit((int)$user['id'], 'note.updated', 'note', $id);
             } else {
@@ -899,7 +912,7 @@ final class App
         $stmt->execute([(int)$user['id'], $clientId, $title, trim(implode("\n", $lines)), 'review', 'All', implode(', ', $tagParts)]);
         $id = (int)$this->db->lastInsertId();
         $this->audit((int)$user['id'], 'integration.ai_review_note_created', 'note', $id);
-        $this->json(['ok' => true, 'id' => $id, 'note' => $this->note($id)]);
+        $this->json(['ok' => true, 'id' => $id, 'note' => $this->note($id, $user)]);
     }
 
     private function aiReviewStatus(array $user): void
@@ -1458,7 +1471,8 @@ final class App
     private function deleteNote(array $user, int $id): void
     {
         $this->requireEditor($user);
-        $this->db->prepare('UPDATE notes SET deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$id]);
+        $this->note($id, $user);
+        $this->db->prepare('UPDATE notes SET deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')->execute([$id, (int)$user['id']]);
         $this->audit((int)$user['id'], 'note.deleted', 'note', $id);
         $this->json(['ok' => true]);
     }
@@ -1466,7 +1480,7 @@ final class App
     private function restoreNoteVersion(array $user, int $noteId, int $versionId): void
     {
         $this->requireEditor($user);
-        $note = $this->note($noteId);
+        $note = $this->note($noteId, $user);
         $stmt = $this->db->prepare('SELECT * FROM note_versions WHERE id = ? AND note_id = ?');
         $stmt->execute([$versionId, $noteId]);
         $version = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -1475,7 +1489,7 @@ final class App
         try {
             $this->db->prepare('INSERT INTO note_versions (note_id, user_id, title, body) VALUES (?, ?, ?, ?)')->execute([$noteId, (int)$user['id'], $note['title'], $note['body']]);
             $this->pruneNoteVersions($noteId);
-            $this->db->prepare('UPDATE notes SET title = ?, body = ?, deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$version['title'], $version['body'], $noteId]);
+            $this->db->prepare('UPDATE notes SET title = ?, body = ?, deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')->execute([$version['title'], $version['body'], $noteId, (int)$user['id']]);
             $this->audit((int)$user['id'], 'note.version_restored', 'note', $noteId);
             $this->db->commit();
         } catch (Throwable $e) {
@@ -1487,7 +1501,7 @@ final class App
 
     private function getNoteVersion(array $user, int $noteId, int $versionId): void
     {
-        $this->note($noteId);
+        $this->note($noteId, $user);
         $stmt = $this->db->prepare('SELECT id, note_id, title, body, created_at FROM note_versions WHERE id = ? AND note_id = ?');
         $stmt->execute([$versionId, $noteId]);
         $version = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -1498,8 +1512,8 @@ final class App
     private function archiveNote(array $user, int $id): void
     {
         $this->requireEditor($user);
-        $this->note($id);
-        $this->db->prepare('UPDATE notes SET archived = 1, deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$id]);
+        $this->note($id, $user);
+        $this->db->prepare('UPDATE notes SET archived = 1, deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')->execute([$id, (int)$user['id']]);
         $this->audit((int)$user['id'], 'note.archived', 'note', $id);
         $this->json(['ok' => true]);
     }
@@ -1507,8 +1521,8 @@ final class App
     private function restoreNote(array $user, int $id): void
     {
         $this->requireEditor($user);
-        $this->note($id);
-        $this->db->prepare('UPDATE notes SET archived = 0, deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$id]);
+        $this->note($id, $user);
+        $this->db->prepare('UPDATE notes SET archived = 0, deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')->execute([$id, (int)$user['id']]);
         $this->audit((int)$user['id'], 'note.restored', 'note', $id);
         $this->json(['ok' => true]);
     }
@@ -1516,8 +1530,8 @@ final class App
     private function permanentlyDeleteNote(array $user, int $id): void
     {
         $this->requireEditor($user);
-        $this->note($id);
-        $this->db->prepare('DELETE FROM notes WHERE id = ?')->execute([$id]);
+        $this->note($id, $user);
+        $this->db->prepare('DELETE FROM notes WHERE id = ? AND user_id = ?')->execute([$id, (int)$user['id']]);
         $this->audit((int)$user['id'], 'note.permanently_deleted', 'note', $id);
         $this->json(['ok' => true]);
     }
@@ -1525,7 +1539,8 @@ final class App
     private function emptyTrash(array $user): void
     {
         $this->requireEditor($user);
-        $this->db->exec('DELETE FROM notes WHERE deleted = 1');
+        $stmt = $this->db->prepare('DELETE FROM notes WHERE deleted = 1 AND user_id = ?');
+        $stmt->execute([(int)$user['id']]);
         $this->audit((int)$user['id'], 'note.trash_emptied', 'note', null);
         $this->json(['ok' => true]);
     }
@@ -1569,8 +1584,8 @@ final class App
     private function userFeatures(int $userId): array
     {
         $features = [
-            'calendar' => ['enabled' => false, 'settings' => ['home_enabled' => true, 'reminders_enabled' => true, 'default_reminder_minutes' => 10, 'default_calendar_id' => null]],
-            'tasks' => ['enabled' => false, 'settings' => ['home_enabled' => true, 'reminders_enabled' => true, 'default_reminder_minutes' => 10, 'shared_calendar_tasks' => true]],
+            'calendar' => ['enabled' => true, 'settings' => ['home_enabled' => true, 'reminders_enabled' => true, 'default_reminder_minutes' => 10, 'default_calendar_id' => null]],
+            'tasks' => ['enabled' => true, 'settings' => ['home_enabled' => true, 'reminders_enabled' => true, 'default_reminder_minutes' => 10, 'shared_calendar_tasks' => false]],
             'home' => ['enabled' => true, 'settings' => ['notes_enabled' => true]],
         ];
         $stmt = $this->db->prepare('SELECT feature, enabled, settings_json FROM user_feature_settings WHERE user_id = ?');
@@ -1703,8 +1718,7 @@ final class App
         $validNoteIds = [];
         foreach (array_unique(array_map('intval', $noteIds)) as $noteId) {
             if ($noteId <= 0) continue;
-            $note = $this->note($noteId);
-            if ((int)$note['user_id'] !== (int)$user['id']) throw new RuntimeException('Note not found');
+            $this->note($noteId, $user);
             $validNoteIds[] = $noteId;
         }
         $this->db->prepare("DELETE FROM $table WHERE $idColumn = ? AND (user_id = ? OR user_id IS NULL)")->execute([$id, (int)$user['id']]);
@@ -1878,7 +1892,7 @@ final class App
     private function uploadFile(array $user, int $noteId): void
     {
         $this->requireEditor($user);
-        $this->note($noteId);
+        $this->note($noteId, $user);
         if (empty($_FILES['file'])) throw new RuntimeException('No file uploaded');
         $file = $_FILES['file'];
         if (($file['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) throw new RuntimeException('Upload failed');
@@ -1897,8 +1911,8 @@ final class App
 
     private function downloadFile(array $user, int $id, bool $inline = false): void
     {
-        $stmt = $this->db->prepare('SELECT * FROM files WHERE id = ?');
-        $stmt->execute([$id]);
+        $stmt = $this->db->prepare('SELECT * FROM files WHERE id = ? AND user_id = ?');
+        $stmt->execute([$id, (int)$user['id']]);
         $file = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$file) throw new RuntimeException('File not found');
         $path = Config::dir() . '/files/' . basename((string)$file['stored_name']);
@@ -1916,8 +1930,8 @@ final class App
     private function revealSecret(array $user, int $id): void
     {
         $this->requireEditor($user);
-        $stmt = $this->db->prepare('SELECT * FROM note_secrets WHERE id = ?');
-        $stmt->execute([$id]);
+        $stmt = $this->db->prepare('SELECT s.* FROM note_secrets s JOIN notes n ON n.id = s.note_id WHERE s.id = ? AND n.user_id = ?');
+        $stmt->execute([$id, (int)$user['id']]);
         $secret = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$secret) throw new RuntimeException('Secret not found');
         $this->audit((int)$user['id'], 'secret.revealed', 'secret', $id);
@@ -2429,19 +2443,31 @@ final class App
         return ['body' => implode("\n", $lines), 'secrets' => $secrets];
     }
 
-    private function note(int $id): array
+    private function note(int $id, ?array $user = null): array
     {
-        $stmt = $this->db->prepare('SELECT * FROM notes WHERE id = ?');
-        $stmt->execute([$id]);
+        $sql = 'SELECT * FROM notes WHERE id = ?';
+        $args = [$id];
+        if ($user !== null) {
+            $sql .= ' AND user_id = ?';
+            $args[] = (int)$user['id'];
+        }
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($args);
         $note = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$note) throw new RuntimeException('Note not found');
         return $note;
     }
 
-    private function noteOrNull(int $id): ?array
+    private function noteOrNull(int $id, ?array $user = null): ?array
     {
-        $stmt = $this->db->prepare('SELECT * FROM notes WHERE id = ?');
-        $stmt->execute([$id]);
+        $sql = 'SELECT * FROM notes WHERE id = ?';
+        $args = [$id];
+        if ($user !== null) {
+            $sql .= ' AND user_id = ?';
+            $args[] = (int)$user['id'];
+        }
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($args);
         $note = $stmt->fetch(PDO::FETCH_ASSOC);
         return $note ?: null;
     }

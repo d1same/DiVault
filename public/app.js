@@ -4,8 +4,8 @@ if (state.calendarView === 'agenda') state.calendarView = 'schedule';
 const app = document.querySelector('#app');
 
 const defaultFeatures = () => ({
-  calendar: { enabled: false, settings: { home_enabled: true, reminders_enabled: true, default_reminder_minutes: 10, default_calendar_id: null } },
-  tasks: { enabled: false, settings: { home_enabled: true, reminders_enabled: true, default_reminder_minutes: 10, shared_calendar_tasks: true } },
+  calendar: { enabled: true, settings: { home_enabled: true, reminders_enabled: true, default_reminder_minutes: 10, default_calendar_id: null } },
+  tasks: { enabled: true, settings: { home_enabled: true, reminders_enabled: true, default_reminder_minutes: 10, shared_calendar_tasks: false } },
   home: { enabled: true, settings: { notes_enabled: true } }
 });
 const feature = key => state.features?.[key] || defaultFeatures()[key];
