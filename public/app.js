@@ -1405,7 +1405,7 @@ function agendaItemsForRange(start, end) {
 }
 
 function renderEventChip(event) {
-  return `<button class="calendar-event-chip" style="--event-color:${esc(event.calendar_color || '#2563eb')}" data-open-event="${event.series_id || event.id}" title="${esc(event.title)}">${esc(event.title)}${event.recurrence_rule ? ' (recurs)' : ''}</button>`;
+  return `<button class="calendar-event-chip" style="--event-color:${esc(event.calendar_color || '#2563eb')}" data-open-event="${event.series_id || event.id}" title="${esc(event.title)}">${esc(event.title)}</button>`;
 }
 
 function renderTaskChip(task) {
@@ -1421,7 +1421,7 @@ function renderAgendaItems(items, spacious = false, options = {}) {
       return `<button class="agenda-item agenda-link ${spacious ? 'large' : ''} ${task.status === 'done' ? 'done' : ''}" data-open-task="${task.id}" type="button"><span class="agenda-kind task-kind">Task</span><span><b>${esc(task.title)}</b><br><span class="small muted">Due ${formatScheduleDateTime(task.due_at)}${task.calendar_name ? ` · ${esc(task.calendar_name)}` : ''}</span></span></button>`;
     }
     const event = entry.item;
-    return `<button class="agenda-item agenda-link ${spacious ? 'large' : ''}" data-open-event="${event.series_id || event.id}" type="button"><span class="agenda-kind event-kind">Event</span><span><b>${esc(event.title)}${event.recurrence_rule ? ' (recurs)' : ''}</b><br><span class="small muted">${formatScheduleDateTime(event.starts_at)}${event.calendar_name ? ` · ${esc(event.calendar_name)}` : ''}</span></span></button>`;
+    return `<button class="agenda-item agenda-link ${spacious ? 'large' : ''}" data-open-event="${event.series_id || event.id}" type="button"><span class="agenda-kind event-kind">Event</span><span><b>${esc(event.title)}</b><br><span class="small muted">${formatScheduleDateTime(event.starts_at)}${event.calendar_name ? ` · ${esc(event.calendar_name)}` : ''}</span></span></button>`;
   }).join('');
 }
 
@@ -2216,7 +2216,9 @@ function noteLinkOptions(selected = []) {
 function recurrenceLabel(rule = '') {
   if (!rule) return 'Does not repeat';
   const match = String(rule).match(/FREQ=([^;]+)/i);
-  return match ? `${match[1].charAt(0).toUpperCase()}${match[1].slice(1).toLowerCase()}` : rule;
+  if (!match) return rule;
+  const frequency = match[1].toLowerCase();
+  return `Repeats ${frequency}`;
 }
 
 function reminderLabel(minutes) {
@@ -2279,7 +2281,7 @@ function openEventDetailDialog(event = {}) {
     detailRow('Starts', formatScheduleDateTime(event.starts_at)),
     detailRow('Ends', event.ends_at ? formatScheduleDateTime(event.ends_at) : ''),
     detailRow('All day', Number(event.all_day) ? 'Yes' : ''),
-    detailRow('Repeats', recurrenceLabel(event.recurrence_rule)),
+    detailRow('Repeat', recurrenceLabel(event.recurrence_rule)),
     detailRow('Reminder', reminderLabel(event.reminder_minutes)),
     locationDetailRow(event.location)
   ].join('');

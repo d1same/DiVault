@@ -2,6 +2,10 @@
 
 final class App
 {
+    private const ICS_IMPORT_MAX_BYTES = 5242880;
+    private const ICS_IMPORT_MAX_EVENTS = 10000;
+    private const ICS_FEED_MAX_EVENTS = 5000;
+
     private PDO $db;
     private Crypto $crypto;
 
@@ -1271,13 +1275,13 @@ final class App
         try {
             $ics = $this->fetchCalendarFeed((string)$feed['url']);
             $events = $this->parseIcsEvents($ics);
+            if (count($events) > self::ICS_FEED_MAX_EVENTS) throw new RuntimeException('ICS feed is limited to ' . self::ICS_FEED_MAX_EVENTS . ' events');
             $seen = [];
             $imported = 0;
             $updated = 0;
             $total = 0;
             foreach ($events as $event) {
                 $total++;
-                if ($total > 1000) throw new RuntimeException('ICS feed is limited to 1000 events');
                 $uid = $event['uid'] ?: hash('sha256', json_encode($event));
                 $seen[] = $uid;
                 $existing = $this->db->prepare('SELECT id FROM calendar_events WHERE calendar_id = ? AND import_source = ? AND import_uid = ?');
@@ -1352,7 +1356,7 @@ final class App
         $this->requireEditor($user);
         $calendarId = (int)($_POST['calendar_id'] ?? 0);
         $ics = '';
-        $maxBytes = 1024 * 1024;
+        $maxBytes = self::ICS_IMPORT_MAX_BYTES;
         if (!empty($_FILES['ics']['tmp_name'])) {
             if ((int)($_FILES['ics']['size'] ?? 0) > $maxBytes) throw new RuntimeException('ICS file is too large');
             $ics = (string)file_get_contents($_FILES['ics']['tmp_name'], false, null, 0, $maxBytes + 1);
@@ -1367,27 +1371,35 @@ final class App
         $skipped = 0;
         $total = 0;
         $mode = ($_POST['mode'] ?? ($this->input()['mode'] ?? 'skip')) === 'update' ? 'update' : 'skip';
-        foreach ($this->parseIcsEvents($ics) as $event) {
-            $total++;
-            if ($total > 1000) throw new RuntimeException('ICS import is limited to 1000 events');
-            $uid = $event['uid'] ?: hash('sha256', json_encode($event));
-            if ($mode === 'update') {
-                $existing = $this->db->prepare('SELECT id FROM calendar_events WHERE calendar_id = ? AND import_source = ? AND import_uid = ?');
-                $existing->execute([$calendarId, 'ics', $uid]);
-                $existingId = (int)$existing->fetchColumn();
-                if ($existingId) {
-                    $stmt = $this->db->prepare('UPDATE calendar_events SET title=?, description=?, location=?, starts_at=?, ends_at=?, all_day=?, recurrence_rule=?, import_updated_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?');
-                    $stmt->execute([$event['title'], $event['description'], $event['location'], $event['starts_at'], $event['ends_at'], $event['all_day'], $event['recurrence_rule'], $existingId]);
-                    $updated++;
-                    continue;
+        $events = $this->parseIcsEvents($ics);
+        if (count($events) > self::ICS_IMPORT_MAX_EVENTS) throw new RuntimeException('ICS import is limited to ' . self::ICS_IMPORT_MAX_EVENTS . ' events per file');
+        $this->db->beginTransaction();
+        try {
+            foreach ($events as $event) {
+                $total++;
+                $uid = $event['uid'] ?: hash('sha256', json_encode($event));
+                if ($mode === 'update') {
+                    $existing = $this->db->prepare('SELECT id FROM calendar_events WHERE calendar_id = ? AND import_source = ? AND import_uid = ?');
+                    $existing->execute([$calendarId, 'ics', $uid]);
+                    $existingId = (int)$existing->fetchColumn();
+                    if ($existingId) {
+                        $stmt = $this->db->prepare('UPDATE calendar_events SET title=?, description=?, location=?, starts_at=?, ends_at=?, all_day=?, recurrence_rule=?, import_updated_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?');
+                        $stmt->execute([$event['title'], $event['description'], $event['location'], $event['starts_at'], $event['ends_at'], $event['all_day'], $event['recurrence_rule'], $existingId]);
+                        $updated++;
+                        continue;
+                    }
                 }
+                $stmt = $this->db->prepare('INSERT OR IGNORE INTO calendar_events (calendar_id, created_by_user_id, title, description, location, starts_at, ends_at, all_day, recurrence_rule, source, import_source, import_uid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+                $stmt->execute([$calendarId, (int)$user['id'], $event['title'], $event['description'], $event['location'], $event['starts_at'], $event['ends_at'], $event['all_day'], $event['recurrence_rule'], 'ics', 'ics', $uid]);
+                if ($stmt->rowCount() > 0) $imported++;
+                else $skipped++;
             }
-            $stmt = $this->db->prepare('INSERT OR IGNORE INTO calendar_events (calendar_id, created_by_user_id, title, description, location, starts_at, ends_at, all_day, recurrence_rule, source, import_source, import_uid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-            $stmt->execute([$calendarId, (int)$user['id'], $event['title'], $event['description'], $event['location'], $event['starts_at'], $event['ends_at'], $event['all_day'], $event['recurrence_rule'], 'ics', 'ics', $uid]);
-            if ($stmt->rowCount() > 0) $imported++;
-            else $skipped++;
+            $this->audit((int)$user['id'], 'calendar.imported', 'calendar', $calendarId);
+            $this->db->commit();
+        } catch (Throwable $e) {
+            $this->db->rollBack();
+            throw $e;
         }
-        $this->audit((int)$user['id'], 'calendar.imported', 'calendar', $calendarId);
         $this->json(['total' => $total, 'imported' => $imported, 'updated' => $updated, 'skipped' => $skipped]);
     }
 
