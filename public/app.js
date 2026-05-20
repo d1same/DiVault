@@ -96,7 +96,7 @@ function markdownFileTitle(fileName) {
 
 function formatDateTime(value) {
   if (!value) return 'unknown time';
-  const normalized = String(value).includes('T') ? String(value) : String(value).replace(' ', 'T') + 'Z';
+  const normalized = normalizeDate(value);
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
@@ -104,14 +104,16 @@ function formatDateTime(value) {
 
 function formatScheduleDateTime(value) {
   if (!value) return 'unknown time';
-  const normalized = String(value).includes('T') ? String(value) : String(value).replace(' ', 'T') + 'Z';
+  const normalized = normalizeDate(value);
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString([], { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
 function normalizeDate(value) {
-  return String(value || '').includes('T') ? String(value) : String(value || '').replace(' ', 'T') + 'Z';
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw.includes('T') ? raw : raw.replace(' ', 'T');
 }
 
 function dateInputValue(value) {
@@ -1151,6 +1153,7 @@ async function toggleTaskStatus(task, after = async () => {}) {
 
 function renderTopbar(panelOpen) {
   if (!panelOpen && isNoteSection(state.section)) return '';
+  if (!panelOpen && isUtilitySection(state.section)) return '';
   const actions = isUtilitySection(state.section) && !panelOpen ? '' : `<div class="topbar-actions"><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick notes" title="Quick notes (K)">${toolIcon('quick', 'Quick notes')}</button><button class="btn primary icon-only-btn action-fab" id="newBtn" aria-label="New note" title="New full note (N or +)">+</button></div>`;
   return `<div class="topbar"><div>${topbarKicker()}<h1>${esc(panelTitle())}</h1>${topbarSubtitle()}</div>${actions}</div>`;
 }
@@ -1257,7 +1260,7 @@ function renderHome() {
   return `<div class="home-grid refined-home">
     <section class="home-main stack">
       <div class="home-hero card"><div><p class="breadcrumb">Today in DiVault</p><h2>${new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</h2></div><div class="home-stat-row"><span class="pill">${state.notes.length} notes</span><span class="pill">${todaysEvents.length} events today</span><span class="pill">${dueToday.length} tasks due</span></div><div class="home-action-row"><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick note" title="Quick note">${toolIcon('quick', 'Quick note')}</button><button class="btn icon-only-btn action-fab" id="newBtn" type="button" aria-label="Add note" title="Add note">+</button>${featureOn('calendar') ? `<button class="btn icon-only-btn action-fab" id="newEventBtn" type="button" aria-label="New event" title="New event">${toolIcon('calendar', 'New event')}</button>` : ''}${featureOn('tasks') ? `<button class="btn icon-only-btn action-fab" id="newCalendarTaskBtn" type="button" aria-label="New task" title="New task">${toolIcon('check', 'New task')}</button>` : ''}</div></div>
-      <section class="card home-widget stack"><div class="section-title-row"><h3>Recent notes</h3><button class="btn ghost" data-section="notes:all" type="button">View all</button></div>${recentNotes.length ? `<div class="home-note-grid">${recentNotes.map(note => `<button class="home-note-card" data-open="${note.id}"><b>${esc(note.title)}</b><span>${esc(note.updated_at || '')}</span></button>`).join('')}</div>` : '<p class="muted small">No recent notes.</p>'}</section>
+      <section class="card home-widget home-notes-widget stack"><div class="section-title-row"><h3>Recent notes</h3><button class="btn ghost" data-section="notes:all" type="button">View all</button></div>${recentNotes.length ? `<div class="home-note-grid">${recentNotes.map(note => `<button class="home-note-card" data-open="${note.id}"><b>${esc(note.title)}</b><span>${esc(note.updated_at || '')}</span></button>`).join('')}</div>` : '<p class="muted small">No recent notes.</p>'}</section>
     </section>
     <aside class="home-side stack">
       ${featureOn('calendar') && feature('calendar').settings.home_enabled ? renderMiniMonthPicker() : ''}
@@ -1356,7 +1359,7 @@ function renderYearMonth(year, monthIndex) {
 
 function renderCalendarScheduleView() {
   const [start, end] = calendarVisibleRange();
-  const rangeStart = start < new Date() ? new Date() : start;
+  const rangeStart = start < startOfToday() ? startOfToday() : start;
   const grouped = new Map();
   agendaItemsForRange(rangeStart, end).forEach(item => {
     const when = new Date(normalizeDate(item.when));
@@ -1419,7 +1422,7 @@ function agendaItemsForRange(start, end) {
   const endTs = end.getTime();
   return [
     ...state.events.filter(event => calendarVisible(event.calendar_id) && (() => { const time = new Date(normalizeDate(event.starts_at)).getTime(); return time >= startTs && time <= endTs; })()).map(event => ({ kind: 'event', when: event.starts_at, item: event })),
-    ...state.tasks.filter(task => (!task.calendar_id || calendarVisible(task.calendar_id)) && task.due_at && (() => { const time = new Date(normalizeDate(task.due_at)).getTime(); return time >= startTs && time <= endTs; })()).map(task => ({ kind: 'task', when: task.due_at, item: task })),
+    ...state.tasks.filter(task => task.status !== 'done' && (!task.calendar_id || calendarVisible(task.calendar_id)) && task.due_at && (() => { const time = new Date(normalizeDate(task.due_at)).getTime(); return time >= startTs && time <= endTs; })()).map(task => ({ kind: 'task', when: task.due_at, item: task })),
   ].sort((a, b) => new Date(normalizeDate(a.when)) - new Date(normalizeDate(b.when)));
 }
 

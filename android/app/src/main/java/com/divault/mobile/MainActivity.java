@@ -40,6 +40,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getWindow().setDecorFitsSystemWindows(true);
+        }
         setTitle(R.string.app_name);
         preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         handleShareIntent(getIntent());
@@ -59,7 +62,8 @@ public class MainActivity extends Activity {
     private void buildWebView() {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.rgb(250, 247, 240));
-        root.setOnApplyWindowInsetsListener((view, insets) -> {
+        webView = new WebView(this);
+        webView.setOnApplyWindowInsetsListener((view, insets) -> {
             int left;
             int top;
             int right;
@@ -80,14 +84,13 @@ public class MainActivity extends Activity {
             return insets;
         });
 
-        webView = new WebView(this);
         webView.setLayoutParams(new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
         root.addView(webView);
         setContentView(root);
-        root.requestApplyInsets();
+        webView.requestApplyInsets();
     }
 
     private void configureWebView() {
@@ -286,6 +289,10 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (webView != null && webView.canGoBack()) {
+            webView.goBack();
+            return;
+        }
         moveTaskToBack(true);
     }
 
