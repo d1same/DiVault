@@ -1,4 +1,4 @@
-const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
+const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), taskFilter: localStorage.getItem('divault_task_filter') || 'open', theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
 Object.assign(state, { features: null, calendars: [], calendarFeeds: [], events: [], tasks: [], calendarDate: new Date(), miniCalendarDate: new Date(), calendarView: localStorage.getItem('divault_calendar_view') || 'schedule', reminders: [], reminderTimer: null, linkableNotesLoaded: false, routeNoteId: null });
 if (state.calendarView === 'agenda') state.calendarView = 'schedule';
 const app = document.querySelector('#app');
@@ -930,7 +930,7 @@ async function loadCurrentSection() {
     return;
   }
   if (state.section === 'tasks') {
-    state.tasks = (await api('/tasks').catch(() => ({ tasks: [] }))).tasks || [];
+    state.tasks = (await api('/tasks?view=all').catch(() => ({ tasks: [] }))).tasks || [];
     return;
   }
   if (isNoteSection(state.section)) {
@@ -1097,7 +1097,7 @@ function renderFilterBar(panelOpen) {
   if (panelOpen) return '';
   if (state.section === 'home') return '';
   if (state.section === 'calendar') return `<div class="filterbar calendar-filter"><div class="calendar-toolbar"><div class="btn-row calendar-nav-row"><button class="btn icon-only-btn" id="prevCalendarMonth" type="button" aria-label="Previous">‹</button><button class="btn" id="todayCalendarMonth" type="button">Today</button><button class="btn icon-only-btn" id="nextCalendarMonth" type="button" aria-label="Next">›</button></div><select class="calendar-view-select" id="calendarViewSelect" aria-label="Calendar view"><option value="day" ${state.calendarView === 'day' ? 'selected' : ''}>Day</option><option value="week" ${state.calendarView === 'week' ? 'selected' : ''}>Week</option><option value="month" ${state.calendarView === 'month' ? 'selected' : ''}>Month</option><option value="year" ${state.calendarView === 'year' ? 'selected' : ''}>Year</option><option value="schedule" ${state.calendarView === 'schedule' ? 'selected' : ''}>Schedule</option></select><div class="calendar-view-toggle" role="group" aria-label="Calendar view"><button class="btn ghost ${state.calendarView === 'day' ? 'active' : ''}" data-calendar-view="day" type="button">Day</button><button class="btn ghost ${state.calendarView === 'week' ? 'active' : ''}" data-calendar-view="week" type="button">Week</button><button class="btn ghost ${state.calendarView === 'month' ? 'active' : ''}" data-calendar-view="month" type="button">Month</button><button class="btn ghost ${state.calendarView === 'year' ? 'active' : ''}" data-calendar-view="year" type="button">Year</button><button class="btn ghost ${state.calendarView === 'schedule' ? 'active' : ''}" data-calendar-view="schedule" type="button">Schedule</button></div><div class="btn-row calendar-add-row"><button class="btn primary icon-only-btn action-fab" id="newEventBtn" type="button" aria-label="New event" title="New event">${toolIcon('calendar', 'New event')}</button><button class="btn primary icon-only-btn action-fab" id="newCalendarTaskBtn" type="button" aria-label="New task" title="New task">${toolIcon('check', 'New task')}</button></div></div></div>`;
-  if (state.section === 'tasks') return `<div class="filterbar"><input class="search" id="search" aria-label="Search tasks" placeholder="Search tasks..." value="${esc(state.q)}"><button class="btn primary" id="newTaskBtn" type="button">New task</button></div>`;
+  if (state.section === 'tasks') return `<div class="filterbar task-filter"><input class="search" id="search" aria-label="Search tasks" placeholder="Search tasks..." value="${esc(state.q)}"><button class="btn primary" id="newTaskBtn" type="button">New task</button></div>`;
   if (isNoteSection(state.section)) {
     return `<div class="filterbar notes-filter"><div class="filter-actions filter-actions-left">${state.notes.length && !state.selectionMode ? '<button class="btn" type="button" id="startSelectNotes">Select</button>' : ''}${renderNoteLayoutToggle()}${renderNoteSortSelect()}${state.section === 'notes:trash' ? '<button class="btn danger" id="emptyTrashBtn" type="button">Empty recycle bin</button>' : ''}</div><input class="search" id="search" aria-label="Search notes. Press Q to focus search." title="Press Q to search" placeholder="Search ${esc(sectionLabel(state.section))}...  Q" value="${esc(state.q)}"><div class="filter-actions note-filter-actions"><button class="btn ghost icon-only-btn" id="shortcutsHelpBtn" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">?</button><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick notes" title="Quick notes (K)">${toolIcon('quick', 'Quick notes')}</button><button class="btn primary icon-only-btn action-fab" id="newBtn" aria-label="New note" title="New full note (N or +)">+</button></div></div>`;
   }
@@ -1404,7 +1404,7 @@ function eventsForDay(day) {
 }
 
 function tasksForDay(day) {
-  return state.tasks.filter(task => (!task.calendar_id || calendarVisible(task.calendar_id)) && task.due_at && new Date(normalizeDate(task.due_at)).toDateString() === day.toDateString());
+  return state.tasks.filter(task => task.status !== 'done' && (!task.calendar_id || calendarVisible(task.calendar_id)) && task.due_at && new Date(normalizeDate(task.due_at)).toDateString() === day.toDateString());
 }
 
 function agendaItemsForDay(day) {
@@ -1469,12 +1469,30 @@ function calendarVisible(calendarId) {
 
 function renderTasks() {
   const query = state.q.trim().toLowerCase();
-  const tasks = query ? state.tasks.filter(task => `${task.title} ${task.description || ''}`.toLowerCase().includes(query)) : state.tasks;
-  return `<section class="card task-board"><h2>Tasks</h2>${renderTaskRows(tasks)}</section>`;
+  const allTasks = query ? state.tasks.filter(task => `${task.title} ${task.description || ''}`.toLowerCase().includes(query)) : state.tasks;
+  const allOpenTasks = allTasks.filter(task => task.status !== 'done');
+  const allCompletedTasks = allTasks.filter(task => task.status === 'done');
+  const today = new Date();
+  const endOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+  const overdue = allOpenTasks.filter(task => task.due_at && new Date(normalizeDate(task.due_at)) < today);
+  const dueSoon = allOpenTasks.filter(task => task.due_at && new Date(normalizeDate(task.due_at)) >= today && new Date(normalizeDate(task.due_at)) <= endOfToday);
+  const filteredTasks = state.taskFilter === 'done' ? allCompletedTasks : state.taskFilter === 'overdue' ? overdue : state.taskFilter === 'today' ? dueSoon : allOpenTasks;
+  const heading = state.taskFilter === 'done' ? 'Completed tasks' : state.taskFilter === 'overdue' ? 'Overdue tasks' : state.taskFilter === 'today' ? 'Due today' : 'Open tasks';
+  const pillLabel = state.taskFilter === 'done' ? `${filteredTasks.length} done` : `${filteredTasks.length} shown`;
+  const emptyTitle = query ? 'No matching tasks' : state.taskFilter === 'done' ? 'No completed tasks' : state.taskFilter === 'overdue' ? 'No overdue tasks' : state.taskFilter === 'today' ? 'No tasks due today' : 'No open tasks';
+  const emptyText = query ? 'Try another search or choose another task filter.' : state.taskFilter === 'done' ? 'Completed tasks will appear here after you check them off.' : state.taskFilter === 'overdue' ? 'Nothing is past due right now.' : state.taskFilter === 'today' ? 'Nothing is due before midnight.' : 'Create a task when something needs follow-up.';
+  const card = (filter, label, count, note, extra = '') => `<button class="task-summary-card ${extra} ${state.taskFilter === filter ? 'active' : ''}" data-task-filter="${filter}" type="button"><span>${label}</span><b>${count}</b><small>${note}</small></button>`;
+  return `<div class="task-page"><section class="task-summary-grid" aria-label="Task filters">${card('open', 'Open', allOpenTasks.length, 'active tasks')}${card('overdue', 'Overdue', overdue.length, 'need attention', 'urgent')}${card('today', 'Today', dueSoon.length, 'due before midnight', 'today')}${card('done', 'Done', allCompletedTasks.length, 'completed tasks')}</section><section class="card task-board"><div class="task-board-head"><div><p class="breadcrumb">${state.taskFilter === 'done' ? 'Finished work' : 'Active work'}</p><h2>${heading}</h2></div><span class="pill">${pillLabel}</span></div>${renderTaskRows(filteredTasks, { completed: state.taskFilter === 'done', emptyTitle, emptyText })}</section></div>`;
 }
 
-function renderTaskRows(tasks) {
-  return tasks.length ? tasks.map(task => `<div class="task-row ${task.status === 'done' ? 'done' : ''}"><label class="checkline"><input type="checkbox" data-task-done="${task.id}" ${task.status === 'done' ? 'checked' : ''}><span><b>${esc(task.title)}</b><br><span class="small muted">${task.due_at ? `Due ${formatScheduleDateTime(task.due_at)}` : 'No due date'}${task.calendar_name ? ` · ${esc(task.calendar_name)}` : ''}</span></span></label><button class="btn ghost" data-open-task="${task.id}" type="button">Open</button></div>`).join('') : '<p class="muted small">No tasks.</p>';
+function renderTaskRows(tasks, options = {}) {
+  return tasks.length ? tasks.map(task => {
+    const due = task.due_at ? new Date(normalizeDate(task.due_at)) : null;
+    const isOverdue = due && task.status !== 'done' && due < new Date();
+    const dueText = due ? `Due ${formatScheduleDateTime(task.due_at)}` : 'No due date';
+    const deleteButton = options.completed ? `<button class="btn danger task-delete-btn" data-delete-completed-task="${task.id}" type="button">Delete</button>` : '';
+    return `<article class="task-row ${task.status === 'done' ? 'done' : ''} ${isOverdue ? 'overdue' : ''}" data-open-task="${task.id}" role="button" tabindex="0"><span class="task-copy"><b>${esc(task.title)}</b><span class="task-meta"><span>${esc(dueText)}</span>${task.calendar_name ? `<span>${esc(task.calendar_name)}</span>` : ''}${Number(task.priority) > 0 ? `<span>Priority ${Number(task.priority)}</span>` : ''}</span></span><div class="task-row-actions">${deleteButton}<label class="task-check" title="${task.status === 'done' ? 'Mark open' : 'Mark complete'}"><input type="checkbox" data-task-done="${task.id}" ${task.status === 'done' ? 'checked' : ''}><span class="sr-only">${task.status === 'done' ? 'Mark open' : 'Mark complete'}</span></label></div></article>`;
+  }).join('') : `<div class="task-empty"><h3>${esc(options.emptyTitle || 'No tasks found')}</h3><p class="muted small">${esc(options.emptyText || 'Create a task or clear the search to see more work.')}</p></div>`;
 }
 
 function renderNotes() {
@@ -1968,6 +1986,12 @@ function bindContentActions() {
 }
 
 function bindCalendarTaskActions() {
+  document.querySelectorAll('[data-task-filter]').forEach(btn => btn.addEventListener('click', () => {
+    state.taskFilter = btn.dataset.taskFilter || 'open';
+    localStorage.setItem('divault_task_filter', state.taskFilter);
+    document.querySelector('#contentArea').innerHTML = renderMainContent();
+    bindContentActions();
+  }));
   document.querySelector('#prevCalendarMonth')?.addEventListener('click', async () => { shiftCalendarDate(-1); await loadCalendarData(); renderApp(); });
   document.querySelector('#nextCalendarMonth')?.addEventListener('click', async () => { shiftCalendarDate(1); await loadCalendarData(); renderApp(); });
   document.querySelector('#todayCalendarMonth')?.addEventListener('click', async () => { state.calendarDate = new Date(); state.miniCalendarDate = new Date(state.calendarDate); await loadCalendarData(); renderApp(); });
@@ -2015,7 +2039,18 @@ function bindCalendarTaskActions() {
   }));
   document.querySelectorAll('[data-open-event]').forEach(btn => btn.addEventListener('click', () => openEventDialogById(btn.dataset.openEvent)));
   document.querySelector('#newTaskBtn')?.addEventListener('click', () => openTaskDialog());
-  document.querySelectorAll('[data-open-task]').forEach(btn => btn.addEventListener('click', () => openTaskDialogById(btn.dataset.openTask)));
+  document.querySelectorAll('[data-open-task]').forEach(item => {
+    const open = event => {
+      if (event.target.closest('button, input, label, a, select, textarea')) return;
+      openTaskDialogById(item.dataset.openTask);
+    };
+    item.addEventListener('click', open);
+    item.addEventListener('keydown', event => {
+      if (!['Enter', ' '].includes(event.key)) return;
+      event.preventDefault();
+      open(event);
+    });
+  });
   document.querySelectorAll('[data-task-done]').forEach(input => input.addEventListener('change', async e => {
     const task = state.tasks.find(item => String(item.id) === String(e.target.dataset.taskDone));
     if (!task) return;
@@ -2033,6 +2068,16 @@ function bindCalendarTaskActions() {
       await loadCurrentSection();
       renderApp();
     }, 'Task update failed');
+  }));
+  document.querySelectorAll('[data-delete-completed-task]').forEach(btn => btn.addEventListener('click', async () => {
+    const task = state.tasks.find(item => String(item.id) === String(btn.dataset.deleteCompletedTask));
+    if (!task) return;
+    if (!await confirmDialog({ title: 'Delete completed task?', message: `Permanently delete "${task.title}"?`, confirmText: 'Delete' })) return;
+    await runUserAction(async () => {
+      await api(`/tasks/${task.id}`, { method: 'DELETE' });
+      await loadCurrentSection();
+      renderApp();
+    }, 'Task delete failed');
   }));
   document.querySelectorAll('[data-calendar-color]').forEach(btn => btn.addEventListener('click', () => {
     const input = btn.closest('form')?.querySelector('input[name="color"]');
