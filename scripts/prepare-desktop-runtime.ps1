@@ -5,7 +5,10 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$runtimeDir = Join-Path $projectRoot 'src-tauri\resources\php'
+$package = Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Raw | ConvertFrom-Json
+$runtimeName = "php-$($package.version)"
+$resourcesDir = Join-Path $projectRoot 'src-tauri\resources'
+$runtimeDir = Join-Path $resourcesDir $runtimeName
 
 if (-not $PhpBin -and $env:DIVAULT_PHP_BIN) {
     $PhpBin = $env:DIVAULT_PHP_BIN
@@ -23,6 +26,16 @@ if (-not (Test-Path -LiteralPath $PhpBin)) {
 $phpSourceDir = Split-Path -Parent $PhpBin
 if (-not (Test-Path -LiteralPath (Join-Path $phpSourceDir 'php.exe'))) {
     throw "PHP runtime folder must contain php.exe: $phpSourceDir"
+}
+
+if (-not (Test-Path -LiteralPath $resourcesDir)) {
+    New-Item -ItemType Directory -Path $resourcesDir | Out-Null
+}
+
+Get-ChildItem -LiteralPath $resourcesDir -Directory -Filter 'php-*' -ErrorAction SilentlyContinue | Where-Object {
+    $_.Name -ne $runtimeName
+} | ForEach-Object {
+    Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 if (Test-Path -LiteralPath $runtimeDir) {

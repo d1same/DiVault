@@ -195,6 +195,7 @@ fn php_runtime(root: &Path) -> PathBuf {
             root.join("src-tauri").join("resources").join("php"),
         ];
         if let Some(install_dir) = root.parent() {
+            dirs.extend(versioned_php_dirs(&install_dir.join("resources")));
             dirs.push(install_dir.join("resources").join("php"));
         }
 
@@ -213,6 +214,7 @@ fn php_runtime(root: &Path) -> PathBuf {
             root.join("src-tauri").join("resources").join("php"),
         ];
         if let Some(install_dir) = root.parent() {
+            dirs.extend(versioned_php_dirs(&install_dir.join("resources")));
             dirs.push(install_dir.join("resources").join("php"));
         }
 
@@ -225,6 +227,25 @@ fn php_runtime(root: &Path) -> PathBuf {
     }
 
     PathBuf::from("php")
+}
+
+fn versioned_php_dirs(resources_dir: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(resources_dir)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_dir()
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name.starts_with("php-"))
+                    .unwrap_or(false)
+        })
+        .collect();
+    dirs.sort_by(|a, b| b.cmp(a));
+    dirs
 }
 
 fn ensure_port_available() -> Result<(), Box<dyn std::error::Error>> {

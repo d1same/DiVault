@@ -3,6 +3,7 @@ desktop-data/
 src-tauri/target/
 src-tauri/gen/
 src-tauri/resources/php/
+src-tauri/resources/php-*/
 graphify-out/
 .playwright-mcp/
 node_modules/
