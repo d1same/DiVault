@@ -4168,7 +4168,7 @@ async function openSettings(options = {}) {
   state.calendarFeeds = calendarFeeds.feeds || [];
   const adminDataCards = isAdmin ? `<div class="card stack"><h3>Import / export</h3><div class="btn-row"><a class="btn" href="/api/export">Export JSON</a><button class="btn" id="backupBtn">Create full backup</button></div><p class="small muted">Optional backup passphrases encrypt backups. Keep the passphrase; encrypted backups cannot be restored without it.</p><label class="field"><span>Import Markdown notes</span><input id="markdownImportFiles" type="file" accept=".md,text/markdown" multiple></label><label class="field"><span>Import Markdown folder</span><input id="markdownImportFolder" type="file" accept=".md,text/markdown" webkitdirectory multiple></label><button class="btn" id="importMarkdownBtn">Import Markdown</button><p class="small muted">Markdown files are read locally in this browser and imported directly. Folder imports map subfolders to categories.</p><label class="field"><span>Import JSON notes</span><textarea id="importJson" placeholder='{"notes":[{"title":"Imported","body":"Hello"}]}'></textarea></label><button class="btn" id="importBtn">Import JSON</button></div>
         <div class="card stack"><h3>Backups</h3>${backups.pending_restore ? '<p class="pill secret">Restore pending. Restart container to apply.</p>' : ''}<div class="btn-row"><input id="restoreUpload" type="file" accept=".zip,application/zip"><button class="btn danger" id="uploadRestoreBtn">Upload restore ZIP</button></div>${backups.backups.map(b => `<div class="file-row"><span>${esc(b.file)}<br><span class="small muted">${Math.ceil(Number(b.size) / 1024)} KB</span></span><span class="btn-row"><a class="btn" href="/api/backups/${esc(b.file)}">Download</a><button class="btn danger" data-restore="${esc(b.file)}">Schedule restore</button></span></div>`).join('') || '<p class="small muted">No backups yet.</p>'}</div>` : '';
-  const adminSidebarCards = isAdmin ? `<div class="card stack"><h3>Add user</h3><form id="userForm" class="stack"><input name="name" placeholder="Name"><input name="email" type="email" placeholder="Email"><input name="password" type="password" minlength="10" placeholder="Temporary password"><select name="role"><option>editor</option><option>viewer</option><option>admin</option></select><button class="btn">Create user</button></form></div>
+  const adminSidebarCards = isAdmin ? `<div class="card stack"><h3>Add user</h3><form id="userForm" class="stack"><label class="field"><span>Name</span><input name="name" placeholder="Name" autocomplete="name" required></label><label class="field"><span>Email</span><input name="email" type="email" placeholder="Email" autocomplete="email" required></label><label class="field"><span>Temporary password</span><input name="password" type="password" minlength="10" placeholder="Temporary password" autocomplete="new-password" required></label><label class="field"><span>Confirm password</span><input name="password_confirm" type="password" minlength="10" placeholder="Type temporary password again" autocomplete="new-password" required></label><label class="field"><span>Role</span><select name="role"><option value="editor">editor</option><option value="viewer">viewer</option><option value="admin">admin</option></select></label><button class="btn">Create user</button></form></div>
         <div class="card"><h3>Users</h3>${users.users.map(u => `<div class="user-row"><span>${esc(u.email)}</span><span class="pill">${esc(u.role)}</span></div>`).join('') || '<p class="small muted">No users.</p>'}</div>
         <div class="card"><h3>Audit</h3>${auditRowsHtml(audit.audit)}</div>` : '';
   const avatarPreview = state.user.avatar_data ? `<img class="profile-avatar" src="${esc(state.user.avatar_data)}" alt="Current avatar">` : `<img class="profile-avatar" src="/assets/divault-logo.svg" alt="DiVault">`;
@@ -4534,9 +4534,14 @@ async function openSettings(options = {}) {
   });
   modal.querySelector('#userForm')?.addEventListener('submit', async e => {
     e.preventDefault();
-    await api('/users', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
-    toast('User created');
-    openSettings();
+    await runUserAction(async () => {
+      const data = Object.fromEntries(new FormData(e.target));
+      if (data.password !== data.password_confirm) throw new Error('Passwords do not match');
+      delete data.password_confirm;
+      await api('/users', { method: 'POST', body: data });
+      toast('User created');
+      openSettings();
+    }, 'User creation failed');
   });
   modal.querySelectorAll('[data-session]').forEach(btn => btn.addEventListener('click', async () => {
     await api(`/sessions/${btn.dataset.session}`, { method: 'DELETE' });

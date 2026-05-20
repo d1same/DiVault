@@ -2706,6 +2706,9 @@ final class App
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) throw new RuntimeException('Valid email required');
         if (strlen($password) < 10) throw new RuntimeException('Password must be at least 10 characters');
         if (!in_array($role, ['owner', 'admin', 'editor', 'viewer'], true)) throw new RuntimeException('Invalid role');
+        $stmt = $this->db->prepare('SELECT COUNT(*) FROM users WHERE email = ?');
+        $stmt->execute([$email]);
+        if ((int)$stmt->fetchColumn() > 0) throw new RuntimeException('A user with this email already exists');
         $stmt = $this->db->prepare('INSERT INTO users (email, name, password_hash, role) VALUES (?, ?, ?, ?)');
         $stmt->execute([$email, trim($name) ?: $email, password_hash($password, PASSWORD_DEFAULT), $role]);
         return (int)$this->db->lastInsertId();
