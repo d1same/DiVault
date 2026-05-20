@@ -56,6 +56,21 @@ function getCookie(name) {
 }
 
 const esc = value => String(value ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function linkifyText(value) {
+  const text = String(value ?? '');
+  const urlPattern = /https?:\/\/[^\s<>"]+/g;
+  let html = '';
+  let lastIndex = 0;
+  for (const match of text.matchAll(urlPattern)) {
+    const rawUrl = match[0];
+    const url = rawUrl.replace(/[),.;:!?]+$/, '');
+    const trailing = rawUrl.slice(url.length);
+    html += esc(text.slice(lastIndex, match.index));
+    html += `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>${esc(trailing)}`;
+    lastIndex = (match.index || 0) + rawUrl.length;
+  }
+  return html + esc(text.slice(lastIndex));
+}
 const brandMark = (alt = 'DiVault') => `<img src="/assets/divault-logo.svg" alt="${esc(alt)}">`;
 const toast = message => {
   const el = document.createElement('div');
@@ -1341,13 +1356,17 @@ function renderYearMonth(year, monthIndex) {
 
 function renderCalendarScheduleView() {
   const [start, end] = calendarVisibleRange();
-  const days = [];
-  for (let day = new Date(start); day <= end; day.setDate(day.getDate() + 1)) {
-    const copy = new Date(day);
-    const items = agendaItemsForDay(copy);
-    days.push(`<section class="agenda-list-day"><div class="agenda-list-date"><span>${copy.toLocaleDateString([], { weekday: 'short' })}</span><b>${copy.toLocaleDateString([], { month: 'short', day: 'numeric' })}</b></div><div class="agenda-list-content"><div class="section-title-row"><h3>${copy.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</h3><span><button class="btn ghost mini-btn icon-only-btn" data-new-event-date="${dateInputValue(copy)}" type="button" aria-label="Add event" title="Add event">${toolIcon('calendar', 'Add event')}</button><button class="btn ghost mini-btn icon-only-btn" data-new-task-date="${dateInputValue(copy)}" type="button" aria-label="Add task" title="Add task">${toolIcon('check', 'Add task')}</button></span></div>${renderAgendaItems(items, true)}</div></section>`);
-  }
-  return `<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>Schedule</h2></div><div class="agenda-list-stack">${days.join('')}</div></div>${renderCalendarSidebar()}</section>`;
+  const rangeStart = start < new Date() ? new Date() : start;
+  const grouped = new Map();
+  agendaItemsForRange(rangeStart, end).forEach(item => {
+    const when = new Date(normalizeDate(item.when));
+    const key = when.toDateString();
+    if (!grouped.has(key)) grouped.set(key, { day: new Date(when.getFullYear(), when.getMonth(), when.getDate()), items: [] });
+    grouped.get(key).items.push(item);
+  });
+  const days = [...grouped.values()].map(group => `<section class="agenda-list-day"><div class="agenda-list-date"><span>${group.day.toLocaleDateString([], { weekday: 'short' })}</span><b>${group.day.toLocaleDateString([], { month: 'short', day: 'numeric' })}</b></div><div class="agenda-list-content"><div class="section-title-row"><h3>${group.day.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</h3><span><button class="btn ghost mini-btn icon-only-btn" data-new-event-date="${dateInputValue(group.day)}" type="button" aria-label="Add event" title="Add event">${toolIcon('calendar', 'Add event')}</button><button class="btn ghost mini-btn icon-only-btn" data-new-task-date="${dateInputValue(group.day)}" type="button" aria-label="Add task" title="Add task">${toolIcon('check', 'Add task')}</button></span></div>${renderAgendaItems(group.items, true)}</div></section>`);
+  const content = days.length ? days.join('') : '<section class="card"><p class="muted small">No upcoming events or tasks.</p></section>';
+  return `<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>Schedule</h2></div><div class="agenda-list-stack">${content}</div></div>${renderCalendarSidebar()}</section>`;
 }
 
 function renderCalendarSidebar(agendaTitle = '', agendaItems = []) {
@@ -2264,7 +2283,7 @@ async function openLinkedNoteFromModal(modal, id) {
 function printDetail(title, rowsHtml, notesHtml, description = '') {
   const printWindow = window.open('', '_blank', 'width=720,height=860');
   if (!printWindow) return window.print();
-  printWindow.document.write(`<!doctype html><html><head><title>${esc(title)}</title><style>body{font-family:Arial,sans-serif;padding:32px;color:#111}h1{margin:0 0 18px}.detail-row{display:grid;grid-template-columns:150px 1fr;gap:12px;padding:8px 0;border-bottom:1px solid #ddd}.detail-row span{color:#666}.description{white-space:pre-wrap;margin-top:18px}.linked-note-pill{display:inline-block;margin:4px 6px 4px 0;padding:5px 10px;border:1px solid #ccc;border-radius:999px}</style></head><body><h1>${esc(title)}</h1>${rowsHtml}<div class="description">${esc(description || '')}</div><h2>Linked notes</h2>${notesHtml.replace(/<button[^>]*>.*?<\/button>/g, '')}</body></html>`);
+  printWindow.document.write(`<!doctype html><html><head><title>${esc(title)}</title><style>body{font-family:Arial,sans-serif;padding:32px;color:#111}h1{margin:0 0 18px}.detail-row{display:grid;grid-template-columns:150px 1fr;gap:12px;padding:8px 0;border-bottom:1px solid #ddd}.detail-row span{color:#666}.description{white-space:pre-wrap;margin-top:18px}.linked-note-pill{display:inline-block;margin:4px 6px 4px 0;padding:5px 10px;border:1px solid #ccc;border-radius:999px}</style></head><body><h1>${esc(title)}</h1>${rowsHtml}<div class="description">${linkifyText(description || '')}</div><h2>Linked notes</h2>${notesHtml.replace(/<button[^>]*>.*?<\/button>/g, '')}</body></html>`);
   printWindow.document.close();
   printWindow.focus();
   printWindow.print();
@@ -2287,7 +2306,7 @@ function openEventDetailDialog(event = {}) {
   ].join('');
   const notes = linkedNoteDetailList(event.notes || []);
   const editControls = readOnly ? '<span class="pill">read-only</span>' : `<button class="btn ghost icon-only-btn" type="button" data-edit-detail aria-label="Edit" title="Edit">${toolIcon('draw', 'Edit')}</button><button class="btn danger icon-only-btn" type="button" data-delete-detail aria-label="Delete" title="Delete">${toolIcon('trash', 'Delete')}</button>`;
-  modal.innerHTML = `<section class="editor-panel small-panel detail-dialog"><div class="topbar"><div><p class="breadcrumb">Event</p><h2>${esc(event.title || 'Untitled event')}</h2></div><div class="btn-row"><button class="btn ghost icon-only-btn" type="button" data-print-detail aria-label="Print" title="Print">${toolIcon('print', 'Print')}</button>${editControls}<button class="btn ghost" type="button" data-close>Close</button></div></div><div class="detail-grid">${rows}</div>${event.description ? `<div class="detail-description"><h3>Description</h3><p>${esc(event.description)}</p></div>` : ''}<section class="detail-notes"><h3>Related notes</h3>${notes}</section></section>`;
+  modal.innerHTML = `<section class="editor-panel small-panel detail-dialog"><div class="topbar"><div><p class="breadcrumb">Event</p><h2>${esc(event.title || 'Untitled event')}</h2></div><div class="btn-row"><button class="btn ghost icon-only-btn" type="button" data-print-detail aria-label="Print" title="Print">${toolIcon('print', 'Print')}</button>${editControls}<button class="btn ghost" type="button" data-close>Close</button></div></div><div class="detail-grid">${rows}</div>${event.description ? `<div class="detail-description"><h3>Description</h3><p>${linkifyText(event.description)}</p></div>` : ''}<section class="detail-notes"><h3>Related notes</h3>${notes}</section></section>`;
   document.body.appendChild(modal);
   setupAccessibleModal(modal, '[data-close]');
   modal.querySelector('[data-edit-detail]')?.addEventListener('click', () => { modal.remove(); openEventDialog(event); });
@@ -2323,7 +2342,7 @@ function openTaskDetailDialog(task = {}) {
   const notes = linkedNoteDetailList(task.notes || []);
   const isDone = task.status === 'done';
   const completeButton = `<button class="task-complete-btn ${isDone ? 'is-complete' : ''}" type="button" data-complete-detail aria-label="${isDone ? 'Reopen task' : 'Complete task'}" title="${isDone ? 'Reopen task' : 'Complete task'}">${toolIcon('check', isDone ? 'Reopen task' : 'Complete task')}</button>`;
-  modal.innerHTML = `<section class="editor-panel small-panel detail-dialog"><div class="topbar"><div><p class="breadcrumb">Task</p><h2>${esc(task.title || 'Untitled task')}</h2></div><div class="btn-row">${completeButton}<button class="btn ghost icon-only-btn" type="button" data-print-detail aria-label="Print" title="Print">${toolIcon('print', 'Print')}</button><button class="btn ghost icon-only-btn" type="button" data-edit-detail aria-label="Edit" title="Edit">${toolIcon('draw', 'Edit')}</button><button class="btn danger icon-only-btn" type="button" data-delete-detail aria-label="Delete" title="Delete">${toolIcon('trash', 'Delete')}</button><button class="btn ghost" type="button" data-close>Close</button></div></div><div class="detail-grid">${rows}</div>${task.description ? `<div class="detail-description"><h3>Description</h3><p>${esc(task.description)}</p></div>` : ''}<section class="detail-notes"><h3>Related notes</h3>${notes}</section></section>`;
+  modal.innerHTML = `<section class="editor-panel small-panel detail-dialog"><div class="topbar"><div><p class="breadcrumb">Task</p><h2>${esc(task.title || 'Untitled task')}</h2></div><div class="btn-row">${completeButton}<button class="btn ghost icon-only-btn" type="button" data-print-detail aria-label="Print" title="Print">${toolIcon('print', 'Print')}</button><button class="btn ghost icon-only-btn" type="button" data-edit-detail aria-label="Edit" title="Edit">${toolIcon('draw', 'Edit')}</button><button class="btn danger icon-only-btn" type="button" data-delete-detail aria-label="Delete" title="Delete">${toolIcon('trash', 'Delete')}</button><button class="btn ghost" type="button" data-close>Close</button></div></div><div class="detail-grid">${rows}</div>${task.description ? `<div class="detail-description"><h3>Description</h3><p>${linkifyText(task.description)}</p></div>` : ''}<section class="detail-notes"><h3>Related notes</h3>${notes}</section></section>`;
   document.body.appendChild(modal);
   setupAccessibleModal(modal, '[data-close]');
   modal.querySelector('[data-complete-detail]')?.addEventListener('click', async () => {
