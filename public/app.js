@@ -680,6 +680,10 @@ async function showReminder(reminder) {
     await api(`/reminders/${reminder.kind}/${reminder.id}/dismiss`, { method: 'POST', body: {} }).catch(() => null);
     return;
   }
+  if (await showDesktopReminderNotification(title, body)) {
+    await api(`/reminders/${reminder.kind}/${reminder.id}/dismiss`, { method: 'POST', body: {} }).catch(() => null);
+    return;
+  }
   if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission().catch(() => null);
   if ('Notification' in window && Notification.permission === 'granted') {
     try {
@@ -693,6 +697,17 @@ async function showReminder(reminder) {
     toast(`${title}: ${reminder.title}`);
   }
   await api(`/reminders/${reminder.kind}/${reminder.id}/dismiss`, { method: 'POST', body: {} }).catch(() => null);
+}
+
+async function showDesktopReminderNotification(title, body) {
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (!invoke) return false;
+  try {
+    await invoke('desktop_notify', { title, body });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function saveEmergencySnapshot() {

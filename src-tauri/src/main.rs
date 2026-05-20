@@ -24,6 +24,8 @@ fn main() {
     let setup_server = Arc::clone(&server);
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
+        .invoke_handler(tauri::generate_handler![desktop_notify])
         .setup(move |app| {
             let config_dir = desktop_config_dir(app.handle())?;
             let url = if let Some(remote_url) = remote_url(&config_dir)? {
@@ -55,6 +57,18 @@ fn main() {
                 }
             }
         });
+}
+
+#[tauri::command]
+fn desktop_notify(app: tauri::AppHandle, title: String, body: String) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|err| err.to_string())
 }
 
 fn remote_url(config_dir: &Path) -> Result<Option<Url>, Box<dyn std::error::Error>> {
