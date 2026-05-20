@@ -1264,7 +1264,7 @@ function renderHome() {
     </section>
     <aside class="home-side stack">
       ${featureOn('calendar') && feature('calendar').settings.home_enabled ? renderMiniMonthPicker() : ''}
-      <section class="card home-widget stack"><div class="section-title-row"><h3>Schedule</h3>${featureOn('calendar') ? '<button class="btn ghost" data-section="calendar" type="button">Calendar</button>' : ''}</div><p class="small muted">${scheduleStart.toLocaleDateString([], { month: 'short', day: 'numeric' })} - ${scheduleEnd.toLocaleDateString([], { month: 'short', day: 'numeric' })}</p>${(featureOn('calendar') || featureOn('tasks')) ? renderAgendaItems(scheduleItems, true, { readonly: true }) : '<p class="muted small">Calendar and tasks are disabled.</p>'}</section>
+      <section class="card home-widget home-schedule-widget stack"><div class="section-title-row"><h3>Schedule</h3>${featureOn('calendar') ? '<button class="btn ghost" data-section="calendar" type="button">Calendar</button>' : ''}</div><p class="small muted">${scheduleStart.toLocaleDateString([], { month: 'short', day: 'numeric' })} - ${scheduleEnd.toLocaleDateString([], { month: 'short', day: 'numeric' })}</p>${(featureOn('calendar') || featureOn('tasks')) ? renderAgendaItems(scheduleItems, true, { readonly: true }) : '<p class="muted small">Calendar and tasks are disabled.</p>'}</section>
     </aside>
   </div>`;
 }
@@ -2044,7 +2044,8 @@ function bindCalendarTaskActions() {
   document.querySelector('#newTaskBtn')?.addEventListener('click', () => openTaskDialog());
   document.querySelectorAll('[data-open-task]').forEach(item => {
     const open = event => {
-      if (event.target.closest('button, input, label, a, select, textarea')) return;
+      const interactive = event.target.closest('button, input, label, a, select, textarea');
+      if (interactive && interactive !== item) return;
       openTaskDialogById(item.dataset.openTask);
     };
     item.addEventListener('click', open);

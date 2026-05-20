@@ -726,6 +726,7 @@ body.sidebar-collapsed .empty-nav { display: none; }
 .home-main, .home-side { min-width: 0; }
 .home-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; }
 .home-hero h2 { font-size: clamp(1.35rem, 2vw, 2rem); margin-bottom: 4px; }
+.home-hero .breadcrumb { margin-bottom: 2px; }
 .home-stat-row { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .home-action-row { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
 .home-action-row .action-fab { min-width: 44px; min-height: 44px; }
@@ -1329,8 +1330,26 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .home-hero { order: 1; }
   .home-side { order: 2; }
   .home-notes-widget { order: 3; }
-  .home-hero { grid-template-columns: 1fr; }
-  .home-stat-row { justify-content: flex-start; }
+  .home-hero { grid-template-columns: 1fr; gap: 10px; padding: 12px; }
+  .home-hero h2 { font-size: 1.2rem; margin: 0; }
+  .home-hero .breadcrumb { margin: 0; font-size: .72rem; }
+  .home-stat-row { justify-content: flex-start; gap: 6px; }
+  .home-stat-row .pill { min-height: 26px; padding: 4px 8px; font-size: .68rem; }
+  .home-action-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .home-action-row .action-fab { min-width: 0; min-height: 40px; }
+  .home-widget { gap: 10px; padding: 12px; border-radius: var(--radius-lg); }
+  .home-widget .section-title-row h3 { font-size: .95rem; }
+  .home-widget .section-title-row .btn { min-height: 34px; padding: 6px 10px; }
+  .home-schedule-widget > .small.muted { margin-top: -4px; }
+  .home-schedule-widget .agenda-item.large { min-height: 0; padding: 9px; }
+  .home-schedule-widget .agenda-kind { min-width: 56px; font-size: .62rem; padding-inline: 6px; }
+  .home-note-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .home-note-card { min-height: 96px; padding: 12px; gap: 8px; }
+  .home-note-card b { font-size: .88rem; line-height: 1.2; overflow-wrap: anywhere; }
+  .mini-month-card { gap: 8px; padding: 12px; }
+  .mini-month-head h3 { font-size: .95rem; }
+  .mini-month-weekdays, .mini-month-grid { gap: 2px; }
+  .mini-month-day { min-height: 28px; font-size: .7rem; }
   .feature-toggle-grid { grid-template-columns: 1fr; }
   .calendar-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 106px; gap: 10px; align-items: stretch; width: 100%; }
   .calendar-toolbar .btn-row { width: auto; }
