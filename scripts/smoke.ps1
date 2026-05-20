@@ -113,6 +113,184 @@ function Remove-SmokeResource {
   }
 }
 
+function Get-HttpStatusCode {
+  param($ErrorRecord)
+  $response = $ErrorRecord.Exception.Response
+  if (-not $response) { return $null }
+  return [int]$response.StatusCode
+}
+
+function Get-ResponseId {
+  param(
+    $Response,
+    [string[]]$Containers = @()
+  )
+  if ($Response.id) { return $Response.id }
+  foreach ($container in $Containers) {
+    if ($Response.$container -and $Response.$container.id) { return $Response.$container.id }
+  }
+  return $null
+}
+
+function Invoke-DriveFileUpload {
+  param(
+    [string[]]$Paths,
+    [string]$FilePath,
+    [string]$FileName,
+    [string]$ContentType,
+    [string]$FolderId,
+    [Microsoft.PowerShell.Commands.WebRequestSession]$Session,
+    [string]$Csrf
+  )
+
+  $sessionCookie = ($Session.Cookies.GetCookies($BaseUrl) | Where-Object { $_.Name -eq "divault_session" } | Select-Object -First 1).Value
+  if (-not $sessionCookie) { throw "Drive file upload skipped: session cookie missing" }
+  $cookieHeader = "divault_session=$sessionCookie; divault_csrf=$Csrf"
+  $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+  if (-not $curl) { $curl = Get-Command curl -ErrorAction Stop }
+
+  foreach ($path in $Paths) {
+    $curlOutput = & $curl.Source -fsS -X POST "$BaseUrl$path" -H "X-CSRF-Token: $Csrf" -H "Cookie: $cookieHeader" -F "file=@$FilePath;filename=$FileName;type=$ContentType" -F "folder_id=$FolderId"
+    if ($LASTEXITCODE -eq 0) { return $curlOutput | ConvertFrom-Json }
+  }
+  throw "Drive file upload failed"
+}
+
+function Assert-DrivePrivateForOtherUser {
+  param(
+    [string]$Path,
+    [Microsoft.PowerShell.Commands.WebRequestSession]$Session
+  )
+  try {
+    $response = Invoke-WebRequest -Uri "$BaseUrl$Path" -Method Get -WebSession $Session -ErrorAction Stop
+    if ($response.StatusCode -lt 400) { throw "Drive privacy check failed: $Path was readable by another user" }
+  } catch {
+    $status = Get-HttpStatusCode -ErrorRecord $_
+    if ($status -ge 400) { return }
+    throw
+  }
+}
+
+function Get-OrCreateSmokePrivacyUser {
+  param(
+    [Microsoft.PowerShell.Commands.WebRequestSession]$Session,
+    [string]$Csrf
+  )
+  $privacyEmail = "smoke-drive-privacy@example.com"
+  $privacyPassword = "SmokeDrivePrivacy123!"
+  try {
+    $users = Invoke-Json -Method Get -Path "/api/users" -Session $Session
+    $existing = $users.users | Where-Object { $_.email -eq $privacyEmail -and -not $_.disabled } | Select-Object -First 1
+    if (-not $existing) {
+      Invoke-Json -Method Post -Path "/api/users" -Session $Session -Csrf $Csrf -Body @{ name = "Smoke Drive Privacy"; email = $privacyEmail; password = $privacyPassword; role = "editor" } | Out-Null
+    }
+    return @{ email = $privacyEmail; password = $privacyPassword }
+  } catch {
+    return $null
+  }
+}
+
+function Test-DriveApis {
+  param(
+    [string]$RunId,
+    [Microsoft.PowerShell.Commands.WebRequestSession]$Session,
+    [string]$Csrf
+  )
+
+  $driveFolderId = $null
+  $driveFileIds = @()
+  $textFile = $null
+  $pdfFile = $null
+  try {
+    try {
+      Invoke-Json -Method Get -Path "/api/drive" -Session $Session | Out-Null
+    } catch {
+      if ((Get-HttpStatusCode -ErrorRecord $_) -eq 404) { return "skipped: /api/drive not found" }
+      throw
+    }
+
+    $folder = Invoke-Json -Method Post -Path "/api/drive/folders" -Session $Session -Csrf $Csrf -Body @{ name = "$RunId Drive"; parent_id = $null }
+    $driveFolderId = Get-ResponseId -Response $folder -Containers @("folder", "item")
+    if (-not $driveFolderId) { throw "Drive folder creation did not return an id" }
+
+    Invoke-Json -Method Get -Path "/api/drive?folder_id=$driveFolderId" -Session $Session | Out-Null
+
+    $textFile = New-TemporaryFile
+    Set-Content -LiteralPath $textFile.FullName -Value "Drive smoke text file $RunId" -NoNewline
+    $textUpload = Invoke-DriveFileUpload -Paths @("/api/drive/files", "/api/drive/upload") -FilePath $textFile.FullName -FileName "$RunId-drive.txt" -ContentType "text/plain" -FolderId $driveFolderId -Session $Session -Csrf $Csrf
+    $textFileId = Get-ResponseId -Response $textUpload -Containers @("file", "item")
+    if (-not $textFileId) { throw "Drive text upload did not return an id" }
+    $driveFileIds += $textFileId
+
+    $pdfFile = New-TemporaryFile
+    Set-Content -LiteralPath $pdfFile.FullName -Value "%PDF-1.4`n1 0 obj << /Type /Catalog >> endobj`n%%EOF" -NoNewline
+    $pdfUpload = Invoke-DriveFileUpload -Paths @("/api/drive/files", "/api/drive/upload") -FilePath $pdfFile.FullName -FileName "$RunId-drive.pdf" -ContentType "application/pdf" -FolderId $driveFolderId -Session $Session -Csrf $Csrf
+    $pdfFileId = Get-ResponseId -Response $pdfUpload -Containers @("file", "item")
+    if (-not $pdfFileId) { throw "Drive PDF-like upload did not return an id" }
+    $driveFileIds += $pdfFileId
+
+    $folderList = Invoke-Json -Method Get -Path "/api/drive?folder_id=$driveFolderId" -Session $Session
+    $folderListJson = $folderList | ConvertTo-Json -Depth 8
+    if ($folderListJson -notmatch [regex]::Escape([string]$textFileId) -or $folderListJson -notmatch [regex]::Escape([string]$pdfFileId)) { throw "Drive folder listing did not include uploaded files" }
+
+    $preview = Invoke-WebRequest -Uri "$BaseUrl/api/drive/files/$textFileId/preview" -Method Get -WebSession $Session -ErrorAction Stop
+    if ($preview.StatusCode -ne 200 -or $preview.Content -notmatch "Drive smoke text file") { throw "Drive file preview failed" }
+    $download = Invoke-WebRequest -Uri "$BaseUrl/api/drive/files/$pdfFileId/download" -Method Get -WebSession $Session -ErrorAction Stop
+    if ($download.StatusCode -ne 200) { throw "Drive file download failed" }
+
+    try {
+      $renamed = Invoke-Json -Method Patch -Path "/api/drive/files/$textFileId" -Session $Session -Csrf $Csrf -Body @{ name = "$RunId-renamed.txt" }
+      $renamedJson = $renamed | ConvertTo-Json -Depth 8
+      if ($renamedJson -notmatch [regex]::Escape("$RunId-renamed.txt")) { throw "Drive file rename did not return renamed file" }
+    } catch {
+      if (@(404, 405) -notcontains (Get-HttpStatusCode -ErrorRecord $_)) { throw }
+    }
+
+    try {
+      Invoke-Json -Method Patch -Path "/api/drive/files/$textFileId/content" -Session $Session -Csrf $Csrf -Body @{ content = "Drive smoke edited text file $RunId" } | Out-Null
+      $editedPreview = Invoke-WebRequest -Uri "$BaseUrl/api/drive/files/$textFileId/preview" -Method Get -WebSession $Session -ErrorAction Stop
+      if ($editedPreview.Content -notmatch "edited text file") { throw "Drive text editor update failed" }
+    } catch {
+      if (@(404, 405) -notcontains (Get-HttpStatusCode -ErrorRecord $_)) { throw }
+    }
+
+    $privacyUser = Get-OrCreateSmokePrivacyUser -Session $Session -Csrf $Csrf
+    $privacyCheck = "skipped: admin user creation/login unavailable"
+    if ($privacyUser) {
+      $privacySession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+      try {
+        Invoke-Json -Method Post -Path "/api/login" -Session $privacySession -Body @{ email = $privacyUser.email; password = $privacyUser.password } | Out-Null
+        Assert-DrivePrivateForOtherUser -Path "/api/drive/files/$textFileId/preview" -Session $privacySession
+        Assert-DrivePrivateForOtherUser -Path "/api/drive?folder_id=$driveFolderId" -Session $privacySession
+        $privacyCheck = "passed"
+      } catch {
+        if ($_.Exception.Message -match "^Drive privacy check failed:") { throw }
+        $privacyCheck = "skipped: $($_.Exception.Message)"
+      }
+    }
+
+    try {
+      Invoke-Json -Method Delete -Path "/api/drive/files/$pdfFileId" -Session $Session -Csrf $Csrf | Out-Null
+      $driveFileIds = @($driveFileIds | Where-Object { $_ -ne $pdfFileId })
+    } catch {
+      if (@(404, 405) -notcontains (Get-HttpStatusCode -ErrorRecord $_)) { throw }
+    }
+
+    return "passed; privacy=$privacyCheck"
+  } finally {
+    foreach ($fileId in $driveFileIds) {
+      Remove-SmokeResource -Path "/api/drive/files/$fileId" -Session $Session -Csrf $Csrf | Out-Null
+      Remove-SmokeResource -Path "/api/drive/items/$fileId" -Session $Session -Csrf $Csrf | Out-Null
+    }
+    if ($driveFolderId) {
+      Remove-SmokeResource -Path "/api/drive/folders/$driveFolderId" -Session $Session -Csrf $Csrf | Out-Null
+      Remove-SmokeResource -Path "/api/drive/items/$driveFolderId" -Session $Session -Csrf $Csrf | Out-Null
+    }
+    if ($textFile -and (Test-Path -LiteralPath $textFile.FullName)) { Remove-Item -LiteralPath $textFile.FullName -Force }
+    if ($pdfFile -and (Test-Path -LiteralPath $pdfFile.FullName)) { Remove-Item -LiteralPath $pdfFile.FullName -Force }
+  }
+}
+
 function Invoke-AiReviewNote {
   param(
     [string]$Token,
@@ -147,6 +325,7 @@ $csrf = $null
 $tmpFile = $null
 $encryptedBackupZip = $null
 $encryptedBackupCheck = "not run"
+$driveCheck = "not run"
 $cleanup = [ordered]@{}
 
 try {
@@ -326,6 +505,8 @@ try {
     if (-not $fileRecord.download_url) { throw "Sync file download URL missing" }
   }
 
+  $driveCheck = Test-DriveApis -RunId $runId -Session $session -Csrf $csrf
+
   $pushCreate = Invoke-Json -Method Post -Path "/api/sync/push" -Session $session -Csrf $csrf -Body @{
     client_id = "smoke-client-$runId"
     mutations = @(@{
@@ -373,6 +554,7 @@ try {
     backup = $backup.file
     syncWatermark = $syncManifest.watermark
     encryptedBackupCheck = $encryptedBackupCheck
+    driveCheck = $driveCheck
   } | ConvertTo-Json -Compress
 } finally {
   if ($csrf) {

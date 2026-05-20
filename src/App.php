@@ -72,6 +72,20 @@ final class App
         if ($method === 'GET' && $path === '/features') $this->featureSettings($user);
         if ($method === 'PATCH' && $path === '/features') $this->saveFeatureSettings($user);
         if ($method === 'GET' && preg_match('#^/sync/files/(\d+)$#', $path, $m)) $this->downloadFile($user, (int)$m[1]);
+        if ($method === 'GET' && in_array($path, ['/drive', '/drive/folders', '/drive/files'], true)) $this->driveList($user);
+        if ($method === 'POST' && $path === '/drive/folders') $this->driveCreateFolder($user);
+        if ($method === 'PATCH' && preg_match('#^/drive/folders/(\d+)$#', $path, $m)) $this->driveUpdateFolder($user, (int)$m[1]);
+        if ($method === 'DELETE' && preg_match('#^/drive/folders/(\d+)$#', $path, $m)) $this->driveDeleteFolder($user, (int)$m[1]);
+        if ($method === 'POST' && $path === '/drive/files') $this->driveUploadFile($user);
+        if ($method === 'POST' && $path === '/drive/files/upload') $this->driveUploadFile($user);
+        if ($method === 'PATCH' && preg_match('#^/drive/files/(\d+)/content$#', $path, $m)) $this->driveUpdateFileContent($user, (int)$m[1]);
+        if ($method === 'PATCH' && preg_match('#^/drive/files/(\d+)$#', $path, $m)) $this->driveUpdateFile($user, (int)$m[1]);
+        if ($method === 'DELETE' && preg_match('#^/drive/files/(\d+)$#', $path, $m)) $this->driveDeleteFile($user, (int)$m[1]);
+        if ($method === 'GET' && preg_match('#^/drive/files/(\d+)$#', $path, $m)) $this->driveDownloadFile($user, (int)$m[1], false);
+        if ($method === 'GET' && preg_match('#^/drive/files/(\d+)/(download|preview)$#', $path, $m)) $this->driveDownloadFile($user, (int)$m[1], $m[2] === 'preview');
+        if ($method === 'GET' && preg_match('#^/drive/(folders|files)/(\d+)/shares$#', $path, $m)) $this->driveListShares($user, $m[1], (int)$m[2]);
+        if ($method === 'POST' && preg_match('#^/drive/(folders|files)/(\d+)/shares$#', $path, $m)) $this->driveShare($user, $m[1], (int)$m[2]);
+        if ($method === 'DELETE' && preg_match('#^/drive/(folders|files)/(\d+)/shares/(\d+)$#', $path, $m)) $this->driveUnshare($user, $m[1], (int)$m[2], (int)$m[3]);
         if ($method === 'GET' && $path === '/integrations/ai/status') $this->aiReviewStatus($user);
         if ($method === 'POST' && $path === '/integrations/ai/enable') $this->enableAiReviewApi($user);
         if ($method === 'POST' && $path === '/integrations/ai/reveal') $this->revealAiReviewApiToken($user);
@@ -1927,6 +1941,300 @@ final class App
         exit;
     }
 
+    private function driveList(array $user): void
+    {
+        $parentId = isset($_GET['parent_id']) && $_GET['parent_id'] !== '' ? (int)$_GET['parent_id'] : (isset($_GET['folder_id']) && $_GET['folder_id'] !== '' ? (int)$_GET['folder_id'] : null);
+        $q = trim((string)($_GET['q'] ?? ''));
+        $userId = (int)$user['id'];
+        if ($parentId) $this->driveFolderAccess($user, $parentId, 'view');
+        if ($parentId) {
+            $folderSql = "SELECT f.*, CASE WHEN f.owner_user_id = ? THEN 'owner' ELSE COALESCE(s.permission, 'view') END AS permission FROM drive_folders f LEFT JOIN drive_shares s ON s.item_type = 'folder' AND s.item_id = f.id AND s.user_id = ? WHERE f.deleted = 0 AND f.parent_id = ?";
+            $folderArgs = [$userId, $userId, $parentId];
+            $fileSql = "SELECT f.id, f.owner_user_id, f.folder_id, f.original_name, f.mime, f.size, f.created_at, f.updated_at, CASE WHEN f.owner_user_id = ? THEN 'owner' ELSE COALESCE(s.permission, 'view') END AS permission FROM drive_files f LEFT JOIN drive_shares s ON s.item_type = 'file' AND s.item_id = f.id AND s.user_id = ? WHERE f.deleted = 0 AND f.folder_id = ?";
+            $fileArgs = [$userId, $userId, $parentId];
+        } else {
+            $folderSql = "SELECT f.*, CASE WHEN f.owner_user_id = ? THEN 'owner' ELSE s.permission END AS permission FROM drive_folders f LEFT JOIN drive_shares s ON s.item_type = 'folder' AND s.item_id = f.id AND s.user_id = ? WHERE f.deleted = 0 AND ((f.owner_user_id = ? AND f.parent_id IS NULL) OR s.user_id = ?)";
+            $folderArgs = [$userId, $userId, $userId, $userId];
+            $fileSql = "SELECT f.id, f.owner_user_id, f.folder_id, f.original_name, f.mime, f.size, f.created_at, f.updated_at, CASE WHEN f.owner_user_id = ? THEN 'owner' ELSE s.permission END AS permission FROM drive_files f LEFT JOIN drive_shares s ON s.item_type = 'file' AND s.item_id = f.id AND s.user_id = ? WHERE f.deleted = 0 AND ((f.owner_user_id = ? AND f.folder_id IS NULL) OR s.user_id = ?)";
+            $fileArgs = [$userId, $userId, $userId, $userId];
+        }
+        if ($q !== '') {
+            $folderSql .= ' AND f.name LIKE ?';
+            $folderArgs[] = '%' . $q . '%';
+            $fileSql .= ' AND (f.original_name LIKE ? OR f.mime LIKE ?)';
+            array_push($fileArgs, '%' . $q . '%', '%' . $q . '%');
+        }
+        $folders = $this->db->prepare($folderSql . ' ORDER BY f.name COLLATE NOCASE');
+        $folders->execute($folderArgs);
+        $files = $this->db->prepare($fileSql . ' ORDER BY f.original_name COLLATE NOCASE');
+        $files->execute($fileArgs);
+        $this->json(['folders' => $folders->fetchAll(PDO::FETCH_ASSOC), 'files' => $files->fetchAll(PDO::FETCH_ASSOC), 'breadcrumbs' => $this->driveBreadcrumbs($user, $parentId)]);
+    }
+
+    private function driveCreateFolder(array $user): void
+    {
+        $this->requireEditor($user);
+        $data = $this->input();
+        $name = $this->driveName($data['name'] ?? 'New folder');
+        $parentId = !empty($data['parent_id']) ? (int)$data['parent_id'] : null;
+        if ($parentId) $this->driveFolderAccess($user, $parentId, 'edit');
+        $stmt = $this->db->prepare('INSERT INTO drive_folders (owner_user_id, parent_id, name) VALUES (?, ?, ?)');
+        $stmt->execute([(int)$user['id'], $parentId, $name]);
+        $id = (int)$this->db->lastInsertId();
+        $this->audit((int)$user['id'], 'drive_folder.created', 'drive_folder', $id);
+        $this->json(['folder' => $this->driveFolderAccess($user, $id, 'view')]);
+    }
+
+    private function driveUpdateFolder(array $user, int $id): void
+    {
+        $this->requireEditor($user);
+        $folder = $this->driveFolderAccess($user, $id, 'edit');
+        $data = $this->input();
+        $name = array_key_exists('name', $data) ? $this->driveName($data['name']) : $folder['name'];
+        $parentId = array_key_exists('parent_id', $data) && $data['parent_id'] !== '' ? (int)$data['parent_id'] : null;
+        if ($parentId) {
+            if ($parentId === $id || $this->driveFolderHasAncestor($parentId, $id)) throw new RuntimeException('Folder cannot be moved into itself');
+            $this->driveFolderAccess($user, $parentId, 'edit');
+        }
+        $this->db->prepare('UPDATE drive_folders SET name = ?, parent_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$name, $parentId, $id]);
+        $this->audit((int)$user['id'], 'drive_folder.updated', 'drive_folder', $id);
+        $this->json(['folder' => $this->driveFolderAccess($user, $id, 'view')]);
+    }
+
+    private function driveDeleteFolder(array $user, int $id): void
+    {
+        $this->requireEditor($user);
+        $this->driveFolderAccess($user, $id, 'edit');
+        $stmt = $this->db->prepare('WITH RECURSIVE tree(id) AS (SELECT id FROM drive_folders WHERE id = ? UNION ALL SELECT f.id FROM drive_folders f JOIN tree t ON f.parent_id = t.id) UPDATE drive_folders SET deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id IN (SELECT id FROM tree)');
+        $stmt->execute([$id]);
+        $fileStmt = $this->db->prepare('WITH RECURSIVE tree(id) AS (SELECT id FROM drive_folders WHERE id = ? UNION ALL SELECT f.id FROM drive_folders f JOIN tree t ON f.parent_id = t.id) UPDATE drive_files SET deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE folder_id IN (SELECT id FROM tree)');
+        $fileStmt->execute([$id]);
+        $this->audit((int)$user['id'], 'drive_folder.deleted', 'drive_folder', $id);
+        $this->json(['ok' => true]);
+    }
+
+    private function driveUploadFile(array $user): void
+    {
+        $this->requireEditor($user);
+        $folderId = !empty($_POST['folder_id']) ? (int)$_POST['folder_id'] : null;
+        if ($folderId) $this->driveFolderAccess($user, $folderId, 'edit');
+        if (empty($_FILES['file'])) throw new RuntimeException('No file uploaded');
+        $file = $_FILES['file'];
+        if (($file['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) throw new RuntimeException('Upload failed');
+        if (($file['size'] ?? 0) <= 0 || (int)$file['size'] > 250 * 1024 * 1024) throw new RuntimeException('Invalid file size');
+        $dir = Config::dir() . '/drive-files';
+        if (!is_dir($dir) && !mkdir($dir, 0775, true)) throw new RuntimeException('Upload storage unavailable');
+        $mime = (new finfo(FILEINFO_MIME_TYPE))->file($file['tmp_name']) ?: 'application/octet-stream';
+        $name = preg_replace('/[^a-zA-Z0-9._-]/', '_', basename((string)$file['name'])) ?: 'upload.bin';
+        $stored = bin2hex(random_bytes(16)) . '-' . $name;
+        if (!move_uploaded_file($file['tmp_name'], $dir . '/' . $stored)) throw new RuntimeException('Upload failed');
+        @chmod($dir . '/' . $stored, 0600);
+        $stmt = $this->db->prepare('INSERT INTO drive_files (owner_user_id, folder_id, original_name, stored_name, mime, size) VALUES (?, ?, ?, ?, ?, ?)');
+        $stmt->execute([(int)$user['id'], $folderId, (string)$file['name'], $stored, $mime, (int)$file['size']]);
+        $id = (int)$this->db->lastInsertId();
+        $this->audit((int)$user['id'], 'drive_file.uploaded', 'drive_file', $id);
+        $this->json(['file' => $this->driveFileAccess($user, $id, 'view')]);
+    }
+
+    private function driveUpdateFile(array $user, int $id): void
+    {
+        $this->requireEditor($user);
+        $file = $this->driveFileAccess($user, $id, 'edit');
+        $data = $this->input();
+        $name = array_key_exists('name', $data) ? $this->driveName($data['name']) : $file['original_name'];
+        $folderId = array_key_exists('folder_id', $data) && $data['folder_id'] !== '' ? (int)$data['folder_id'] : null;
+        if ($folderId) $this->driveFolderAccess($user, $folderId, 'edit');
+        $this->db->prepare('UPDATE drive_files SET original_name = ?, folder_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$name, $folderId, $id]);
+        $this->audit((int)$user['id'], 'drive_file.updated', 'drive_file', $id);
+        $this->json(['file' => $this->driveFileAccess($user, $id, 'view')]);
+    }
+
+    private function driveDeleteFile(array $user, int $id): void
+    {
+        $this->requireEditor($user);
+        $this->driveFileAccess($user, $id, 'edit');
+        $this->db->prepare('UPDATE drive_files SET deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$id]);
+        $this->audit((int)$user['id'], 'drive_file.deleted', 'drive_file', $id);
+        $this->json(['ok' => true]);
+    }
+
+    private function driveUpdateFileContent(array $user, int $id): void
+    {
+        $this->requireEditor($user);
+        $file = $this->driveFileAccess($user, $id, 'edit');
+        if (!$this->driveTextEditable($file)) throw new RuntimeException('This file type cannot be edited online');
+        $data = $this->input();
+        $content = (string)($data['content'] ?? '');
+        if (strlen($content) > 2 * 1024 * 1024) throw new RuntimeException('Editable files must be 2 MB or smaller');
+        $path = Config::dir() . '/drive-files/' . basename((string)$file['stored_name']);
+        if (!is_file($path)) throw new RuntimeException('File not found');
+        if (file_put_contents($path, $content, LOCK_EX) === false) throw new RuntimeException('File update failed');
+        @chmod($path, 0600);
+        $mime = $this->driveEditableMime((string)$file['original_name'], (string)($file['mime'] ?? ''));
+        $size = filesize($path) ?: strlen($content);
+        $this->db->prepare('UPDATE drive_files SET mime = ?, size = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$mime, $size, $id]);
+        $this->audit((int)$user['id'], 'drive_file.content_updated', 'drive_file', $id);
+        $this->json(['file' => $this->driveFileAccess($user, $id, 'view')]);
+    }
+
+    private function driveDownloadFile(array $user, int $id, bool $inline = false): void
+    {
+        $file = $this->driveFileAccess($user, $id, 'view');
+        $path = Config::dir() . '/drive-files/' . basename((string)$file['stored_name']);
+        if (!is_file($path)) throw new RuntimeException('File not found');
+        $this->audit((int)$user['id'], $inline ? 'drive_file.previewed' : 'drive_file.downloaded', 'drive_file', $id);
+        header_remove('Content-Type');
+        header('Content-Type: ' . ($file['mime'] ?: 'application/octet-stream'));
+        $mode = $inline && $this->isPreviewable($file['mime'] ?? '') ? 'inline' : 'attachment';
+        header('Content-Disposition: ' . $this->contentDisposition($mode, $file['original_name']));
+        header('X-Content-Type-Options: nosniff');
+        header('Content-Length: ' . filesize($path));
+        readfile($path);
+        exit;
+    }
+
+    private function driveListShares(array $user, string $kind, int $id): void
+    {
+        [$type, $subject] = $this->driveShareSubject($user, $kind, $id, 'admin');
+        $stmt = $this->db->prepare('SELECT s.user_id, s.permission, u.email, u.name FROM drive_shares s JOIN users u ON u.id = s.user_id WHERE s.item_type = ? AND s.item_id = ? ORDER BY u.email');
+        $stmt->execute([$type, $id]);
+        $this->json(['shares' => $stmt->fetchAll(PDO::FETCH_ASSOC), 'item' => $subject]);
+    }
+
+    private function driveShare(array $user, string $kind, int $id): void
+    {
+        [$type] = $this->driveShareSubject($user, $kind, $id, 'admin');
+        $data = $this->input();
+        $email = strtolower(trim((string)($data['email'] ?? '')));
+        $permission = (string)($data['permission'] ?? 'view');
+        if (!in_array($permission, ['view', 'edit', 'admin'], true)) throw new RuntimeException('Invalid permission');
+        $stmt = $this->db->prepare('SELECT id FROM users WHERE email = ? AND disabled = 0');
+        $stmt->execute([$email]);
+        $shareUserId = (int)$stmt->fetchColumn();
+        if (!$shareUserId) throw new RuntimeException('User not found');
+        if ($shareUserId === (int)$user['id']) throw new RuntimeException('Owner already has access');
+        $this->db->prepare('INSERT INTO drive_shares (item_type, item_id, user_id, permission) VALUES (?, ?, ?, ?) ON CONFLICT(item_type, item_id, user_id) DO UPDATE SET permission = excluded.permission')->execute([$type, $id, $shareUserId, $permission]);
+        $this->audit((int)$user['id'], 'drive_' . $type . '.shared', 'drive_' . $type, $id);
+        $this->driveListShares($user, $kind, $id);
+    }
+
+    private function driveUnshare(array $user, string $kind, int $id, int $shareUserId): void
+    {
+        [$type] = $this->driveShareSubject($user, $kind, $id, 'admin');
+        $this->db->prepare('DELETE FROM drive_shares WHERE item_type = ? AND item_id = ? AND user_id = ?')->execute([$type, $id, $shareUserId]);
+        $this->audit((int)$user['id'], 'drive_' . $type . '.unshared', 'drive_' . $type, $id);
+        $this->driveListShares($user, $kind, $id);
+    }
+
+    private function driveShareSubject(array $user, string $kind, int $id, string $level): array
+    {
+        if ($kind === 'folders') return ['folder', $this->driveFolderAccess($user, $id, $level)];
+        if ($kind === 'files') return ['file', $this->driveFileAccess($user, $id, $level)];
+        throw new RuntimeException('Invalid Drive item type');
+    }
+
+    private function driveFolderAccess(array $user, int $id, string $level): array
+    {
+        $stmt = $this->db->prepare('SELECT * FROM drive_folders WHERE id = ? AND deleted = 0');
+        $stmt->execute([$id]);
+        $folder = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$folder) throw new RuntimeException('Folder not found');
+        $permission = $this->drivePermission($user, 'folder', $id, (int)$folder['owner_user_id']);
+        if (!$permission && !empty($folder['parent_id'])) {
+            $parent = $this->driveFolderAccess($user, (int)$folder['parent_id'], 'view');
+            $permission = (string)($parent['permission'] ?? 'view');
+        }
+        $this->requireDrivePermission($permission, $level, 'Folder permission required');
+        $folder['permission'] = $permission;
+        return $folder;
+    }
+
+    private function driveFileAccess(array $user, int $id, string $level): array
+    {
+        $stmt = $this->db->prepare('SELECT * FROM drive_files WHERE id = ? AND deleted = 0');
+        $stmt->execute([$id]);
+        $file = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$file) throw new RuntimeException('File not found');
+        $permission = $this->drivePermission($user, 'file', $id, (int)$file['owner_user_id']);
+        if (!$permission && !empty($file['folder_id'])) {
+            $folder = $this->driveFolderAccess($user, (int)$file['folder_id'], 'view');
+            $permission = (string)($folder['permission'] ?? 'view');
+        }
+        $this->requireDrivePermission($permission, $level, 'File permission required');
+        $file['permission'] = $permission;
+        return $file;
+    }
+
+    private function drivePermission(array $user, string $type, int $id, int $ownerId): ?string
+    {
+        if ($ownerId === (int)$user['id']) return 'owner';
+        $stmt = $this->db->prepare('SELECT permission FROM drive_shares WHERE item_type = ? AND item_id = ? AND user_id = ?');
+        $stmt->execute([$type, $id, (int)$user['id']]);
+        $permission = $stmt->fetchColumn();
+        return $permission ? (string)$permission : null;
+    }
+
+    private function requireDrivePermission(?string $permission, string $level, string $message): void
+    {
+        $rank = ['view' => 1, 'read' => 1, 'edit' => 2, 'admin' => 3, 'owner' => 4];
+        if (($rank[$permission ?? ''] ?? 0) < ($rank[$level] ?? 1)) throw new RuntimeException($message);
+    }
+
+    private function driveFolderHasAncestor(int $folderId, int $ancestorId): bool
+    {
+        $current = $folderId;
+        while ($current > 0) {
+            if ($current === $ancestorId) return true;
+            $stmt = $this->db->prepare('SELECT parent_id FROM drive_folders WHERE id = ?');
+            $stmt->execute([$current]);
+            $current = (int)$stmt->fetchColumn();
+        }
+        return false;
+    }
+
+    private function driveBreadcrumbs(array $user, ?int $folderId): array
+    {
+        $crumbs = [];
+        $current = $folderId ?: 0;
+        while ($current > 0) {
+            $folder = $this->driveFolderAccess($user, $current, 'view');
+            array_unshift($crumbs, ['id' => (int)$folder['id'], 'name' => $folder['name']]);
+            $current = (int)($folder['parent_id'] ?? 0);
+        }
+        return $crumbs;
+    }
+
+    private function driveName($value): string
+    {
+        $name = trim((string)$value);
+        if ($name === '') throw new RuntimeException('Name required');
+        return substr(str_replace(["\r", "\n", '/', '\\'], '_', $name), 0, 180);
+    }
+
+    private function driveTextEditable(array $file): bool
+    {
+        $name = strtolower((string)($file['original_name'] ?? ''));
+        $mime = strtolower((string)($file['mime'] ?? ''));
+        if (str_starts_with($mime, 'text/')) return true;
+        if (in_array($mime, ['application/json', 'application/xml', 'application/csv', 'application/x-yaml'], true)) return true;
+        return (bool)preg_match('/\.(txt|md|markdown|csv|json|xml|yaml|yml|log|html|css|js|ts)$/', $name);
+    }
+
+    private function driveEditableMime(string $name, string $fallback): string
+    {
+        $lower = strtolower($name);
+        return match (true) {
+            str_ends_with($lower, '.md'), str_ends_with($lower, '.markdown') => 'text/markdown',
+            str_ends_with($lower, '.csv') => 'text/csv',
+            str_ends_with($lower, '.json') => 'application/json',
+            str_ends_with($lower, '.xml') => 'application/xml',
+            str_ends_with($lower, '.html') => 'text/html',
+            str_ends_with($lower, '.css') => 'text/css',
+            str_ends_with($lower, '.js') => 'text/javascript',
+            default => $fallback !== '' ? $fallback : 'text/plain',
+        };
+    }
+
     private function revealSecret(array $user, int $id): void
     {
         $this->requireEditor($user);
@@ -2222,6 +2530,10 @@ final class App
             foreach (glob($filesDir . '/*') ?: [] as $file) {
                 if (is_file($file)) $this->addBackupFile($zip, $file, 'files/' . basename($file), $encrypt);
             }
+            $driveFilesDir = Config::dir() . '/drive-files';
+            foreach (glob($driveFilesDir . '/*') ?: [] as $file) {
+                if (is_file($file)) $this->addBackupFile($zip, $file, 'drive-files/' . basename($file), $encrypt);
+            }
         } catch (Throwable $e) {
             $zip->close();
             @unlink($zipPath);
@@ -2322,6 +2634,7 @@ final class App
             }
             if ($entry === 'keys/master.key') continue;
             if (preg_match('#^files/[^/]+$#', $entry)) continue;
+            if (preg_match('#^drive-files/[^/]+$#', $entry)) continue;
             $zip->close();
             throw new RuntimeException('Backup ZIP contains unexpected entries');
         }
@@ -2353,7 +2666,7 @@ final class App
         if ($zip->open($path) !== true) throw new RuntimeException('Invalid backup ZIP');
         if ($passphrase !== '') $zip->setPassword($passphrase);
         $configDir = Config::dir();
-        foreach (['files', 'keys'] as $dir) {
+        foreach (['files', 'drive-files', 'keys'] as $dir) {
             if (!is_dir($configDir . '/' . $dir) && !mkdir($configDir . '/' . $dir, 0775, true)) {
                 $zip->close();
                 throw new RuntimeException('Unable to prepare restore directory');
@@ -2380,9 +2693,12 @@ final class App
         foreach (glob($configDir . '/files/*') ?: [] as $oldFile) {
             if (is_file($oldFile)) @unlink($oldFile);
         }
+        foreach (glob($configDir . '/drive-files/*') ?: [] as $oldFile) {
+            if (is_file($oldFile)) @unlink($oldFile);
+        }
         for ($i = 0; $i < $zip->numFiles; $i++) {
             $entry = $zip->getNameIndex($i);
-            if (!is_string($entry) || !preg_match('#^files/[^/]+$#', $entry)) continue;
+            if (!is_string($entry) || (!preg_match('#^files/[^/]+$#', $entry) && !preg_match('#^drive-files/[^/]+$#', $entry))) continue;
             $content = $zip->getFromIndex($i);
             if ($content === false) {
                 $zip->close();

@@ -137,6 +137,36 @@ CREATE TABLE IF NOT EXISTS files (
     size INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS drive_folders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    parent_id INTEGER REFERENCES drive_folders(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS drive_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    folder_id INTEGER REFERENCES drive_folders(id) ON DELETE SET NULL,
+    original_name TEXT NOT NULL,
+    stored_name TEXT NOT NULL,
+    mime TEXT,
+    size INTEGER NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS drive_shares (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_type TEXT NOT NULL,
+    item_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    permission TEXT NOT NULL DEFAULT 'view',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(item_type, item_id, user_id)
+);
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -338,6 +368,10 @@ SQL);
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_task_reminders_user_due ON task_reminders(user_id, remind_at, sent_at)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_task_reminders_task ON task_reminders(task_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_task_notes_note ON task_notes(note_id)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_drive_folders_owner_parent ON drive_folders(owner_user_id, parent_id, deleted)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_drive_files_owner_folder ON drive_files(owner_user_id, folder_id, deleted)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_drive_shares_user ON drive_shares(user_id, item_type, permission)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_drive_shares_item ON drive_shares(item_type, item_id)');
     }
 
     private function addColumnIfMissing(string $table, string $column, string $definition): void

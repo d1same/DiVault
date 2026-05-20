@@ -78,6 +78,7 @@ The container listens on HTTP port `3443`. Your reverse proxy provides public HT
 - Notes, quick notes, archive, recycle bin, categories, and subcategories
 - Rich note blocks for text, headings, lists, checklists, code, tables, drawings, files, and secrets
 - File, photo, and document attachments
+- Drive workspace for private folders, uploaded documents, preview, and download
 - Auto-hidden encrypted sensitive lines such as passwords, tokens, API keys, and secrets
 - Optional Calendar and Tasks modules per user
 - Day, Week, Month, Year, and Schedule calendar views
@@ -119,6 +120,36 @@ DiVault stores application data under `/config`:
 Keep `/config/keys/master.key` safe. If it is lost, encrypted sensitive values cannot be recovered.
 
 Full backup ZIPs include the SQLite database, uploaded files, and the master key. Treat backup ZIPs like production secrets.
+
+## Drive
+
+Drive is the DiVault file workspace for documents that should live outside an individual note. The MVP is designed around private, user-owned folders and files with simple browser access:
+
+- Create folders for clients, projects, procedures, and reference material.
+- Upload small business documents, text files, PDFs, images, and other file types supported by the server upload limits.
+- List folders and files, preview browser-safe files, and download originals.
+- Rename, move, or delete files and folders as the Drive API exposes those actions.
+- Share specific files or folders with other DiVault users using explicit permissions.
+- Edit text-like files such as TXT, Markdown, CSV, JSON, XML, HTML, CSS, and JS directly in the browser.
+
+Privacy model:
+
+- Drive items are private to the owning user by default.
+- Owner/admin accounts can administer users and backups, but normal users should not be able to browse another user's Drive files through Drive URLs.
+- Admin role alone does not grant read access to another user's private Drive files.
+- Mutating Drive requests use the same logged-in session and CSRF protection as notes, files, backups, and settings.
+
+Backup model:
+
+- Drive metadata is stored in the SQLite database.
+- Drive uploads are stored under `/config/drive-files/`.
+- Full backup ZIPs and encrypted backup ZIPs include Drive data because they include `/config/app.sqlite`, `/config/files/`, `/config/drive-files/`, and `/config/keys/master.key`.
+
+Office-editing roadmap:
+
+- The first Drive release focuses on upload, preview, download, organization, sharing, privacy checks, backup inclusion, and built-in text-file editing.
+- Browser-based editing for binary Office-style documents is planned as an integration layer rather than a requirement for the MVP.
+- Candidate integrations include OnlyOffice, Collabora, or another self-hosted editor that can be permission-checked through DiVault and store revisions back into Drive.
 
 ## Notes And Secrets
 
@@ -252,9 +283,10 @@ Full backup ZIPs include:
 
 - `/config/app.sqlite`
 - `/config/keys/master.key`
-- Uploaded files from `/config/files/`
+- Uploaded note files from `/config/files/`
+- Drive files from `/config/drive-files/`
 
-The database includes notes, users, settings, categories, assets, calendars, calendar shares, events, tasks, reminders, and audit records.
+The database includes notes, Drive metadata, users, settings, categories, assets, calendars, calendar shares, events, tasks, reminders, and audit records.
 
 Restore options:
 
@@ -346,7 +378,7 @@ After starting a local container on port `3443`, run:
 powershell -ExecutionPolicy Bypass -File scripts\smoke.ps1
 ```
 
-The smoke test covers health, setup, login, CSRF, notes, categories, encrypted note secrets, file upload/preview, backups, sessions, asset records, encrypted asset secrets, sync manifest/snapshot/pagination, file sync URLs, idempotent sync push, and conflict detection.
+The smoke test covers health, setup, login, CSRF, notes, categories, encrypted note secrets, file upload/preview, backups, sessions, asset records, encrypted asset secrets, sync manifest/snapshot/pagination, file sync URLs, idempotent sync push, and conflict detection. It also probes `/api/drive`; when Drive endpoints are available it validates folder creation, text and PDF-like uploads, listing, preview, download, text editing, optional rename/delete endpoints, and a best-effort multi-user privacy check.
 
 ## Clean First-Run Test
 
@@ -364,7 +396,7 @@ docker rm -f divault-clean-test
 - Google Keep Takeout import
 - OCR for PDFs and images
 - Optional S3-compatible file storage
-- Optional document editing integration
+- Optional Office-style document editing integration for Drive
 
 ## License
 

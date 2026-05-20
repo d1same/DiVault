@@ -1,4 +1,4 @@
-const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), taskFilter: localStorage.getItem('divault_task_filter') || 'open', theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
+const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), taskFilter: localStorage.getItem('divault_task_filter') || 'open', driveFolderId: localStorage.getItem('divault_drive_folder_id') || '', driveFolders: [], driveFiles: [], driveBreadcrumbs: [], driveLayout: localStorage.getItem('divault_drive_layout') || 'grid', theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
 Object.assign(state, { features: null, calendars: [], calendarFeeds: [], events: [], tasks: [], calendarDate: new Date(), miniCalendarDate: new Date(), calendarView: localStorage.getItem('divault_calendar_view') || 'schedule', reminders: [], reminderTimer: null, linkableNotesLoaded: false, routeNoteId: null });
 if (state.calendarView === 'agenda') state.calendarView = 'schedule';
 const app = document.querySelector('#app');
@@ -250,14 +250,14 @@ function setupAccessibleModal(modal, initialFocusSelector = '[data-close], butto
   return close;
 }
 
-function promptDialog({ title, message, type = 'text', placeholder = '', required = false, confirmText = 'Continue' }) {
+function promptDialog({ title, message, type = 'text', placeholder = '', value = '', required = false, confirmText = 'Continue' }) {
   return new Promise(resolve => {
     const modal = document.createElement('div');
     modal.className = 'editor';
     modal.innerHTML = `<section class="editor-panel small-panel">
       <div class="topbar"><div><h2>${esc(title)}</h2><p class="muted small">${esc(message)}</p></div><button class="btn ghost" type="button" data-close>Cancel</button></div>
       <form class="stack" id="promptForm">
-        <label class="field"><span>${esc(title)}</span><input name="value" type="${esc(type)}" placeholder="${esc(placeholder)}" ${required ? 'required' : ''}></label>
+        <label class="field"><span>${esc(title)}</span><input name="value" type="${esc(type)}" placeholder="${esc(placeholder)}" value="${esc(value)}" ${required ? 'required' : ''}></label>
         <div class="btn-row"><button class="btn primary">${esc(confirmText)}</button><button class="btn ghost" type="button" data-cancel>Cancel</button></div>
       </form>
     </section>`;
@@ -985,11 +985,37 @@ async function loadCurrentSection() {
     state.tasks = (await api('/tasks?view=all').catch(() => ({ tasks: [] }))).tasks || [];
     return;
   }
+  if (state.section === 'drive') {
+    await loadDrive();
+    return;
+  }
   if (isNoteSection(state.section)) {
     state.notes = (await loadNotes()).notes;
     return;
   }
   state.assets = (await loadAssets()).assets;
+}
+
+async function loadDrive() {
+  const params = new URLSearchParams();
+  if (state.driveFolderId) params.set('folder_id', state.driveFolderId);
+  if (state.q) params.set('q', state.q);
+  const suffix = params.toString() ? `?${params}` : '';
+  const [foldersRes, filesRes] = await Promise.all([
+    api('/drive/folders' + suffix).catch(err => ({ error: err.message, folders: [] })),
+    api('/drive/files' + suffix).catch(err => ({ error: err.message, files: [] }))
+  ]);
+  state.driveFolders = normalizeDriveCollection(foldersRes, 'folders');
+  state.driveFiles = normalizeDriveCollection(filesRes, 'files');
+  state.driveBreadcrumbs = foldersRes.breadcrumbs || foldersRes.path || filesRes.breadcrumbs || filesRes.path || [];
+}
+
+function normalizeDriveCollection(res, key) {
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res?.[key])) return res[key];
+  if (Array.isArray(res?.items)) return res.items;
+  if (Array.isArray(res?.data)) return res.data;
+  return [];
 }
 
 async function loadHomeData() {
@@ -1073,7 +1099,7 @@ function isNoteSection(section) {
 }
 
 function isUtilitySection(section) {
-  return ['home', 'calendar', 'tasks'].includes(String(section || ''));
+  return ['home', 'calendar', 'tasks', 'drive'].includes(String(section || ''));
 }
 
 function noteLayoutStorageKey(section = state.section) {
@@ -1111,6 +1137,7 @@ function sectionLabel(section) {
   if (section === 'home') return 'Home';
   if (section === 'calendar') return 'Calendar';
   if (section === 'tasks') return 'Tasks';
+  if (section === 'drive') return 'Files';
   if (section === 'notes:all') return 'All';
   if (section === 'notes:quick') return 'Quick notes';
   if (section === 'notes:archive') return 'Archive';
@@ -1152,6 +1179,7 @@ function renderFilterBar(panelOpen) {
   if (state.section === 'home') return '';
   if (state.section === 'calendar') return `<div class="filterbar calendar-filter"><div class="calendar-toolbar"><div class="btn-row calendar-nav-row"><button class="btn icon-only-btn" id="prevCalendarMonth" type="button" aria-label="Previous">‹</button><button class="btn" id="todayCalendarMonth" type="button">Today</button><button class="btn icon-only-btn" id="nextCalendarMonth" type="button" aria-label="Next">›</button></div><select class="calendar-view-select" id="calendarViewSelect" aria-label="Calendar view"><option value="day" ${state.calendarView === 'day' ? 'selected' : ''}>Day</option><option value="week" ${state.calendarView === 'week' ? 'selected' : ''}>Week</option><option value="month" ${state.calendarView === 'month' ? 'selected' : ''}>Month</option><option value="year" ${state.calendarView === 'year' ? 'selected' : ''}>Year</option><option value="schedule" ${state.calendarView === 'schedule' ? 'selected' : ''}>Schedule</option></select><div class="calendar-view-toggle" role="group" aria-label="Calendar view"><button class="btn ghost ${state.calendarView === 'day' ? 'active' : ''}" data-calendar-view="day" type="button">Day</button><button class="btn ghost ${state.calendarView === 'week' ? 'active' : ''}" data-calendar-view="week" type="button">Week</button><button class="btn ghost ${state.calendarView === 'month' ? 'active' : ''}" data-calendar-view="month" type="button">Month</button><button class="btn ghost ${state.calendarView === 'year' ? 'active' : ''}" data-calendar-view="year" type="button">Year</button><button class="btn ghost ${state.calendarView === 'schedule' ? 'active' : ''}" data-calendar-view="schedule" type="button">Schedule</button></div><div class="btn-row calendar-add-row"><button class="btn primary icon-only-btn action-fab" id="newEventBtn" type="button" aria-label="New event" title="New event">${toolIcon('calendar', 'New event')}</button><button class="btn primary icon-only-btn action-fab" id="newCalendarTaskBtn" type="button" aria-label="New task" title="New task">${toolIcon('check', 'New task')}</button></div></div></div>`;
   if (state.section === 'tasks') return `<div class="filterbar task-filter"><input class="search" id="search" aria-label="Search tasks" placeholder="Search tasks..." value="${esc(state.q)}"><button class="btn primary" id="newTaskBtn" type="button">New task</button></div>`;
+  if (state.section === 'drive') return `<div class="filterbar drive-filter"><input class="search" id="search" type="search" aria-label="Search files" placeholder="Search files and folders...  Q" value="${esc(state.q)}"><div class="filter-actions"><button class="btn" id="newDriveFolderBtn" type="button">New folder</button><label class="btn primary drive-upload-label">Upload<input id="driveUploadInput" type="file" multiple></label><div class="note-layout-toggle drive-layout-toggle" role="group" aria-label="Drive layout"><button class="btn ghost ${state.driveLayout === 'grid' ? 'active' : ''}" data-drive-layout="grid" type="button">Grid</button><button class="btn ghost ${state.driveLayout === 'list' ? 'active' : ''}" data-drive-layout="list" type="button">List</button></div></div></div>`;
   if (isNoteSection(state.section)) {
     return `<div class="filterbar notes-filter"><div class="filter-actions filter-actions-left">${state.notes.length && !state.selectionMode ? '<button class="btn" type="button" id="startSelectNotes">Select</button>' : ''}${renderNoteLayoutToggle()}${renderNoteSortSelect()}${state.section === 'notes:trash' ? '<button class="btn danger" id="emptyTrashBtn" type="button">Empty recycle bin</button>' : ''}</div><input class="search" id="search" aria-label="Search notes. Press Q to focus search." title="Press Q to search" placeholder="Search ${esc(sectionLabel(state.section))}...  Q" value="${esc(state.q)}"><div class="filter-actions note-filter-actions"><button class="btn ghost icon-only-btn" id="shortcutsHelpBtn" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">?</button><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick notes" title="Quick notes (K)">${toolIcon('quick', 'Quick notes')}</button><button class="btn primary icon-only-btn action-fab" id="newBtn" aria-label="New note" title="New full note (N or +)">+</button></div></div>`;
   }
@@ -1244,11 +1272,12 @@ function renderMainContent() {
   if (state.section === 'home') return renderHome();
   if (state.section === 'calendar') return renderCalendar();
   if (state.section === 'tasks') return renderTasks();
+  if (state.section === 'drive') return renderDrive();
   return isNoteSection(state.section) ? renderNotesWorkspace() : renderAssetTable();
 }
 
 function renderNavGroups() {
-  const utility = `<div class="nav-group"><div class="nav-heading">Workspace</div>${homeAvailable() ? renderNavButton('home', 'Home', 0) : ''}${featureOn('calendar') ? renderNavButton('calendar', 'Calendar', state.events.length || 0) : ''}${featureOn('tasks') ? renderNavButton('tasks', 'Tasks', state.tasks.filter(t => t.status !== 'done').length || 0) : ''}</div>`;
+  const utility = `<div class="nav-group"><div class="nav-heading">Workspace</div>${homeAvailable() ? renderNavButton('home', 'Home', 0) : ''}${featureOn('calendar') ? renderNavButton('calendar', 'Calendar', state.events.length || 0) : ''}${featureOn('tasks') ? renderNavButton('tasks', 'Tasks', state.tasks.filter(t => t.status !== 'done').length || 0) : ''}${renderNavButton('drive', 'Files', state.driveFiles.length || 0)}</div>`;
   const noteGroups = `<div class="nav-group"><div class="nav-heading">Categories<button class="mini-add" id="addCategoryBtn" type="button" aria-label="Manage note categories">Manage</button></div>
     ${renderNavButton('notes:all', 'All', state.counts['notes:all'] ?? 0, '')}
     ${renderNavButton('notes:quick', 'Quick notes', state.counts['notes:quick'] ?? 0, '')}
@@ -1264,7 +1293,7 @@ function renderNavGroups() {
 function renderNavButton(key, label, count = 0, dropCategoryId = undefined) {
   const drop = dropCategoryId !== undefined ? `data-drop-category-id="${dropCategoryId}"` : '';
   const category = key.startsWith('notes:cat:') ? state.categories.find(c => String(c.id) === key.replace('notes:cat:', '')) : null;
-  const icon = category?.icon || (key === 'home' ? 'home' : key === 'calendar' ? 'calendar' : key === 'tasks' ? 'check' : key === 'notes:all' ? 'folder' : key === 'notes:quick' ? 'quick' : key === 'notes:archive' ? 'receipt' : key === 'notes:trash' ? 'trash' : 'folder');
+  const icon = category?.icon || (key === 'home' ? 'home' : key === 'calendar' ? 'calendar' : key === 'tasks' ? 'check' : key === 'drive' ? 'folder' : key === 'notes:all' ? 'folder' : key === 'notes:quick' ? 'quick' : key === 'notes:archive' ? 'receipt' : key === 'notes:trash' ? 'trash' : 'folder');
   return `<button data-section="${esc(key)}" ${drop} class="${state.section === key ? 'active' : ''}" title="${esc(label)}"><span class="nav-icon">${renderCategoryIcon(icon)}</span><span class="nav-label">${esc(label)}</span><span class="nav-count">${count}</span></button>`;
 }
 
@@ -2062,6 +2091,164 @@ function bindContentActions() {
       renderApp();
     }, 'Archive failed');
   }));
+  bindDriveActions();
+}
+
+function bindDriveActions() {
+  if (state.section !== 'drive') return;
+  document.querySelectorAll('[data-drive-layout]').forEach(btn => btn.addEventListener('click', () => {
+    state.driveLayout = btn.dataset.driveLayout === 'list' ? 'list' : 'grid';
+    localStorage.setItem('divault_drive_layout', state.driveLayout);
+    document.querySelector('#contentArea').innerHTML = renderDrive();
+    bindContentActions();
+  }));
+  document.querySelectorAll('[data-drive-folder]').forEach(btn => btn.addEventListener('click', async () => {
+    state.driveFolderId = btn.dataset.driveFolder || '';
+    localStorage.setItem('divault_drive_folder_id', state.driveFolderId);
+    await loadDrive();
+    renderApp();
+  }));
+  document.querySelector('#newDriveFolderBtn')?.addEventListener('click', createDriveFolder);
+  document.querySelector('#driveUploadInput')?.addEventListener('change', e => uploadDriveFiles([...e.target.files]));
+  document.querySelector('#driveDropInput')?.addEventListener('change', e => uploadDriveFiles([...e.target.files]));
+  const dropzone = document.querySelector('#driveDropzone');
+  dropzone?.addEventListener('submit', e => e.preventDefault());
+  dropzone?.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+  dropzone?.addEventListener('dragleave', e => { if (!dropzone.contains(e.relatedTarget)) dropzone.classList.remove('drag-over'); });
+  dropzone?.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('drag-over');
+    uploadDriveFiles([...e.dataTransfer.files]);
+  });
+  document.querySelectorAll('[data-rename-drive-folder]').forEach(btn => btn.addEventListener('click', () => renameDriveItem('folder', btn.dataset.renameDriveFolder, btn.dataset.name)));
+  document.querySelectorAll('[data-delete-drive-folder]').forEach(btn => btn.addEventListener('click', () => deleteDriveItem('folder', btn.dataset.deleteDriveFolder, btn.dataset.name)));
+  document.querySelectorAll('[data-rename-drive-file]').forEach(btn => btn.addEventListener('click', () => renameDriveItem('file', btn.dataset.renameDriveFile, btn.dataset.name)));
+  document.querySelectorAll('[data-delete-drive-file]').forEach(btn => btn.addEventListener('click', () => deleteDriveItem('file', btn.dataset.deleteDriveFile, btn.dataset.name)));
+  document.querySelectorAll('[data-share-drive-folder]').forEach(btn => btn.addEventListener('click', () => openDriveShareDialog('folder', btn.dataset.shareDriveFolder, btn.dataset.name)));
+  document.querySelectorAll('[data-share-drive-file]').forEach(btn => btn.addEventListener('click', () => openDriveShareDialog('file', btn.dataset.shareDriveFile, btn.dataset.name)));
+  document.querySelectorAll('[data-edit-drive-file]').forEach(btn => btn.addEventListener('click', () => openDriveTextEditor(btn.dataset.editDriveFile, btn.dataset.name)));
+}
+
+async function createDriveFolder() {
+  const name = await promptDialog({ title: 'New folder', label: 'Folder name', value: '' });
+  if (!name) return;
+  await runUserAction(async () => {
+    await api('/drive/folders', { method: 'POST', body: { name, parent_id: state.driveFolderId || null, folder_id: state.driveFolderId || null } });
+    toast('Folder created');
+    await loadDrive();
+    renderApp();
+  }, 'Create folder failed');
+}
+
+async function uploadDriveFiles(files) {
+  files = files.filter(Boolean);
+  if (!files.length) return;
+  await runUserAction(async () => {
+    for (const file of files) {
+      const data = new FormData();
+      data.append('file', file);
+      if (state.driveFolderId) data.append('folder_id', state.driveFolderId);
+      await api('/drive/files', { method: 'POST', body: data });
+    }
+    toast(`Uploaded ${files.length} file${files.length === 1 ? '' : 's'}`);
+    await loadDrive();
+    renderApp();
+  }, 'Upload failed');
+}
+
+async function renameDriveItem(kind, id, currentName) {
+  const name = await promptDialog({ title: `Rename ${kind}`, label: 'Name', value: currentName || '' });
+  if (!name || name === currentName) return;
+  await runUserAction(async () => {
+    await api(`/drive/${kind === 'folder' ? 'folders' : 'files'}/${encodeURIComponent(id)}`, { method: 'PATCH', body: { name } });
+    toast('Renamed');
+    await loadDrive();
+    renderApp();
+  }, 'Rename failed');
+}
+
+async function deleteDriveItem(kind, id, name) {
+  if (!await confirmDialog({ title: `Delete ${kind}?`, message: `Delete ${name || `this ${kind}`}?`, confirmText: 'Delete' })) return;
+  await runUserAction(async () => {
+    await api(`/drive/${kind === 'folder' ? 'folders' : 'files'}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    toast('Deleted');
+    await loadDrive();
+    renderApp();
+  }, 'Delete failed');
+}
+
+async function openDriveShareDialog(kind, id, name) {
+  const apiKind = kind === 'folder' ? 'folders' : 'files';
+  await runUserAction(async () => {
+    const result = await api(`/drive/${apiKind}/${encodeURIComponent(id)}/shares`);
+    const shares = result.shares || [];
+    const rows = shares.map(share => `<form class="share-row" data-drive-share-user="${esc(share.user_id)}" data-share-email="${esc(share.email)}">
+      <span><b>${esc(share.name || share.email)}</b><br><span class="small muted">${esc(share.email)}</span></span>
+      <select name="permission" aria-label="Share permission"><option value="view" ${share.permission === 'view' ? 'selected' : ''}>View</option><option value="edit" ${share.permission === 'edit' ? 'selected' : ''}>Edit</option><option value="admin" ${share.permission === 'admin' ? 'selected' : ''}>Admin</option></select>
+      <button class="btn ghost mini-btn" type="submit">Save</button><button class="btn danger mini-btn" data-drive-unshare-user="${esc(share.user_id)}" type="button">Remove</button>
+    </form>`).join('') || '<p class="small muted">Not shared with anyone yet.</p>';
+    const modal = document.createElement('div');
+    modal.className = 'editor';
+    modal.innerHTML = `<section class="editor-panel small-panel drive-share-dialog"><div class="topbar"><div><h2>Share ${esc(name || kind)}</h2><p class="muted small">Private by default. Add users only when they should access this ${esc(kind)}.</p></div><button class="btn ghost" type="button" data-close>Close</button></div>
+      <form id="driveShareForm" class="compact-dialog-share-form"><input name="email" type="email" placeholder="user@example.com" required><select name="permission" aria-label="Permission"><option value="view">View</option><option value="edit">Edit/upload</option><option value="admin">Manage</option></select><button class="btn primary">Share</button></form>
+      <div class="stack">${rows}</div></section>`;
+    document.body.appendChild(modal);
+    setupAccessibleModal(modal, 'input[name="email"]');
+    const refresh = async () => {
+      modal.remove();
+      await loadDrive();
+      renderApp();
+      openDriveShareDialog(kind, id, name);
+    };
+    modal.querySelector('#driveShareForm')?.addEventListener('submit', async e => {
+      e.preventDefault();
+      await runUserAction(async () => {
+        await api(`/drive/${apiKind}/${encodeURIComponent(id)}/shares`, { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+        toast('Drive item shared');
+        await refresh();
+      }, 'Drive share failed');
+    });
+    modal.querySelectorAll('[data-drive-share-user]').forEach(form => form.addEventListener('submit', async e => {
+      e.preventDefault();
+      await runUserAction(async () => {
+        await api(`/drive/${apiKind}/${encodeURIComponent(id)}/shares`, { method: 'POST', body: { email: form.dataset.shareEmail, permission: new FormData(form).get('permission') } });
+        toast('Share updated');
+        await refresh();
+      }, 'Share update failed');
+    }));
+    modal.querySelectorAll('[data-drive-unshare-user]').forEach(btn => btn.addEventListener('click', async () => {
+      if (!await confirmDialog({ title: 'Remove share?', message: 'Remove this user from the Drive item?', confirmText: 'Remove' })) return;
+      await runUserAction(async () => {
+        await api(`/drive/${apiKind}/${encodeURIComponent(id)}/shares/${encodeURIComponent(btn.dataset.driveUnshareUser)}`, { method: 'DELETE' });
+        toast('Share removed');
+        await refresh();
+      }, 'Remove share failed');
+    }));
+  }, 'Load shares failed');
+}
+
+async function openDriveTextEditor(id, name) {
+  await runUserAction(async () => {
+    const response = await fetch(`/api/drive/files/${encodeURIComponent(id)}/download`, { credentials: 'same-origin' });
+    if (!response.ok) throw new Error('File load failed');
+    const content = await response.text();
+    if (content.length > 2 * 1024 * 1024) throw new Error('Editable files must be 2 MB or smaller');
+    const modal = document.createElement('div');
+    modal.className = 'editor';
+    modal.innerHTML = `<section class="editor-panel code-lightbox-panel drive-editor-panel"><div class="topbar"><div><p class="terminal-path">divault ~/drive</p><h2>Edit ${esc(name || 'file')}</h2></div><div class="btn-row"><button class="btn primary" form="driveTextEditForm">Save</button><button class="btn ghost" type="button" data-close>Close</button></div></div><form id="driveTextEditForm" class="stack"><textarea class="drive-text-editor" name="content" spellcheck="false">${esc(content)}</textarea></form></section>`;
+    document.body.appendChild(modal);
+    setupAccessibleModal(modal, 'textarea[name="content"]');
+    modal.querySelector('#driveTextEditForm')?.addEventListener('submit', async e => {
+      e.preventDefault();
+      await runUserAction(async () => {
+        await api(`/drive/files/${encodeURIComponent(id)}/content`, { method: 'PATCH', body: { content: new FormData(e.target).get('content') || '' } });
+        toast('File saved');
+        modal.remove();
+        await loadDrive();
+        renderApp();
+      }, 'File save failed');
+    });
+  }, 'Open editor failed');
 }
 
 function bindCalendarTaskActions() {
@@ -2777,6 +2964,79 @@ async function moveNotesToCategory(ids, categoryId) {
   toast(`Moved ${ids.length} note${ids.length === 1 ? '' : 's'} to ${categoryId ? sectionLabel(`notes:cat:${categoryId}`) : 'All'}`);
   await loadAll();
   renderApp();
+}
+
+function renderDrive() {
+  const folders = state.driveFolders || [];
+  const files = state.driveFiles || [];
+  const crumbs = renderDriveBreadcrumbs();
+  const empty = !folders.length && !files.length;
+  return `<section class="drive-shell ${state.driveLayout === 'list' ? 'list-view' : 'grid-view'}">
+    <div class="drive-header card"><div><p class="breadcrumb">DiVault Drive</p><h2>${esc(state.driveFolderId ? driveCurrentFolderName() : 'Files')}</h2>${crumbs}</div><div class="drive-stats"><span class="pill">${folders.length} folder${folders.length === 1 ? '' : 's'}</span><span class="pill">${files.length} file${files.length === 1 ? '' : 's'}</span></div></div>
+    <form class="drive-dropzone" id="driveDropzone"><input id="driveDropInput" type="file" multiple><div><b>Drop files to upload</b><span class="small muted">or use the Upload button above</span></div></form>
+    ${empty ? `<div class="empty card"><h2>${state.q ? 'No matching files' : 'No files yet'}</h2><p>${state.q ? 'Try another search term.' : 'Upload files or create a folder to start organizing Drive.'}</p></div>` : `<div class="drive-items">${folders.map(renderDriveFolder).join('')}${files.map(renderDriveFile).join('')}</div>`}
+  </section>`;
+}
+
+function renderDriveBreadcrumbs() {
+  const crumbs = normalizeDriveBreadcrumbs();
+  if (!crumbs.length) return `<div class="drive-breadcrumbs"><button class="link-button" data-drive-folder="" type="button">Root</button></div>`;
+  return `<div class="drive-breadcrumbs"><button class="link-button" data-drive-folder="" type="button">Root</button>${crumbs.map(crumb => `<span>/</span><button class="link-button" data-drive-folder="${esc(crumb.id || '')}" type="button">${esc(crumb.name || 'Folder')}</button>`).join('')}</div>`;
+}
+
+function normalizeDriveBreadcrumbs() {
+  return (state.driveBreadcrumbs || []).map(crumb => typeof crumb === 'string' ? { id: '', name: crumb } : crumb).filter(Boolean);
+}
+
+function driveCurrentFolderName() {
+  const last = normalizeDriveBreadcrumbs().at(-1);
+  return last?.name || state.driveFolders.find(folder => String(folder.id) === String(state.driveFolderId))?.name || 'Folder';
+}
+
+function renderDriveFolder(folder) {
+  const name = folder.name || folder.title || 'Untitled folder';
+  const updated = folder.updated_at || folder.created_at || '';
+  const canManage = driveCanManage(folder);
+  return `<article class="drive-item folder-item" data-drive-folder-card="${esc(folder.id)}"><button class="drive-main" data-drive-folder="${esc(folder.id)}" type="button"><span class="drive-icon">${icon('folder')}</span><span><b>${esc(name)}</b><small>${updated ? esc(formatDateTime(updated)) : 'Folder'}</small></span></button><div class="drive-actions"><button class="icon-btn" data-rename-drive-folder="${esc(folder.id)}" data-name="${esc(name)}" type="button">rename</button>${canManage ? `<button class="icon-btn" data-share-drive-folder="${esc(folder.id)}" data-name="${esc(name)}" type="button">share</button>` : ''}<button class="icon-btn" data-delete-drive-folder="${esc(folder.id)}" data-name="${esc(name)}" type="button">delete</button></div></article>`;
+}
+
+function renderDriveFile(file) {
+  const name = file.original_name || file.name || file.filename || 'Untitled file';
+  const mime = file.mime || file.mime_type || file.type || '';
+  const size = formatDriveSize(file.size || file.bytes || 0);
+  const id = file.id;
+  const previewUrl = `/api/drive/files/${encodeURIComponent(id)}/preview`;
+  const downloadUrl = `/api/drive/files/${encodeURIComponent(id)}/download`;
+  const previewable = isDrivePreviewable(name, mime);
+  const editable = isDriveEditable(name, mime);
+  const thumb = isImage(mime) ? `<img class="drive-thumb" src="${previewUrl}" alt="${esc(name)}">` : `<span class="drive-file-mark">${driveFileExtension(name)}</span>`;
+  const canManage = driveCanManage(file);
+  return `<article class="drive-item file-item"><button class="drive-main" ${previewable ? `data-preview-file="${previewUrl}" data-file-name="${esc(name)}" data-file-mime="${esc(mime)}"` : ''} type="button" ${previewable ? '' : 'disabled'}>${thumb}<span><b>${esc(name)}</b><small>${esc(mime || 'file')} ${size ? `· ${esc(size)}` : ''}</small></span></button><div class="drive-actions"><a class="icon-btn" href="${downloadUrl}">download</a>${previewable ? `<button class="icon-btn" data-preview-file="${previewUrl}" data-file-name="${esc(name)}" data-file-mime="${esc(mime)}" type="button">preview</button>` : ''}${editable ? `<button class="icon-btn" data-edit-drive-file="${esc(id)}" data-name="${esc(name)}" type="button">edit</button>` : ''}<button class="icon-btn" data-rename-drive-file="${esc(id)}" data-name="${esc(name)}" type="button">rename</button>${canManage ? `<button class="icon-btn" data-share-drive-file="${esc(id)}" data-name="${esc(name)}" type="button">share</button>` : ''}<button class="icon-btn" data-delete-drive-file="${esc(id)}" data-name="${esc(name)}" type="button">delete</button></div></article>`;
+}
+
+function driveCanManage(item) {
+  return ['owner', 'admin'].includes(String(item?.permission || '').toLowerCase());
+}
+
+function isDrivePreviewable(name, mime) {
+  return isImage(mime) || String(mime || '').includes('pdf') || /\.pdf$/i.test(name || '');
+}
+
+function isDriveEditable(name, mime) {
+  const value = String(mime || '').toLowerCase();
+  return value.startsWith('text/') || ['application/json', 'application/xml', 'application/csv', 'application/x-yaml'].includes(value) || /\.(txt|md|markdown|csv|json|xml|yaml|yml|log|html|css|js|ts)$/i.test(name || '');
+}
+
+function driveFileExtension(name) {
+  return (String(name || '').split('.').pop() || 'file').slice(0, 4).toUpperCase();
+}
+
+function formatDriveSize(size) {
+  const value = Number(size || 0);
+  if (!value) return '';
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.ceil(value / 1024)} KB`;
+  return `${(value / 1024 / 1024).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} MB`;
 }
 
 function renderAssetTable() {

@@ -39,7 +39,7 @@ final class Config
 
     public static function ensureDirs(): void
     {
-        foreach (['', '/files', '/backups', '/exports', '/imports', '/keys', '/logs', '/tmp'] as $path) {
+        foreach (['', '/files', '/drive-files', '/backups', '/exports', '/imports', '/keys', '/logs', '/tmp'] as $path) {
             $dir = self::dir() . $path;
             if (!is_dir($dir)) {
                 mkdir($dir, 0770, true);
