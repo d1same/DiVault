@@ -80,6 +80,26 @@ const toast = message => {
   setTimeout(() => el.remove(), 2600);
 };
 
+document.addEventListener('click', e => {
+  const link = e.target.closest?.('a[href]');
+  if (!link || !window.__TAURI__?.core?.invoke) return;
+  const href = link.getAttribute('href') || '';
+  if (!href || href.startsWith('#')) return;
+  const url = new URL(href, window.location.href);
+  if (!/^https?:$/.test(url.protocol)) return;
+  if (link.target !== '_blank' && url.origin === window.location.origin) return;
+  e.preventDefault();
+  openDesktopExternalUrl(url.href);
+});
+
+async function openDesktopExternalUrl(url) {
+  try {
+    await window.__TAURI__?.core?.invoke?.('open_external_url', { url });
+  } catch {
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+}
+
 function cleanFrontMatterValue(value = '') {
   const trimmed = String(value).trim();
   if (trimmed.length >= 2) {

@@ -25,7 +25,8 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![desktop_notify])
+        .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![desktop_notify, open_external_url])
         .setup(move |app| {
             let config_dir = desktop_config_dir(app.handle())?;
             let url = if let Some(remote_url) = remote_url(&config_dir)? {
@@ -69,6 +70,20 @@ fn desktop_notify(app: tauri::AppHandle, title: String, body: String) -> Result<
         .body(body)
         .show()
         .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let parsed = Url::parse(url.trim()).map_err(|err| err.to_string())?;
+    match parsed.scheme() {
+        "http" | "https" => app
+            .opener()
+            .open_url(parsed.as_str(), None::<&str>)
+            .map_err(|err| err.to_string()),
+        _ => Err("Only http and https links can be opened externally.".to_string()),
+    }
 }
 
 fn remote_url(config_dir: &Path) -> Result<Option<Url>, Box<dyn std::error::Error>> {
