@@ -1384,8 +1384,28 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .category-edit-row { grid-template-columns: 64px 1fr; }
   .category-edit-row .small,
   .category-edit-row .btn { grid-column: 2; }
-  .main { padding: 14px 14px calc(18px + max(12px, env(safe-area-inset-bottom), var(--android-system-bottom))); }
-  .main, .inline-panel, .inline-panel.card, .card, .editor-grid, .inline-note-editor, .note-editor-form, .block-editor, .editor-block { max-width: 100%; overflow-x: hidden; }
+  .main { width: 100%; padding: 14px 14px calc(18px + max(12px, env(safe-area-inset-bottom), var(--android-system-bottom))); }
+  .main,
+  .topbar,
+  .filterbar,
+  .grid,
+  .home-grid,
+  .home-main,
+  .home-side,
+  .calendar-page-grid,
+  .task-page,
+  .settings-shell,
+  .settings-grid,
+  .notes-workspace,
+  .notes-grid,
+  .inline-panel,
+  .inline-panel.card,
+  .card,
+  .editor-grid,
+  .inline-note-editor,
+  .note-editor-form,
+  .block-editor,
+  .editor-block { width: 100%; max-width: 100%; min-width: 0; justify-self: stretch; overflow-x: hidden; }
   .inline-panel.card, .card { padding: 14px; }
   .settings-tabs { top: -14px; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
   .settings-tabs::-webkit-scrollbar { display: none; }
@@ -1430,12 +1450,12 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .note-filter-actions .btn { flex: initial; min-width: 0; }
   .search { max-width: none; }
   .two-col { grid-template-columns: 1fr; }
-  .home-grid { grid-template-columns: 1fr; }
+  .home-grid { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
   .home-grid.refined-home { display: flex; flex-direction: column; }
   .home-main { display: contents; }
-  .home-hero { order: 1; }
-  .home-side { order: 2; }
-  .home-notes-widget { order: 3; }
+  .home-hero { order: 1; width: 100%; align-self: stretch; }
+  .home-side { order: 2; width: 100%; align-self: stretch; }
+  .home-notes-widget { order: 3; width: 100%; align-self: stretch; }
   .home-hero { grid-template-columns: 1fr; gap: 10px; padding: 12px; }
   .home-hero h2 { font-size: 1.2rem; margin: 0; }
   .home-hero .breadcrumb { margin: 0; font-size: .72rem; }
@@ -1444,7 +1464,7 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .home-stat-row .pill { min-height: 26px; padding: 4px 8px; font-size: .68rem; }
   .home-action-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
   .home-action-row .action-fab { min-width: 0; min-height: 40px; }
-  .home-widget { gap: 10px; padding: 12px; border-radius: var(--radius-lg); }
+  .home-widget { width: 100%; gap: 10px; padding: 12px; border-radius: var(--radius-lg); }
   .home-widget .section-title-row h3 { font-size: .95rem; }
   .home-widget .section-title-row .btn { min-height: 34px; padding: 6px 10px; }
   .home-schedule-widget > .small.muted { margin-top: -4px; }
@@ -1470,7 +1490,7 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   }
   .calendar-view-toggle { display: none; }
   .calendar-view-select { display: block; min-height: 44px; font-weight: 900; text-align: center; text-align-last: center; }
-  .calendar-page-grid { grid-template-columns: 1fr; }
+  .calendar-page-grid { grid-template-columns: minmax(0, 1fr); }
   .agenda-list-day { grid-template-columns: 1fr; }
   .week-calendar { grid-template-columns: 58px repeat(7, minmax(96px, 1fr)); }
   .week-time-label { padding: 6px; font-size: .66rem; }
@@ -1492,9 +1512,9 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .task-meta { gap: 5px; }
   .share-row { grid-template-columns: auto minmax(0, 1fr); }
   .share-row > .btn { grid-column: 2; justify-self: start; }
-  .grid { grid-template-columns: 1fr; }
+  .grid { grid-template-columns: minmax(0, 1fr); }
   .notes-workspace,
-  .notes-workspace.editor-open { grid-template-columns: 1fr; height: auto; min-height: 0; }
+  .notes-workspace.editor-open { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 0; }
   .notes-workspace:not(.editor-open) .inline-editor-slot { display: none; }
   .note-pane-resizer { display: none; }
   .notes-workspace.editor-open .notes-list-pane { display: none; }
