@@ -49,8 +49,10 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            getWindow().setDecorFitsSystemWindows(true);
+            getWindow().setDecorFitsSystemWindows(false);
         }
+        getWindow().setStatusBarColor(Color.rgb(250, 247, 240));
+        getWindow().setNavigationBarColor(Color.rgb(250, 247, 240));
         setTitle(R.string.app_name);
         preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         handleShareIntent(getIntent());
@@ -74,7 +76,7 @@ public class MainActivity extends Activity {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.rgb(250, 247, 240));
         webView = new WebView(this);
-        webView.setOnApplyWindowInsetsListener((view, insets) -> {
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
             int left;
             int top;
             int right;
@@ -102,7 +104,7 @@ public class MainActivity extends Activity {
         ));
         root.addView(webView);
         setContentView(root);
-        webView.requestApplyInsets();
+        root.requestApplyInsets();
     }
 
     private void configureWebView() {
