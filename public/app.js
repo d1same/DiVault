@@ -591,6 +591,8 @@ function renderLogin() {
 }
 
 function authShell(title, subtitle, body) {
+  document.documentElement.classList.add('auth-screen');
+  document.body.classList.add('auth-screen');
   return `<section class="auth-card">
     <div class="brand"><div class="brand-mark">${brandMark()}</div><div><h1>${title}</h1><p class="muted">${subtitle}</p></div></div>
     ${body}
@@ -841,6 +843,8 @@ async function downloadEmergencySnapshot() {
 }
 
 function renderOfflineVault(err, unlockedSnapshot = null) {
+  document.documentElement.classList.remove('auth-screen');
+  document.body.classList.remove('auth-screen');
   const snapshot = loadEmergencySnapshot();
   const pending = loadPendingNotes();
   const notes = unlockedSnapshot?.notes || [];
@@ -1073,6 +1077,8 @@ function sectionLabel(section) {
 }
 
 function renderApp() {
+  document.documentElement.classList.remove('auth-screen');
+  document.body.classList.remove('auth-screen');
   const panelOpen = Boolean(state.panel);
   app.innerHTML = `<div class="layout">
     <aside class="sidebar">
