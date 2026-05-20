@@ -1,5 +1,5 @@
-const CACHE = 'divault-v190';
-const ASSETS = ['/', '/app.html', '/styles.css?v=190', '/app.js?v=190', '/manifest.webmanifest', '/assets/divault-logo.svg', '/assets/icon.svg'];
+const CACHE = 'divault-v191';
+const ASSETS = ['/', '/app.html', '/styles.css?v=191', '/app.js?v=191', '/manifest.webmanifest', '/assets/divault-logo.svg', '/assets/icon.svg'];
 const ASSET_PATHS = new Set(ASSETS.map(asset => new URL(asset, self.location.origin).pathname));
 
 function cacheableRequest(request) {

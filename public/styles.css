@@ -728,8 +728,8 @@ body.sidebar-collapsed .empty-nav { display: none; }
 .home-action-row { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
 .home-action-row .action-fab { min-width: 44px; min-height: 44px; }
 .home-widget { display: grid; gap: 12px; min-width: 0; border: 1px solid var(--border-soft); border-radius: var(--radius-xl); padding: 16px; background: var(--surface-card); box-shadow: var(--shadow); }
-.home-note-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
-.home-note-card { min-height: 88px; display: grid; align-content: space-between; gap: 8px; text-align: left; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); padding: 12px; background: var(--surface); color: var(--text); }
+.home-note-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; }
+.home-note-card { min-height: 124px; display: grid; align-content: space-between; gap: 12px; text-align: left; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); padding: 16px; background: var(--surface); color: var(--text); }
 .home-note-card span { color: var(--muted); font-size: .76rem; }
 .home-widget > header,
 .calendar-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
