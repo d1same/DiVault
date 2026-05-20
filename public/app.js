@@ -1001,7 +1001,7 @@ async function loadHomeData() {
 }
 
 async function loadCalendarData() {
-  if (!state.calendars.length) state.calendars = (await api('/calendars').catch(() => ({ calendars: [] }))).calendars || [];
+  state.calendars = (await api('/calendars').catch(() => ({ calendars: state.calendars || [] }))).calendars || [];
   const [visibleFirst, visibleLast] = calendarVisibleRange();
   const miniFirst = new Date(state.miniCalendarDate.getFullYear(), state.miniCalendarDate.getMonth(), 1);
   const miniLast = new Date(state.miniCalendarDate.getFullYear(), state.miniCalendarDate.getMonth() + 1, 0, 23, 59, 59);
@@ -1533,7 +1533,11 @@ function visibleCalendarIds() {
   const all = new Set(state.calendars.map(calendar => Number(calendar.id)));
   const stored = JSON.parse(localStorage.getItem('divault_visible_calendar_ids') || 'null');
   if (!Array.isArray(stored) || !stored.length) return all;
-  const selected = new Set(stored.map(Number).filter(id => all.has(id)));
+  const storedIds = stored.map(Number);
+  const selected = new Set(storedIds.filter(id => all.has(id)));
+  for (const id of all) {
+    if (!storedIds.includes(id)) selected.add(id);
+  }
   return selected.size ? selected : all;
 }
 
