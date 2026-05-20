@@ -669,11 +669,17 @@ async function pollReminders() {
 async function showReminder(reminder) {
   const title = `${reminder.kind === 'task' ? 'Task' : 'Calendar'} reminder`;
   const body = `${reminder.title}${reminder.due_at ? ` · ${formatDateTime(reminder.due_at)}` : ''}`;
+  const url = reminder.kind === 'task' ? '/#tasks' : '/#calendar';
+  if (window.DiVaultAndroid?.notify) {
+    window.DiVaultAndroid.notify(title, body, new URL(url, window.location.href).href);
+    await api(`/reminders/${reminder.kind}/${reminder.id}/dismiss`, { method: 'POST', body: {} }).catch(() => null);
+    return;
+  }
   if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission().catch(() => null);
   if ('Notification' in window && Notification.permission === 'granted') {
     try {
       const reg = await navigator.serviceWorker?.ready;
-      if (reg?.showNotification) await reg.showNotification(title, { body, tag: `divault-${reminder.kind}-${reminder.id}`, data: { url: reminder.kind === 'task' ? '/#tasks' : '/#calendar' } });
+      if (reg?.showNotification) await reg.showNotification(title, { body, tag: `divault-${reminder.kind}-${reminder.id}`, data: { url } });
       else new Notification(title, { body });
     } catch {
       toast(`${title}: ${reminder.title}`);
@@ -1256,17 +1262,18 @@ function activeClientName() {
 
 function renderHome() {
   const selected = new Date(state.calendarDate);
+  const query = state.q.trim().toLowerCase();
   const scheduleStart = new Date(selected.getFullYear(), selected.getMonth(), selected.getDate(), 0, 0, 0);
   const scheduleEnd = new Date(selected.getFullYear(), selected.getMonth(), selected.getDate() + 7, 23, 59, 59);
   const todaysEvents = state.events.filter(event => new Date(normalizeDate(event.starts_at)).toDateString() === new Date().toDateString()).slice(0, 6);
-  const openTasks = state.tasks.filter(task => task.status !== 'done').slice(0, 8);
   const dueToday = state.tasks.filter(task => task.status !== 'done' && task.due_at && new Date(normalizeDate(task.due_at)).toDateString() === new Date().toDateString()).slice(0, 6);
-  const recentNotes = feature('home').settings.notes_enabled ? state.notes.slice(0, 6) : [];
+  const recentNotes = feature('home').settings.notes_enabled ? state.notes.filter(note => !query || matchesText(query, note.title, note.body, note.tags, note.category_name, note.client_name)).slice(0, 6) : [];
   const scheduleItems = agendaItemsForRange(scheduleStart, scheduleEnd).slice(0, 12);
+  const noteEmpty = query ? 'No matching recent notes.' : 'No recent notes.';
   return `<div class="home-grid refined-home">
     <section class="home-main stack">
-      <div class="home-hero card"><div><p class="breadcrumb">Today in DiVault</p><h2>${new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</h2></div><div class="home-stat-row"><span class="pill">${state.notes.length} notes</span><span class="pill">${todaysEvents.length} events today</span><span class="pill">${dueToday.length} tasks due</span></div><div class="home-action-row"><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick note" title="Quick note">${toolIcon('quick', 'Quick note')}</button><button class="btn icon-only-btn action-fab" id="newBtn" type="button" aria-label="Add note" title="Add note">+</button>${featureOn('calendar') ? `<button class="btn icon-only-btn action-fab" id="newEventBtn" type="button" aria-label="New event" title="New event">${toolIcon('calendar', 'New event')}</button>` : ''}${featureOn('tasks') ? `<button class="btn icon-only-btn action-fab" id="newCalendarTaskBtn" type="button" aria-label="New task" title="New task">${toolIcon('check', 'New task')}</button>` : ''}</div></div>
-      <section class="card home-widget home-notes-widget stack"><div class="section-title-row"><h3>Recent notes</h3><button class="btn ghost" data-section="notes:all" type="button">View all</button></div>${recentNotes.length ? `<div class="home-note-grid">${recentNotes.map(note => `<button class="home-note-card" data-open="${note.id}"><b>${esc(note.title)}</b><span>${esc(note.updated_at || '')}</span></button>`).join('')}</div>` : '<p class="muted small">No recent notes.</p>'}</section>
+      <div class="home-hero card"><div><p class="breadcrumb">Today in DiVault</p><h2>${new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</h2></div><div class="home-stat-row"><span class="pill">${state.notes.length} notes</span><span class="pill">${todaysEvents.length} events today</span><span class="pill">${dueToday.length} tasks due</span></div><label class="home-search"><span class="sr-only">Search Home</span><input class="search" id="search" type="search" aria-label="Search Home. Press Q to focus search." title="Press Q to search" placeholder="Search Home notes and schedule...  Q" value="${esc(state.q)}"></label><div class="home-action-row"><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick note" title="Quick note">${toolIcon('quick', 'Quick note')}</button><button class="btn icon-only-btn action-fab" id="newBtn" type="button" aria-label="Add note" title="Add note">+</button>${featureOn('calendar') ? `<button class="btn icon-only-btn action-fab" id="newEventBtn" type="button" aria-label="New event" title="New event">${toolIcon('calendar', 'New event')}</button>` : ''}${featureOn('tasks') ? `<button class="btn icon-only-btn action-fab" id="newCalendarTaskBtn" type="button" aria-label="New task" title="New task">${toolIcon('check', 'New task')}</button>` : ''}</div></div>
+      <section class="card home-widget home-notes-widget stack"><div class="section-title-row"><h3>${query ? 'Matching notes' : 'Recent notes'}</h3><button class="btn ghost" data-section="notes:all" type="button">View all</button></div>${recentNotes.length ? `<div class="home-note-grid">${recentNotes.map(note => `<button class="home-note-card" data-open="${note.id}"><b>${esc(note.title)}</b><span>${esc(note.updated_at || '')}</span></button>`).join('')}</div>` : `<p class="muted small">${noteEmpty}</p>`}</section>
     </section>
     <aside class="home-side stack">
       ${featureOn('calendar') && feature('calendar').settings.home_enabled ? renderMiniMonthPicker() : ''}
@@ -1296,7 +1303,7 @@ function renderCalendar() {
     if (day.toDateString() === new Date().toDateString()) classes.push('today');
     cells.push(`<div class="${classes.join(' ')}" data-quick-add="${dateInputValue(new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 0))}"><div class="calendar-day-head"><b>${day.getDate()}</b></div>${dayEvents.slice(0, 3).map(event => renderEventChip(event)).join('')}${dayTasks.slice(0, 2).map(task => renderTaskChip(task)).join('')}${dayEvents.length + dayTasks.length > 5 ? `<p class="small muted">+${dayEvents.length + dayTasks.length - 5} more</p>` : ''}</div>`);
   }
-  return `<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>${month.toLocaleString([], { month: 'long', year: 'numeric' })}</h2></div><div class="calendar-grid">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(day => `<div class="small muted"><b>${day}</b></div>`).join('')}${cells.join('')}</div></div>${renderCalendarSidebar('Upcoming', agendaItemsForRange(...calendarVisibleRange()).slice(0, 10))}</section>`;
+  return `${renderCalendarSearchPanel()}<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>${month.toLocaleString([], { month: 'long', year: 'numeric' })}</h2></div><div class="calendar-grid">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(day => `<div class="small muted"><b>${day}</b></div>`).join('')}${cells.join('')}</div></div>${renderCalendarSidebar('Upcoming', agendaItemsForRange(...calendarVisibleRange()).slice(0, 10))}</section>`;
 }
 
 function startOfToday() {
@@ -1316,7 +1323,7 @@ function renderCalendarDay() {
     if (slot.toDateString() === now.toDateString() && hour === now.getHours()) classes.push('current-hour');
     return `<div class="${classes.join(' ')}" data-quick-add="${dateInputValue(slot)}"><span class="day-hour-label">${formatHour(hour)}</span><div class="day-hour-content">${hourItems.length ? renderAgendaItems(hourItems, true) : ''}</div></div>`;
   }).join('');
-  return `<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>${day.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</h2></div><div class="day-timeline">${hourRows}</div></div>${renderCalendarSidebar()}</section>`;
+  return `${renderCalendarSearchPanel()}<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>${day.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</h2></div><div class="day-timeline">${hourRows}</div></div>${renderCalendarSidebar()}</section>`;
 }
 
 function renderCalendarWeek() {
@@ -1328,7 +1335,7 @@ function renderCalendarWeek() {
     const items = agendaItemsForDay(day).filter(entry => entry.kind === 'task' || Number(entry.item.all_day));
     return `<div class="week-all-day-cell">${items.slice(0, 3).map(entry => entry.kind === 'task' ? renderTaskChip(entry.item) : renderEventChip(entry.item)).join('') || '<span class="small muted">No all-day items</span>'}</div>`;
   }).join('');
-  return `<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>${start.toLocaleDateString([], { month: 'short', day: 'numeric' })} - ${days[6].toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</h2></div><div class="week-calendar"><div class="week-time-head"></div>${days.map(day => `<div class="week-day-head ${day.toDateString() === new Date().toDateString() ? 'today' : ''}"><span>${day.toLocaleDateString([], { weekday: 'short' })}</span><b>${day.getDate()}</b></div>`).join('')}<div class="week-time-label">All day</div>${allDayRows}${hours.map(hour => `<div class="week-time-label ${hasToday && hour === new Date().getHours() ? 'current-hour-label' : ''}">${formatHour(hour)}</div>${days.map(day => {
+  return `${renderCalendarSearchPanel()}<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>${start.toLocaleDateString([], { month: 'short', day: 'numeric' })} - ${days[6].toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</h2></div><div class="week-calendar"><div class="week-time-head"></div>${days.map(day => `<div class="week-day-head ${day.toDateString() === new Date().toDateString() ? 'today' : ''}"><span>${day.toLocaleDateString([], { weekday: 'short' })}</span><b>${day.getDate()}</b></div>`).join('')}<div class="week-time-label">All day</div>${allDayRows}${hours.map(hour => `<div class="week-time-label ${hasToday && hour === new Date().getHours() ? 'current-hour-label' : ''}">${formatHour(hour)}</div>${days.map(day => {
     const hourItems = agendaItemsForDay(day).filter(entry => !Number(entry.item.all_day) && new Date(normalizeDate(entry.when)).getHours() === hour);
     const classes = ['week-hour-cell'];
     const now = new Date();
@@ -1341,7 +1348,7 @@ function renderCalendarWeek() {
 function renderCalendarYear() {
   const year = state.calendarDate.getFullYear();
   const months = Array.from({ length: 12 }, (_, monthIndex) => renderYearMonth(year, monthIndex)).join('');
-  return `<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>${year}</h2></div><div class="year-grid">${months}</div></div>${renderCalendarSidebar('Scheduled this year', agendaItemsForRange(...calendarVisibleRange()).slice(0, 12))}</section>`;
+  return `${renderCalendarSearchPanel()}<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>${year}</h2></div><div class="year-grid">${months}</div></div>${renderCalendarSidebar('Scheduled this year', agendaItemsForRange(...calendarVisibleRange()).slice(0, 12))}</section>`;
 }
 
 function renderYearMonth(year, monthIndex) {
@@ -1375,7 +1382,11 @@ function renderCalendarScheduleView() {
   });
   const days = [...grouped.values()].map(group => `<section class="agenda-list-day"><div class="agenda-list-date"><span>${group.day.toLocaleDateString([], { weekday: 'short' })}</span><b>${group.day.toLocaleDateString([], { month: 'short', day: 'numeric' })}</b></div><div class="agenda-list-content"><div class="section-title-row"><h3>${group.day.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</h3><span><button class="btn ghost mini-btn icon-only-btn" data-new-event-date="${dateInputValue(group.day)}" type="button" aria-label="Add event" title="Add event">${toolIcon('calendar', 'Add event')}</button><button class="btn ghost mini-btn icon-only-btn" data-new-task-date="${dateInputValue(group.day)}" type="button" aria-label="Add task" title="Add task">${toolIcon('check', 'Add task')}</button></span></div>${renderAgendaItems(group.items, true)}</div></section>`);
   const content = days.length ? days.join('') : '<section class="card"><p class="muted small">No upcoming events or tasks.</p></section>';
-  return `<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>Schedule</h2></div><div class="agenda-list-stack">${content}</div></div>${renderCalendarSidebar()}</section>`;
+  return `${renderCalendarSearchPanel()}<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>Schedule</h2></div><div class="agenda-list-stack">${content}</div></div>${renderCalendarSidebar()}</section>`;
+}
+
+function renderCalendarSearchPanel() {
+  return `<div class="card calendar-search-panel"><label><span class="sr-only">Search calendar</span><input class="search" id="search" type="search" aria-label="Search calendar events and tasks. Press Q to focus search." title="Press Q to search" placeholder="Search Calendar events and tasks...  Q" value="${esc(state.q)}"></label>${state.q ? `<span class="pill">Filtering: ${esc(state.q)}</span>` : '<span class="small muted">Events and tasks in the current view</span>'}</div>`;
 }
 
 function renderCalendarSidebar(agendaTitle = '', agendaItems = []) {
@@ -1409,11 +1420,13 @@ function formatHour(hour) {
 }
 
 function eventsForDay(day) {
-  return state.events.filter(event => calendarVisible(event.calendar_id) && new Date(normalizeDate(event.starts_at)).toDateString() === day.toDateString());
+  const query = state.q.trim().toLowerCase();
+  return state.events.filter(event => calendarVisible(event.calendar_id) && (!query || matchesCalendarEvent(event, query)) && new Date(normalizeDate(event.starts_at)).toDateString() === day.toDateString());
 }
 
 function tasksForDay(day) {
-  return state.tasks.filter(task => task.status !== 'done' && (!task.calendar_id || calendarVisible(task.calendar_id)) && task.due_at && new Date(normalizeDate(task.due_at)).toDateString() === day.toDateString());
+  const query = state.q.trim().toLowerCase();
+  return state.tasks.filter(task => task.status !== 'done' && (!task.calendar_id || calendarVisible(task.calendar_id)) && (!query || matchesCalendarTask(task, query)) && task.due_at && new Date(normalizeDate(task.due_at)).toDateString() === day.toDateString());
 }
 
 function agendaItemsForDay(day) {
@@ -1424,12 +1437,25 @@ function agendaItemsForDay(day) {
 }
 
 function agendaItemsForRange(start, end) {
+  const query = state.q.trim().toLowerCase();
   const startTs = start.getTime();
   const endTs = end.getTime();
   return [
-    ...state.events.filter(event => calendarVisible(event.calendar_id) && (() => { const time = new Date(normalizeDate(event.starts_at)).getTime(); return time >= startTs && time <= endTs; })()).map(event => ({ kind: 'event', when: event.starts_at, item: event })),
-    ...state.tasks.filter(task => task.status !== 'done' && (!task.calendar_id || calendarVisible(task.calendar_id)) && task.due_at && (() => { const time = new Date(normalizeDate(task.due_at)).getTime(); return time >= startTs && time <= endTs; })()).map(task => ({ kind: 'task', when: task.due_at, item: task })),
+    ...state.events.filter(event => calendarVisible(event.calendar_id) && (!query || matchesCalendarEvent(event, query)) && (() => { const time = new Date(normalizeDate(event.starts_at)).getTime(); return time >= startTs && time <= endTs; })()).map(event => ({ kind: 'event', when: event.starts_at, item: event })),
+    ...state.tasks.filter(task => task.status !== 'done' && (!task.calendar_id || calendarVisible(task.calendar_id)) && (!query || matchesCalendarTask(task, query)) && task.due_at && (() => { const time = new Date(normalizeDate(task.due_at)).getTime(); return time >= startTs && time <= endTs; })()).map(task => ({ kind: 'task', when: task.due_at, item: task })),
   ].sort((a, b) => new Date(normalizeDate(a.when)) - new Date(normalizeDate(b.when)));
+}
+
+function matchesText(query, ...values) {
+  return values.some(value => String(value || '').toLowerCase().includes(query));
+}
+
+function matchesCalendarEvent(event, query) {
+  return matchesText(query, event.title, event.description, event.location, event.calendar_name);
+}
+
+function matchesCalendarTask(task, query) {
+  return matchesText(query, task.title, task.description, task.calendar_name);
 }
 
 function renderEventChip(event) {
@@ -2688,7 +2714,7 @@ async function moveNotesToCategory(ids, categoryId) {
 function renderAssetTable() {
   const rows = state.assets;
   if (!rows.length) return `<div class="empty card"><h2>No ${esc(sectionLabel(state.section))}</h2><p>Create the first record for this documentation section.</p></div>`;
-  return `<div class="table-wrap"><table class="asset-table"><thead><tr>${assetColumns().map(c => `<th>${esc(c.label)}</th>`).join('')}<th></th></tr></thead><tbody>${rows.map(row => `<tr>${assetColumns().map(c => `<td>${formatAssetCell(row, c.key)}</td>`).join('')}<td class="row-actions"><button class="icon-btn" data-asset="${row.id}" title="Edit">edit</button><button class="icon-btn" data-archive-asset="${row.id}" title="Archive">archive</button></td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="asset-table"><thead><tr>${assetColumns().map(c => `<th>${esc(c.label)}</th>`).join('')}<th></th></tr></thead><tbody>${rows.map(row => `<tr>${assetColumns().map(c => `<td data-label="${esc(c.label)}">${formatAssetCell(row, c.key)}</td>`).join('')}<td class="row-actions" data-label="Actions"><button class="icon-btn" data-asset="${row.id}" title="Edit">edit</button><button class="icon-btn" data-archive-asset="${row.id}" title="Archive">archive</button></td></tr>`).join('')}</tbody></table></div>`;
 }
 
 function assetColumns() {

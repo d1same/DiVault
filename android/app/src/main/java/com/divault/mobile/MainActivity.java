@@ -2,8 +2,14 @@ package com.divault.mobile;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
@@ -29,6 +35,8 @@ public class MainActivity extends Activity {
     private static final String PREFS_NAME = "divault_mobile";
     private static final String PREF_SERVER_URL = "server_url";
     private static final int FILE_CHOOSER_REQUEST = 1001;
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 1002;
+    private static final String REMINDER_CHANNEL_ID = "divault_reminders";
 
     private SharedPreferences preferences;
     private WebView webView;
@@ -46,6 +54,8 @@ public class MainActivity extends Activity {
         setTitle(R.string.app_name);
         preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         handleShareIntent(getIntent());
+        ensureNotificationChannel();
+        requestNotificationPermissionIfNeeded();
         buildWebView();
         configureWebView();
         loadConfiguredServer();
@@ -56,6 +66,7 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleShareIntent(intent);
+        loadIntentUrl(intent);
         injectPendingShare();
     }
 
@@ -156,12 +167,21 @@ public class MainActivity extends Activity {
     }
 
     private void loadConfiguredServer() {
+        if (loadIntentUrl(getIntent())) return;
         String savedUrl = preferences.getString(PREF_SERVER_URL, null);
         if (isValidServerUrl(savedUrl)) {
             webView.loadUrl(savedUrl);
         } else {
             promptForServerUrl();
         }
+    }
+
+    private boolean loadIntentUrl(Intent intent) {
+        if (intent == null || intent.getData() == null || webView == null) return false;
+        String url = intent.getData().toString();
+        if (!isValidServerUrl(url)) return false;
+        webView.loadUrl(url);
+        return true;
     }
 
     private void reloadServer() {
@@ -310,6 +330,58 @@ public class MainActivity extends Activity {
         return (int) (value * getResources().getDisplayMetrics().density);
     }
 
+    private void ensureNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationChannel channel = new NotificationChannel(
+                REMINDER_CHANNEL_ID,
+                "DiVault reminders",
+                NotificationManager.IMPORTANCE_DEFAULT
+        );
+        channel.setDescription("Calendar and task reminders from DiVault");
+        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager != null) manager.createNotificationChannel(channel);
+    }
+
+    private void requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < 33) return;
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return;
+        requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST);
+    }
+
+    private boolean canPostNotifications() {
+        return Build.VERSION.SDK_INT < 33 || checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void showDeviceNotification(String title, String body, String url) {
+        if (!canPostNotifications()) {
+            Toast.makeText(this, title + ": " + body, Toast.LENGTH_LONG).show();
+            requestNotificationPermissionIfNeeded();
+            return;
+        }
+
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        if (isValidServerUrl(url)) intent.setData(Uri.parse(url));
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+        PendingIntent pendingIntent = PendingIntent.getActivity(this, Math.abs((title + body).hashCode()), intent, flags);
+
+        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                ? new Notification.Builder(this, REMINDER_CHANNEL_ID)
+                : new Notification.Builder(this);
+        Notification notification = builder
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(new Notification.BigTextStyle().bigText(body))
+                .setContentIntent(pendingIntent)
+                .setAutoCancel(true)
+                .build();
+
+        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager != null) manager.notify(Math.abs((title + body).hashCode()), notification);
+    }
+
     private final class Bridge {
         @JavascriptInterface
         public void retry() {
@@ -319,6 +391,11 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void changeServer() {
             runOnUiThread(() -> promptForServerUrl());
+        }
+
+        @JavascriptInterface
+        public void notify(String title, String body, String url) {
+            runOnUiThread(() -> showDeviceNotification(title == null ? "DiVault" : title, body == null ? "" : body, url == null ? "" : url));
         }
     }
 }
