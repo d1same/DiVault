@@ -140,6 +140,9 @@ $passwordAsset = $null
 $note = $null
 $aiReviewNote = $null
 $noteCategory = $null
+$calendar = $null
+$event = $null
+$task = $null
 $csrf = $null
 $tmpFile = $null
 $encryptedBackupZip = $null
@@ -205,6 +208,59 @@ try {
     $aiReviewNote = Invoke-AiReviewNote -Token $AiReviewApiToken -RunId $runId -ClientId $client.id
     if (-not $aiReviewNote.id -or $aiReviewNote.note.tags -notmatch "ai-review") { throw "AI review note API failed" }
   }
+
+  $calendarResponse = Invoke-Json -Method Post -Path "/api/calendars" -Session $session -Csrf $csrf -Body @{ name = "$runId Calendar"; color = "#3366ff"; description = "Calendar created by smoke test" }
+  $calendar = $calendarResponse.calendar
+  if (-not $calendar.id) { throw "Calendar creation failed" }
+
+  $calendarUpdate = Invoke-Json -Method Patch -Path "/api/calendars/$($calendar.id)" -Session $session -Csrf $csrf -Body @{ name = "$runId Calendar Updated"; color = "#22c55e"; description = "Updated by smoke test" }
+  if ($calendarUpdate.calendar.name -ne "$runId Calendar Updated") { throw "Calendar update failed" }
+
+  $now = [DateTime]::UtcNow
+  $eventStart = $now.AddMinutes(-4).ToString("yyyy-MM-dd HH:mm:ss")
+  $eventEnd = $now.AddMinutes(-3).ToString("yyyy-MM-dd HH:mm:ss")
+  $eventResponse = Invoke-Json -Method Post -Path "/api/events" -Session $session -Csrf $csrf -Body @{ calendar_id = $calendar.id; title = "$runId event"; description = "Smoke event description"; location = "Smoke room"; starts_at = $eventStart; ends_at = $eventEnd; reminder_minutes = 0; note_ids = @($note.id) }
+  $event = $eventResponse.event
+  if (-not $event.id) { throw "Event creation failed" }
+  $eventDetails = Invoke-Json -Method Get -Path "/api/events/$($event.id)" -Session $session
+  if ($eventDetails.event.title -ne "$runId event" -or $eventDetails.event.reminder_minutes -ne 0 -or $eventDetails.event.notes.Count -lt 1) { throw "Event detail/link/reminder read failed" }
+
+  $rangeStart = [System.Uri]::EscapeDataString($now.AddDays(-1).ToString("o"))
+  $rangeEnd = [System.Uri]::EscapeDataString($now.AddDays(1).ToString("o"))
+  $events = Invoke-Json -Method Get -Path "/api/events?start=$rangeStart&end=$rangeEnd" -Session $session
+  if (-not ($events.events | Where-Object { $_.id -eq $event.id } | Select-Object -First 1)) { throw "Event list/range failed" }
+  $eventPatch = Invoke-Json -Method Patch -Path "/api/events/$($event.id)" -Session $session -Csrf $csrf -Body @{ calendar_id = $calendar.id; title = "$runId event updated"; description = "Smoke event updated"; location = "Smoke room"; starts_at = $eventStart; ends_at = $eventEnd; reminder_minutes = 0; note_ids = @($note.id) }
+  if ($eventPatch.event.title -ne "$runId event updated") { throw "Event update failed" }
+
+  $taskDue = $now.AddMinutes(-2).ToString("yyyy-MM-dd HH:mm:ss")
+  $taskResponse = Invoke-Json -Method Post -Path "/api/tasks" -Session $session -Csrf $csrf -Body @{ calendar_id = $calendar.id; shared = $true; title = "$runId task"; description = "Smoke task description"; location = "Smoke desk"; priority = 3; due_at = $taskDue; reminder_minutes = 0; note_ids = @($note.id) }
+  $task = $taskResponse.task
+  if (-not $task.id) { throw "Task creation failed" }
+  $taskDetails = Invoke-Json -Method Get -Path "/api/tasks/$($task.id)" -Session $session
+  if ($taskDetails.task.title -ne "$runId task" -or $taskDetails.task.reminder_minutes -ne 0 -or $taskDetails.task.notes.Count -lt 1) { throw "Task detail/link/reminder read failed" }
+
+  $openTasks = Invoke-Json -Method Get -Path "/api/tasks?q=$runId" -Session $session
+  if (-not ($openTasks.tasks | Where-Object { $_.id -eq $task.id } | Select-Object -First 1)) { throw "Open task list failed" }
+
+  $reminders = Invoke-Json -Method Get -Path "/api/reminders/due" -Session $session
+  $eventReminder = $reminders.reminders | Where-Object { $_.kind -eq "event" -and $_.title -eq "$runId event updated" } | Select-Object -First 1
+  $taskReminder = $reminders.reminders | Where-Object { $_.kind -eq "task" -and $_.title -eq "$runId task" } | Select-Object -First 1
+  if (-not $eventReminder -or -not $taskReminder) { throw "Due reminders API failed" }
+  Invoke-Json -Method Post -Path "/api/reminders/event/$($eventReminder.id)/dismiss" -Session $session -Csrf $csrf -Body @{} | Out-Null
+  Invoke-Json -Method Post -Path "/api/reminders/task/$($taskReminder.id)/snooze" -Session $session -Csrf $csrf -Body @{ minutes = 15 } | Out-Null
+  $remindersAfterUpdate = Invoke-Json -Method Get -Path "/api/reminders/due" -Session $session
+  if ($remindersAfterUpdate.reminders | Where-Object { ($_.kind -eq "event" -and $_.title -eq "$runId event updated") -or ($_.kind -eq "task" -and $_.title -eq "$runId task") } | Select-Object -First 1) { throw "Reminder dismiss/snooze failed" }
+
+  $taskPatch = Invoke-Json -Method Patch -Path "/api/tasks/$($task.id)" -Session $session -Csrf $csrf -Body @{ calendar_id = $calendar.id; shared = $true; title = "$runId task done"; description = "Smoke task completed"; location = "Smoke desk"; priority = 4; due_at = $taskDue; status = "done"; reminder_minutes = -1; note_ids = @($note.id) }
+  if ($taskPatch.task.status -ne "done") { throw "Task update/complete failed" }
+  $doneTasks = Invoke-Json -Method Get -Path "/api/tasks?view=done&q=$runId" -Session $session
+  if (-not ($doneTasks.tasks | Where-Object { $_.id -eq $task.id } | Select-Object -First 1)) { throw "Done task list failed" }
+  Invoke-Json -Method Delete -Path "/api/tasks/$($task.id)" -Session $session -Csrf $csrf | Out-Null
+  $task = $null
+  Invoke-Json -Method Delete -Path "/api/events/$($event.id)" -Session $session -Csrf $csrf | Out-Null
+  $event = $null
+  Invoke-Json -Method Delete -Path "/api/calendars/$($calendar.id)" -Session $session -Csrf $csrf | Out-Null
+  $calendar = $null
 
   Invoke-Json -Method Post -Path "/api/notes/$($note.id)/archive" -Session $session -Csrf $csrf -Body @{} | Out-Null
   $archivedNotes = Invoke-Json -Method Get -Path "/api/notes?view=archive&q=$runId" -Session $session
@@ -324,6 +380,9 @@ try {
     if ($encryptedBackupZip -and (Test-Path -LiteralPath $encryptedBackupZip)) { Remove-Item -LiteralPath $encryptedBackupZip -Force }
     if ($note -and $note.id) { $cleanup["note"] = Remove-SmokeResource -Path "/api/notes/$($note.id)/permanent" -Session $session -Csrf $csrf }
     if ($aiReviewNote -and $aiReviewNote.id) { $cleanup["aiReviewNote"] = Remove-SmokeResource -Path "/api/notes/$($aiReviewNote.id)/permanent" -Session $session -Csrf $csrf }
+    if ($task -and $task.id) { $cleanup["task"] = Remove-SmokeResource -Path "/api/tasks/$($task.id)" -Session $session -Csrf $csrf }
+    if ($event -and $event.id) { $cleanup["event"] = Remove-SmokeResource -Path "/api/events/$($event.id)" -Session $session -Csrf $csrf }
+    if ($calendar -and $calendar.id) { $cleanup["calendar"] = Remove-SmokeResource -Path "/api/calendars/$($calendar.id)" -Session $session -Csrf $csrf }
     if ($noteCategory -and $noteCategory.id) { $cleanup["noteCategory"] = Remove-SmokeResource -Path "/api/categories/$($noteCategory.id)" -Session $session -Csrf $csrf }
     if ($passwordAsset -and $passwordAsset.id) { $cleanup["passwordAsset"] = Remove-SmokeResource -Path "/api/assets/$($passwordAsset.id)" -Session $session -Csrf $csrf }
     if ($asset -and $asset.id) { $cleanup["asset"] = Remove-SmokeResource -Path "/api/assets/$($asset.id)" -Session $session -Csrf $csrf }
