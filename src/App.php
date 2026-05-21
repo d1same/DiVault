@@ -157,6 +157,8 @@ final class App
         if ($method === 'DELETE' && preg_match('#^/clients/(\d+)$#', $path, $m)) $this->deleteClient($user, (int)$m[1]);
         if ($method === 'GET' && $path === '/users') $this->users($user);
         if ($method === 'POST' && $path === '/users') $this->createUser($user);
+        if ($method === 'PATCH' && preg_match('#^/users/(\d+)$#', $path, $m)) $this->updateUserAdmin($user, (int)$m[1]);
+        if ($method === 'DELETE' && preg_match('#^/users/(\d+)$#', $path, $m)) $this->deleteUserAdmin($user, (int)$m[1]);
         if ($method === 'POST' && $path === '/2fa/start') $this->start2fa($user);
         if ($method === 'POST' && $path === '/2fa/confirm') $this->confirm2fa($user);
         if ($method === 'POST' && $path === '/2fa/recovery') $this->regenerateRecoveryCodes($user);
@@ -2898,6 +2900,60 @@ final class App
         $this->json(['id' => $id]);
     }
 
+    private function updateUserAdmin(array $user, int $id): void
+    {
+        $this->requireAdmin($user);
+        $target = $this->userById($id);
+        $this->assertCanManageUser($user, $target, 'reset password for');
+        if ((int)$target['id'] === (int)$user['id']) throw new RuntimeException('Use Account settings to change your own password');
+        if ((int)($target['disabled'] ?? 0) === 1) throw new RuntimeException('Disabled users cannot be updated');
+
+        $data = $this->input();
+        $password = (string)($data['password'] ?? '');
+        if (strlen($password) < 10) throw new RuntimeException('Password must be at least 10 characters');
+        if (($data['password_confirm'] ?? $password) !== $password) throw new RuntimeException('Passwords do not match');
+
+        $this->db->prepare('UPDATE users SET password_hash = ? WHERE id = ?')->execute([password_hash($password, PASSWORD_DEFAULT), $id]);
+        $this->db->prepare('DELETE FROM sessions WHERE user_id = ?')->execute([$id]);
+        $this->audit((int)$user['id'], 'user.password_reset', 'user', $id);
+        $this->json(['ok' => true]);
+    }
+
+    private function deleteUserAdmin(array $user, int $id): void
+    {
+        $this->requireAdmin($user);
+        $target = $this->userById($id);
+        $this->assertCanManageUser($user, $target, 'delete');
+        if ((int)$target['id'] === (int)$user['id']) throw new RuntimeException('You cannot delete your own account');
+        if ((string)$target['role'] === 'owner' && $this->activeOwnerCount() <= 1) throw new RuntimeException('Cannot delete the last active owner');
+
+        $this->db->prepare('UPDATE users SET disabled = 1 WHERE id = ?')->execute([$id]);
+        $this->db->prepare('DELETE FROM sessions WHERE user_id = ?')->execute([$id]);
+        $this->audit((int)$user['id'], 'user.disabled', 'user', $id);
+        $this->json(['ok' => true]);
+    }
+
+    private function userById(int $id): array
+    {
+        $stmt = $this->db->prepare('SELECT id, email, name, role, disabled FROM users WHERE id = ?');
+        $stmt->execute([$id]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$row) throw new RuntimeException('User not found');
+        return $row;
+    }
+
+    private function assertCanManageUser(array $actor, array $target, string $action): void
+    {
+        if ((string)$target['role'] === 'owner' && (string)$actor['role'] !== 'owner') {
+            throw new RuntimeException('Owner role required to ' . $action . ' an owner');
+        }
+    }
+
+    private function activeOwnerCount(): int
+    {
+        return (int)$this->db->query("SELECT COUNT(*) FROM users WHERE role = 'owner' AND disabled = 0")->fetchColumn();
+    }
+
     private function start2fa(array $user): void
     {
         $data = $this->input();
@@ -3467,14 +3523,31 @@ final class App
 
     private function securityHeaders(): void
     {
+        $onlyOfficeSource = $this->onlyOfficeCspSource();
+        $scriptSrc = "script-src 'self'" . ($onlyOfficeSource ? ' ' . $onlyOfficeSource : '');
+        $connectSrc = "connect-src 'self'" . ($onlyOfficeSource ? ' ' . $onlyOfficeSource : '');
+        $frameSrc = "frame-src 'self' blob:" . ($onlyOfficeSource ? ' ' . $onlyOfficeSource : '');
+
         header('X-Content-Type-Options: nosniff');
         header('X-Frame-Options: SAMEORIGIN');
         header('Referrer-Policy: same-origin');
         header('Permissions-Policy: camera=(self), microphone=(), geolocation=(), payment=(), usb=()');
-        header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self'; media-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'");
+        header("Content-Security-Policy: default-src 'self'; {$scriptSrc}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; {$connectSrc}; media-src 'self' blob:; {$frameSrc}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'");
         if ($this->isSecureRequest()) {
             header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
         }
+    }
+
+    private function onlyOfficeCspSource(): string
+    {
+        $url = Config::onlyOfficePublicUrl();
+        if ($url === '') return '';
+        $parts = parse_url($url);
+        $scheme = strtolower((string)($parts['scheme'] ?? ''));
+        $host = (string)($parts['host'] ?? '');
+        if (!in_array($scheme, ['http', 'https'], true) || $host === '') return '';
+        $port = isset($parts['port']) ? ':' . (int)$parts['port'] : '';
+        return $scheme . '://' . $host . $port;
     }
 
     private function webauthnCredentials(int $userId): array

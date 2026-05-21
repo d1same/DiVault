@@ -121,4 +121,31 @@ if [ "${SKIP_CONFIG_CHOWN:-false}" != "true" ]; then
   done
 fi
 
+php <<'PHP'
+<?php
+$url = getenv('ONLYOFFICE_PUBLIC_URL') ?: '';
+$source = '';
+if ($url !== '') {
+    $parts = parse_url($url);
+    $scheme = strtolower((string)($parts['scheme'] ?? ''));
+    $host = (string)($parts['host'] ?? '');
+    if (in_array($scheme, ['http', 'https'], true) && $host !== '') {
+        $source = $scheme . '://' . $host . (isset($parts['port']) ? ':' . (int)$parts['port'] : '');
+    }
+}
+$extra = $source !== '' ? ' ' . $source : '';
+$csp = "default-src 'self'; script-src 'self'{$extra}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self'{$extra}; media-src 'self' blob:; frame-src 'self' blob:{$extra}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'";
+$path = '/var/www/html/.htaccess';
+if (is_file($path)) {
+    $line = 'Header always set Content-Security-Policy "' . addcslashes($csp, "\\\"") . '"';
+    $contents = (string)file_get_contents($path);
+    if (preg_match('/^Header always set Content-Security-Policy .*$/m', $contents)) {
+        $contents = preg_replace('/^Header always set Content-Security-Policy .*$/m', $line, $contents);
+    } else {
+        $contents = rtrim($contents) . PHP_EOL . $line . PHP_EOL;
+    }
+    file_put_contents($path, $contents);
+}
+PHP
+
 exec "$@"
