@@ -339,16 +339,16 @@ const codeTypes = {
 };
 
 const themePresets = [
-  { key: 'light', label: 'Clean light', note: 'Default bright workspace' },
-  { key: 'soft', label: 'Soft neutral', note: 'Warm low-contrast middle ground' },
-  { key: 'ocean', label: 'Ocean focus', note: 'Cool blue-green accents' },
-  { key: 'colorblind', label: 'Color-safe', note: 'Blue/orange accessible contrast' },
-  { key: 'mono', label: 'Black & white', note: 'Crisp grayscale with no color tint' },
-  { key: 'blueprint', label: 'Teal monochrome', note: 'Teal shades mixed with black' },
-  { key: 'dark', label: 'Dark terminal', note: 'Low-glare dark mode' },
-  { key: 'midnight', label: 'Midnight ember', note: 'Near-black warm amber' },
-  { key: 'plum', label: 'Plum night', note: 'Deep violet with soft pink highlights' },
-  { key: 'black', label: 'True black', note: 'OLED black with green text' }
+  { key: 'light', label: 'Metallic chic', note: 'Sapphire, silver, aqua, champagne' },
+  { key: 'soft', label: 'Earthy serene', note: 'Sand, clay, sky, fern' },
+  { key: 'ocean', label: 'Lively soothing', note: 'Lemon, mint, cyan, teal' },
+  { key: 'colorblind', label: 'Artsy creative', note: 'Gold, vermillion, blue, cream' },
+  { key: 'mono', label: 'Mechanical floaty', note: 'Graphite, fog, blue, white' },
+  { key: 'blueprint', label: 'Cool collected', note: 'Deep teal, metal, cyan, green' },
+  { key: 'dark', label: 'Sleek futuristic', note: 'Sapphire, gunmetal, peach, tan' },
+  { key: 'midnight', label: 'Gradient pop', note: 'Sky, salmon, orange, neon' },
+  { key: 'plum', label: 'Rich colorful', note: 'Yellow, blue, pink, violet' },
+  { key: 'black', label: 'Gorgeous contrast', note: 'Black, gray, yellow-green, white' }
 ];
 
 const categoryIconPresets = [
