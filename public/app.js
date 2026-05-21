@@ -1,7 +1,9 @@
-const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), taskFilter: localStorage.getItem('divault_task_filter') || 'open', driveFolderId: localStorage.getItem('divault_drive_folder_id') || '', driveFolders: [], driveFiles: [], driveBreadcrumbs: [], driveLayout: localStorage.getItem('divault_drive_layout') || 'grid', driveSelectionMode: false, selectedDriveItems: new Set(), theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
+const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), lastSelectedNoteId: null, noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), taskFilter: localStorage.getItem('divault_task_filter') || 'open', driveFolderId: localStorage.getItem('divault_drive_folder_id') || '', driveFolders: [], driveFiles: [], driveBreadcrumbs: [], driveLayout: localStorage.getItem('divault_drive_layout') || 'list', driveSelectionMode: false, selectedDriveItems: new Set(), lastSelectedDriveKey: '', theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
 Object.assign(state, { features: null, calendars: [], calendarFeeds: [], events: [], tasks: [], calendarDate: new Date(), miniCalendarDate: new Date(), calendarView: localStorage.getItem('divault_calendar_view') || 'schedule', reminders: [], reminderTimer: null, linkableNotesLoaded: false, routeNoteId: null });
 if (state.calendarView === 'agenda') state.calendarView = 'schedule';
 const app = document.querySelector('#app');
+let onlyOfficeScriptPromise = null;
+let activeContextMenuActions = [];
 
 const defaultFeatures = () => ({
   calendar: { enabled: true, settings: { home_enabled: true, reminders_enabled: true, default_reminder_minutes: 10, default_calendar_id: null } },
@@ -371,13 +373,22 @@ const icon = name => ({
   secret: '<svg viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2M6 10h12v10H6zM12 14v2"/></svg>',
   draw: '<svg viewBox="0 0 24 24"><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20ZM14 7l3 3"/></svg>',
   file: '<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v5h5M9 13h6M9 17h6"/></svg>',
+  documentEdit: '<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v5h5M10 16l5-5 2 2-5 5H9z"/></svg>',
   download: '<svg viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M5 20h14"/></svg>',
+  extract: '<svg viewBox="0 0 24 24"><path d="M4 5h16v4H4zM6 9h12v10H6zM12 11v7M9 15l3 3 3-3M9 12h6"/></svg>',
   preview: '<svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12ZM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>',
+  copy: '<svg viewBox="0 0 24 24"><path d="M8 8h11v13H8zM5 16H4V3h11v1"/></svg>',
   rename: '<svg viewBox="0 0 24 24"><path d="M4 7h10M4 12h8M4 17h6M15 17l5-5M17 10h5v5"/></svg>',
   share: '<svg viewBox="0 0 24 24"><path d="M16 6a3 3 0 1 0 0 .1M6 15a3 3 0 1 0 0 .1M18 18a3 3 0 1 0 0 .1M8.5 13.5l5-5M8.7 16.1l6.6 2.8"/></svg>',
   upload: '<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>',
   folderPlus: '<svg viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v11H3zM12 14h6M15 11v6"/></svg>',
   textFile: '<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v5h5M9 13h6M9 17h4"/></svg>',
+  fileImage: '<svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 15l3-3 2 2 2-3 3 4M9 9h.01"/></svg>',
+  filePdf: '<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v5h5M9 16c3-6 4-6 7-2M9 18c3-1 6-2 8-4"/></svg>',
+  fileSheet: '<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v5h5M9 12h7M9 16h7M12 10v8"/></svg>',
+  fileSlides: '<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v5h5M9 12h7v5H9z"/></svg>',
+  fileMedia: '<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v5h5M10 12l5 3-5 3z"/></svg>',
+  fileAudio: '<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v5h5M10 16h2l4-4v8l-4-4h-2z"/></svg>',
   bold: '<svg viewBox="0 0 24 24"><path d="M8 5h5a3.5 3.5 0 0 1 0 7H8zM8 12h6a3.5 3.5 0 0 1 0 7H8z"/></svg>',
   italic: '<svg viewBox="0 0 24 24"><path d="M10 5h8M6 19h8M14 5l-4 14"/></svg>',
   underline: '<svg viewBox="0 0 24 24"><path d="M7 5v6a5 5 0 0 0 10 0V5M5 21h14"/></svg>',
@@ -434,6 +445,7 @@ const icon = name => ({
   , alert: '<svg viewBox="0 0 24 24"><path d="M12 3 2 21h20zM12 9v5M12 17h.01"/></svg>'
   , mapPin: '<svg viewBox="0 0 24 24"><path d="M12 21s7-5 7-11a7 7 0 1 0-14 0c0 6 7 11 7 11ZM12 10h.01"/></svg>'
   , box: '<svg viewBox="0 0 24 24"><path d="m12 3 8 4-8 4-8-4zM4 7v10l8 4 8-4V7M12 11v10"/></svg>'
+  , archive: '<svg viewBox="0 0 24 24"><path d="M4 5h16v4H4zM6 9h12v10H6zM10 13h4"/></svg>'
   , tag: '<svg viewBox="0 0 24 24"><path d="M4 12V5h7l9 9-7 7zM8 8h.01"/></svg>'
   , mail: '<svg viewBox="0 0 24 24"><path d="M4 6h16v12H4zM4 7l8 6 8-6"/></svg>'
   , terminal: '<svg viewBox="0 0 24 24"><path d="m4 7 5 5-5 5M11 17h9"/></svg>'
@@ -465,12 +477,30 @@ function normalizeCurrentSection() {
 
 function syncSectionRoute({ replace = false } = {}) {
   localStorage.setItem('divault_section', state.section);
-  const route = state.panel || (state.active?.id ? `${state.section}/note/${state.active.id}` : state.section);
+  const route = routeForCurrentState();
   const hash = route ? `#${encodeURI(route)}` : '';
   if (location.hash === hash) return;
   const url = `${location.pathname}${location.search}${hash}`;
   if (replace) history.replaceState(null, '', url);
   else history.pushState(null, '', url);
+}
+
+function routeForCurrentState() {
+  if (state.panel) return state.panel;
+  if (state.section === 'drive') return driveRouteForFolder(state.driveFolderId);
+  if (isNoteSection(state.section) && state.active?.id) return `${state.section}/note/${state.active.id}`;
+  return state.section;
+}
+
+function driveRouteForFolder(folderId = '') {
+  return folderId ? `drive/folder/${encodeURIComponent(folderId)}` : 'drive';
+}
+
+function parseDriveRoute(sectionPart) {
+  if (sectionPart === 'drive') return '';
+  const prefix = 'drive/folder/';
+  if (!sectionPart.startsWith(prefix)) return null;
+  return decodeURIComponent(sectionPart.slice(prefix.length));
 }
 
 async function applyRouteFromHash() {
@@ -670,15 +700,21 @@ function applyHashSection() {
   const hash = decodeURI(location.hash.replace(/^#\/?/, ''));
   const [sectionPart, notePart] = hash.split('/note/');
   const panel = sectionPart === 'settings' || sectionPart === 'categories' ? sectionPart : '';
-  const target = panel ? (state.section || defaultSection()) : (sectionAllowed(sectionPart) ? sectionPart : '');
+  const driveFolderId = parseDriveRoute(sectionPart);
+  const target = panel ? (state.section || defaultSection()) : (driveFolderId !== null ? 'drive' : (sectionAllowed(sectionPart) ? sectionPart : ''));
   const routeNoteId = notePart ? Number(notePart) : null;
   if (!target) return false;
-  const changed = state.section !== target || state.panel !== panel || Number(state.active?.id || 0) !== Number(routeNoteId || 0);
+  const routeDriveFolderId = target === 'drive' ? (driveFolderId || '') : state.driveFolderId;
+  const changed = state.section !== target || state.panel !== panel || Number(state.active?.id || 0) !== Number(routeNoteId || 0) || (target === 'drive' && String(state.driveFolderId || '') !== String(routeDriveFolderId || ''));
   if (!changed) return false;
   state.section = target;
   state.panel = panel;
   state.routeNoteId = routeNoteId;
   localStorage.setItem('divault_section', state.section);
+  if (target === 'drive') {
+    state.driveFolderId = routeDriveFolderId || '';
+    localStorage.setItem('divault_drive_folder_id', state.driveFolderId);
+  }
   state.q = '';
   state.active = null;
   state.activeExtra = null;
@@ -700,32 +736,38 @@ async function pollReminders() {
   for (const reminder of res.reminders || []) await showReminder(reminder);
 }
 
+async function dismissReminder(reminder) {
+  await api(`/reminders/${reminder.kind}/${reminder.id}/dismiss`, { method: 'POST', body: {} }).catch(() => null);
+}
+
 async function showReminder(reminder) {
   const title = `${reminder.kind === 'task' ? 'Task' : 'Calendar'} reminder`;
   const body = `${reminder.title}${reminder.due_at ? ` · ${formatDateTime(reminder.due_at)}` : ''}`;
   const url = reminder.kind === 'task' ? '/#tasks' : '/#calendar';
   if (window.DiVaultAndroid?.notify) {
-    window.DiVaultAndroid.notify(title, body, new URL(url, window.location.href).href);
-    await api(`/reminders/${reminder.kind}/${reminder.id}/dismiss`, { method: 'POST', body: {} }).catch(() => null);
+    if (window.DiVaultAndroid.notify(title, body, new URL(url, window.location.href).href)) {
+      await dismissReminder(reminder);
+    }
     return;
   }
   if (await showDesktopReminderNotification(title, body)) {
-    await api(`/reminders/${reminder.kind}/${reminder.id}/dismiss`, { method: 'POST', body: {} }).catch(() => null);
+    await dismissReminder(reminder);
     return;
   }
   if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission().catch(() => null);
   if ('Notification' in window && Notification.permission === 'granted') {
     try {
       const reg = await navigator.serviceWorker?.ready;
-      if (reg?.showNotification) await reg.showNotification(title, { body, tag: `divault-${reminder.kind}-${reminder.id}`, data: { url } });
-      else new Notification(title, { body });
+      const notificationOptions = { body, tag: `divault-${reminder.kind}-${reminder.id}`, data: { url }, silent: false };
+      if (reg?.showNotification) await reg.showNotification(title, notificationOptions);
+      else new Notification(title, notificationOptions);
     } catch {
       toast(`${title}: ${reminder.title}`);
     }
   } else {
     toast(`${title}: ${reminder.title}`);
   }
-  await api(`/reminders/${reminder.kind}/${reminder.id}/dismiss`, { method: 'POST', body: {} }).catch(() => null);
+  await dismissReminder(reminder);
 }
 
 async function showDesktopReminderNotification(title, body) {
@@ -1197,7 +1239,8 @@ function renderFilterBar(panelOpen) {
 
 function renderDriveFilterBar() {
   const selectLabel = state.driveSelectionMode ? 'Cancel selection' : 'Select files';
-  return `<div class="filterbar drive-filter"><input class="search" id="search" type="search" aria-label="Search files" placeholder="Search files and folders...  Q" value="${esc(state.q)}"><div class="filter-actions drive-commandbar"><button class="btn drive-tool-btn icon-only-btn ${state.driveSelectionMode ? 'active' : ''}" id="toggleDriveSelect" type="button" aria-label="${esc(selectLabel)}" title="${esc(selectLabel)}">${toolIcon('selectAll', selectLabel)}</button><label class="btn primary drive-upload-label drive-tool-btn icon-only-btn" title="Upload" aria-label="Upload">${toolIcon('upload', 'Upload')}<input id="driveUploadInput" type="file" multiple></label><button class="btn drive-tool-btn icon-only-btn" id="newDriveFolderBtn" type="button" aria-label="New folder" title="New folder">${toolIcon('folderPlus', 'New folder')}</button><button class="btn drive-tool-btn icon-only-btn" id="newDriveTextBtn" type="button" aria-label="Text file" title="Text file">${toolIcon('textFile', 'Text file')}</button><div class="note-layout-toggle drive-layout-toggle" role="group" aria-label="Drive layout"><button class="btn ghost ${state.driveLayout === 'grid' ? 'active' : ''}" data-drive-layout="grid" type="button">Grid</button><button class="btn ghost ${state.driveLayout === 'list' ? 'active' : ''}" data-drive-layout="list" type="button">List</button></div></div></div>`;
+  const selectIcon = state.driveSelectionMode ? 'selectNone' : 'selectAll';
+  return `<div class="filterbar drive-filter"><label class="drive-search-field"><span class="sr-only">Search Drive</span><input class="search" id="search" type="search" aria-label="Search files" placeholder="Search files and folders...  Q" value="${esc(state.q)}"></label><div class="filter-actions drive-commandbar"><div class="drive-tool-group" aria-label="Drive actions"><button class="btn drive-tool-btn icon-only-btn ${state.driveSelectionMode ? 'active' : ''}" id="toggleDriveSelect" type="button" aria-label="${esc(selectLabel)}" title="${esc(selectLabel)}">${toolIcon(selectIcon, selectLabel)}</button><label class="btn primary drive-upload-label drive-tool-btn icon-only-btn" title="Upload" aria-label="Upload">${toolIcon('upload', 'Upload')}<input id="driveUploadInput" type="file" multiple></label><button class="btn drive-tool-btn icon-only-btn" id="newDriveFolderBtn" type="button" aria-label="New folder" title="New folder">${toolIcon('folderPlus', 'New folder')}</button><button class="btn drive-tool-btn icon-only-btn" id="newDriveTextBtn" type="button" aria-label="Text file" title="Text file">${toolIcon('textFile', 'Text file')}</button></div><div class="note-layout-toggle drive-layout-toggle" role="group" aria-label="Drive layout"><button class="btn ghost icon-only-btn ${state.driveLayout === 'grid' ? 'active' : ''}" data-drive-layout="grid" type="button" aria-label="Grid view" title="Grid view">${toolIcon('cards', 'Grid view')}</button><button class="btn ghost icon-only-btn ${state.driveLayout === 'list' ? 'active' : ''}" data-drive-layout="list" type="button" aria-label="List view" title="List view">${toolIcon('list', 'List view')}</button></div></div></div>`;
 }
 
 function notificationItems() {
@@ -1333,8 +1376,53 @@ function categoryOptions(selectedId = '', parentId = null, depth = 0) {
 }
 
 function selectedVisibleNoteIds() {
-  const visible = new Set(state.notes.map(note => Number(note.id)));
+  const visible = new Set(noteVisibleSelectionIds());
   return [...state.selectedNoteIds].filter(id => visible.has(Number(id)));
+}
+
+function noteVisibleSelectionIds() {
+  return (state.notes || []).map(note => Number(note.id)).filter(Boolean);
+}
+
+function refreshContentArea(html) {
+  const content = document.querySelector('#contentArea');
+  if (!content) return;
+  content.innerHTML = html;
+  bindContentActions();
+}
+
+function toggleNoteSelection(id) {
+  const noteId = Number(id);
+  if (!noteId) return;
+  state.selectionMode = true;
+  if (state.selectedNoteIds.has(noteId)) state.selectedNoteIds.delete(noteId);
+  else state.selectedNoteIds.add(noteId);
+  state.lastSelectedNoteId = noteId;
+}
+
+function selectNoteRangeTo(id) {
+  const noteId = Number(id);
+  if (!noteId) return;
+  const visible = noteVisibleSelectionIds();
+  const end = visible.indexOf(noteId);
+  if (end < 0) return toggleNoteSelection(noteId);
+  const anchorId = visible.includes(Number(state.lastSelectedNoteId)) ? Number(state.lastSelectedNoteId) : noteId;
+  const start = visible.indexOf(anchorId);
+  const [from, to] = start < end ? [start, end] : [end, start];
+  state.selectionMode = true;
+  state.selectedNoteIds.clear();
+  visible.slice(from, to + 1).forEach(visibleId => state.selectedNoteIds.add(visibleId));
+  state.lastSelectedNoteId = noteId;
+}
+
+function handleNoteSelectionClick(event, id) {
+  if (!event.shiftKey && !event.ctrlKey && !event.metaKey) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.shiftKey) selectNoteRangeTo(id);
+  else toggleNoteSelection(id);
+  refreshContentArea(renderNotesWorkspace());
+  return true;
 }
 
 function activeClientName() {
@@ -2018,12 +2106,15 @@ function bindContentActions() {
   bindSettingsPanel(document.querySelector('#settingsPanel'));
   bindNotePaneResize();
   bindCalendarTaskActions();
-  document.querySelectorAll('[data-open]').forEach(el => el.addEventListener('click', async () => {
+  document.querySelectorAll('[data-open]').forEach(el => el.addEventListener('click', async e => {
+    const card = el.closest('[data-open-card]');
+    if (card && handleNoteSelectionClick(e, Number(card.dataset.openCard || el.dataset.open))) return;
     if (!await confirmDiscardUnsaved()) return;
     openEditor(Number(el.dataset.open));
   }));
   document.querySelectorAll('[data-open-card]').forEach(card => card.addEventListener('click', async e => {
     if (e.target.closest('button, input, label, a, select, textarea')) return;
+    if (handleNoteSelectionClick(e, Number(card.dataset.openCard))) return;
     if (!await confirmDiscardUnsaved()) return;
     openEditor(Number(card.dataset.openCard));
   }));
@@ -2050,8 +2141,8 @@ function bindContentActions() {
     const id = Number(e.target.dataset.selectNote);
     if (e.target.checked) state.selectedNoteIds.add(id);
     else state.selectedNoteIds.delete(id);
-    document.querySelector('#contentArea').innerHTML = renderNotesWorkspace();
-    bindContentActions();
+    state.lastSelectedNoteId = id;
+    refreshContentArea(renderNotesWorkspace());
   }));
   document.querySelector('#startSelectNotes')?.addEventListener('click', () => {
     state.selectionMode = true;
@@ -2061,19 +2152,19 @@ function bindContentActions() {
   document.querySelector('#selectAllNotes')?.addEventListener('click', () => {
     state.selectionMode = true;
     state.notes.forEach(note => state.selectedNoteIds.add(Number(note.id)));
-    document.querySelector('#contentArea').innerHTML = renderNotesWorkspace();
-    bindContentActions();
+    state.lastSelectedNoteId = noteVisibleSelectionIds().at(-1) || null;
+    refreshContentArea(renderNotesWorkspace());
   });
   document.querySelector('#selectNoNotes')?.addEventListener('click', () => {
     state.selectedNoteIds.clear();
-    document.querySelector('#contentArea').innerHTML = renderNotesWorkspace();
-    bindContentActions();
+    state.lastSelectedNoteId = null;
+    refreshContentArea(renderNotesWorkspace());
   });
   document.querySelector('#clearSelectedNotes')?.addEventListener('click', () => {
     state.selectionMode = false;
     state.selectedNoteIds.clear();
-    document.querySelector('#contentArea').innerHTML = renderNotesWorkspace();
-    bindContentActions();
+    state.lastSelectedNoteId = null;
+    refreshContentArea(renderNotesWorkspace());
   });
   document.querySelector('#bulkMoveNotes')?.addEventListener('click', () => bulkMoveSelectedNotes(document.querySelector('#bulkMoveCategory')?.value || ''));
   document.querySelector('#bulkArchiveNotes')?.addEventListener('click', () => bulkNoteAction('archive'));
@@ -2082,12 +2173,17 @@ function bindContentActions() {
   document.querySelector('#bulkPermanentDeleteNotes')?.addEventListener('click', () => bulkNoteAction('permanent'));
   document.querySelectorAll('[data-preview-version]').forEach(btn => btn.addEventListener('click', () => previewVersion(Number(btn.dataset.noteId), Number(btn.dataset.previewVersion))));
   document.querySelectorAll('[data-restore-version]').forEach(btn => btn.addEventListener('click', () => restoreVersion(Number(btn.dataset.noteId), Number(btn.dataset.restoreVersion))));
-  document.querySelectorAll('[data-preview-file]').forEach(btn => btn.addEventListener('click', () => openFilePreview(btn.dataset.previewFile, btn.dataset.fileName || 'File preview', btn.dataset.fileMime || '', {
+  document.querySelectorAll('[data-preview-file]').forEach(btn => btn.addEventListener('click', e => {
+    const main = btn.closest('.drive-main');
+    if (main && handleDriveSelectionClick(e, `file:${btn.dataset.drivePreviewId}`)) return;
+    openFilePreview(btn.dataset.previewFile, btn.dataset.fileName || 'File preview', btn.dataset.fileMime || '', {
     downloadUrl: btn.dataset.downloadFile || '',
     editId: btn.dataset.drivePreviewEdit || '',
+    officeId: btn.dataset.drivePreviewOffice || '',
     metadataId: btn.dataset.drivePreviewId || '',
     extractId: btn.dataset.drivePreviewExtract || '',
-  })));
+    });
+  }));
   document.querySelector('[data-inline-editor]') && bindInlineEditor(document.querySelector('[data-inline-editor]'));
   document.querySelectorAll('[data-note-id]').forEach(card => {
     card.addEventListener('dragstart', e => {
@@ -2110,6 +2206,7 @@ function bindContentActions() {
     }, 'Archive failed');
   }));
   bindDriveActions();
+  bindDesktopContextMenus();
 }
 
 function bindDriveActions() {
@@ -2129,18 +2226,19 @@ function bindDriveActions() {
     document.querySelector('#contentArea').innerHTML = renderDrive();
     bindContentActions();
   }));
-  document.querySelectorAll('[data-drive-folder]').forEach(btn => btn.addEventListener('click', async () => {
-    state.driveFolderId = btn.dataset.driveFolder || '';
-    localStorage.setItem('divault_drive_folder_id', state.driveFolderId);
-    await loadDrive();
-    renderApp();
+  document.querySelectorAll('[data-drive-folder]').forEach(btn => btn.addEventListener('click', e => {
+    if (btn.closest('.drive-main') && handleDriveSelectionClick(e, `folder:${btn.dataset.driveFolder || ''}`)) return;
+    navigateDriveFolder(btn.dataset.driveFolder || '');
   }));
   document.querySelector('#newDriveFolderBtn')?.addEventListener('click', createDriveFolder);
   document.querySelector('#newDriveTextBtn')?.addEventListener('click', createDriveTextFile);
   document.querySelector('#driveUploadInput')?.addEventListener('change', e => uploadDriveFiles([...e.target.files]));
   document.querySelector('#toggleDriveSelect')?.addEventListener('click', () => {
     state.driveSelectionMode = !state.driveSelectionMode;
-    if (!state.driveSelectionMode) state.selectedDriveItems.clear();
+    if (!state.driveSelectionMode) {
+      state.selectedDriveItems.clear();
+      state.lastSelectedDriveKey = '';
+    }
     renderApp();
   });
   document.querySelectorAll('[data-select-drive]').forEach(input => input.addEventListener('click', e => e.stopPropagation()));
@@ -2148,19 +2246,19 @@ function bindDriveActions() {
     const key = e.target.dataset.selectDrive;
     if (e.target.checked) state.selectedDriveItems.add(key);
     else state.selectedDriveItems.delete(key);
-    document.querySelector('#contentArea').innerHTML = renderDrive();
-    bindContentActions();
+    state.lastSelectedDriveKey = key;
+    refreshContentArea(renderDrive());
   }));
   document.querySelector('#selectAllDriveItems')?.addEventListener('click', () => {
     state.driveSelectionMode = true;
     driveVisibleSelectionKeys().forEach(key => state.selectedDriveItems.add(key));
-    document.querySelector('#contentArea').innerHTML = renderDrive();
-    bindContentActions();
+    state.lastSelectedDriveKey = driveVisibleSelectionKeys().at(-1) || '';
+    refreshContentArea(renderDrive());
   });
   document.querySelector('#selectNoDriveItems')?.addEventListener('click', () => {
     state.selectedDriveItems.clear();
-    document.querySelector('#contentArea').innerHTML = renderDrive();
-    bindContentActions();
+    state.lastSelectedDriveKey = '';
+    refreshContentArea(renderDrive());
   });
   document.querySelector('#compressSelectedDrive')?.addEventListener('click', compressSelectedDriveItems);
   document.querySelector('#deleteSelectedDrive')?.addEventListener('click', deleteSelectedDriveItems);
@@ -2183,9 +2281,18 @@ function bindDriveActions() {
   document.querySelectorAll('[data-share-drive-folder]').forEach(btn => btn.addEventListener('click', () => openDriveShareDialog('folder', btn.dataset.shareDriveFolder, btn.dataset.name)));
   document.querySelectorAll('[data-share-drive-file]').forEach(btn => btn.addEventListener('click', () => openDriveShareDialog('file', btn.dataset.shareDriveFile, btn.dataset.name)));
   document.querySelectorAll('[data-edit-drive-file]').forEach(btn => btn.addEventListener('click', () => openDriveTextEditor(btn.dataset.editDriveFile, btn.dataset.name)));
+  document.querySelectorAll('[data-office-drive-file]').forEach(btn => btn.addEventListener('click', () => openDriveOfficeEditor(btn.dataset.officeDriveFile, btn.dataset.name)));
   document.querySelectorAll('[data-zip-drive-folder]').forEach(btn => btn.addEventListener('click', () => zipDriveItem('folder', btn.dataset.zipDriveFolder, btn.dataset.name)));
   document.querySelectorAll('[data-zip-drive-file]').forEach(btn => btn.addEventListener('click', () => zipDriveItem('file', btn.dataset.zipDriveFile, btn.dataset.name)));
   document.querySelectorAll('[data-extract-drive-file]').forEach(btn => btn.addEventListener('click', () => extractDriveZip(btn.dataset.extractDriveFile, btn.dataset.name)));
+}
+
+async function navigateDriveFolder(folderId = '', { replace = false } = {}) {
+  state.driveFolderId = folderId || '';
+  localStorage.setItem('divault_drive_folder_id', state.driveFolderId);
+  syncSectionRoute({ replace });
+  await loadDrive();
+  renderApp();
 }
 
 function closeDriveMenus() {
@@ -2193,6 +2300,154 @@ function closeDriveMenus() {
     menu.classList.remove('open');
     menu.querySelector('.drive-menu-toggle')?.setAttribute('aria-expanded', 'false');
   });
+}
+
+function bindDesktopContextMenus() {
+  document.querySelectorAll('.drive-item').forEach(item => item.addEventListener('contextmenu', event => {
+    if (!shouldOpenDesktopContextMenu(event) || event.target.closest('input, label, .drive-actions')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openDriveContextMenu(item, event);
+  }));
+  document.querySelectorAll('[data-open-card]').forEach(card => card.addEventListener('contextmenu', event => {
+    const button = event.target.closest('button');
+    if (!shouldOpenDesktopContextMenu(event) || event.target.closest('input, label, a, select, textarea') || (button && !button.matches('[data-open]'))) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openNoteContextMenu(card, event);
+  }));
+}
+
+function shouldOpenDesktopContextMenu(event) {
+  if (event.pointerType && event.pointerType !== 'mouse') return false;
+  return window.matchMedia?.('(pointer: fine)').matches ?? !('ontouchstart' in window);
+}
+
+function focusDriveItemForContextMenu(item) {
+  const key = item.dataset.driveKey || '';
+  if (!key) return;
+  if (!state.selectedDriveItems.has(key)) {
+    state.driveSelectionMode = true;
+    state.selectedDriveItems.clear();
+    state.selectedDriveItems.add(key);
+    document.querySelectorAll('.drive-item.selected').forEach(selected => selected.classList.remove('selected'));
+    item.classList.add('selected');
+  }
+  state.lastSelectedDriveKey = key;
+  item.querySelector('.drive-main')?.focus({ preventScroll: true });
+}
+
+function focusNoteForContextMenu(card, id) {
+  const noteId = Number(id);
+  if (!noteId) return;
+  if (!state.selectedNoteIds.has(noteId)) {
+    state.selectionMode = true;
+    state.selectedNoteIds.clear();
+    state.selectedNoteIds.add(noteId);
+    document.querySelectorAll('.note-card.selected').forEach(selected => selected.classList.remove('selected'));
+    card.classList.add('selected');
+  }
+  state.lastSelectedNoteId = noteId;
+  card.focus({ preventScroll: true });
+}
+
+function openDriveContextMenu(item, event) {
+  focusDriveItemForContextMenu(item);
+  const main = item.querySelector('.drive-main');
+  const openLabel = item.classList.contains('folder-item') ? 'Open folder' : 'Preview file';
+  const openIcon = item.classList.contains('folder-item') ? 'folder' : 'preview';
+  const actions = main ? [{ label: openLabel, iconName: openIcon, run: () => main.click() }] : [];
+  item.querySelectorAll('.drive-action-menu [role="menuitem"]').forEach(action => {
+    const label = action.getAttribute('aria-label') || action.getAttribute('title') || action.textContent?.trim() || 'Action';
+    const iconHtml = action.querySelector('.tool-icon')?.innerHTML || '';
+    actions.push({ label, iconHtml, danger: action.classList.contains('danger-link'), run: () => action.click() });
+  });
+  showDesktopContextMenu(actions, event.clientX, event.clientY, `${openLabel} actions`);
+}
+
+function openNoteContextMenu(card, event) {
+  const id = Number(card.dataset.noteId || card.dataset.openCard || 0);
+  if (!id) return;
+  focusNoteForContextMenu(card, id);
+  const note = state.notes.find(item => Number(item.id) === id) || {};
+  const actions = [{ label: 'Open note', iconName: 'note', attrs: `data-open="${esc(id)}"`, run: async () => {
+    if (!await confirmDiscardUnsaved()) return;
+    openEditor(id);
+  } }];
+  if (Number(note.deleted)) {
+    actions.push({ label: 'Restore', iconName: 'undo', attrs: 'data-restore-note', run: () => restoreCurrentNote(id) });
+    actions.push({ label: 'Delete forever', iconName: 'trash', attrs: 'data-permanent-delete-note', danger: true, run: () => permanentlyDeleteCurrentNote(id) });
+  } else if (Number(note.archived)) {
+    actions.push({ label: 'Restore', iconName: 'undo', attrs: 'data-restore-note', run: () => restoreCurrentNote(id) });
+  } else {
+    actions.push({ label: 'Archive', iconName: 'archive', attrs: 'data-archive-note-readonly', run: () => archiveCurrentNote(id) });
+    actions.push({ label: 'Recycle', iconName: 'trash', attrs: 'data-trash-note-readonly', danger: true, run: () => trashCurrentNote(id) });
+  }
+  showDesktopContextMenu(actions, event.clientX, event.clientY, `Note actions for ${note.title || 'note'}`);
+}
+
+function showDesktopContextMenu(actions, x, y, label) {
+  closeDesktopContextMenu();
+  if (!actions.length) return;
+  activeContextMenuActions = actions;
+  const menu = document.createElement('div');
+  menu.className = 'app-context-menu';
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', label);
+  menu.innerHTML = actions.map((action, index) => `<button class="app-context-menu-item ${action.danger ? 'danger-link' : ''}" type="button" role="menuitem" data-context-menu-action="${index}" ${action.attrs || ''} aria-label="${esc(action.label)}"><span class="tool-icon" aria-hidden="true">${action.iconHtml || icon(action.iconName || 'file')}</span><span>${esc(action.label)}</span></button>`).join('');
+  document.body.appendChild(menu);
+  positionDesktopContextMenu(menu, x, y);
+  menu.addEventListener('click', event => {
+    const button = event.target.closest('[data-context-menu-action]');
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const action = activeContextMenuActions[Number(button.dataset.contextMenuAction)];
+    closeDesktopContextMenu();
+    action?.run?.();
+  });
+  requestAnimationFrame(() => menu.querySelector('[role="menuitem"]')?.focus({ preventScroll: true }));
+  addDesktopContextMenuListeners(menu);
+}
+
+function positionDesktopContextMenu(menu, x, y) {
+  const margin = 8;
+  const rect = menu.getBoundingClientRect();
+  const left = Math.min(Math.max(margin, x), window.innerWidth - rect.width - margin);
+  const top = Math.min(Math.max(margin, y), window.innerHeight - rect.height - margin);
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
+function closeDesktopContextMenu() {
+  removeDesktopContextMenuListeners();
+  document.querySelector('.app-context-menu')?.remove();
+  activeContextMenuActions = [];
+}
+
+function addDesktopContextMenuListeners(menu) {
+  const closeOutside = event => {
+    if (!menu.contains(event.target)) closeDesktopContextMenu();
+  };
+  const closeOnEscape = event => {
+    if (event.key === 'Escape') closeDesktopContextMenu();
+  };
+  menu.__divaultContextListeners = { closeOutside, closeOnEscape };
+  setTimeout(() => document.addEventListener('pointerdown', closeOutside, true), 0);
+  document.addEventListener('keydown', closeOnEscape);
+  window.addEventListener('scroll', closeDesktopContextMenu, true);
+  window.addEventListener('resize', closeDesktopContextMenu);
+}
+
+function removeDesktopContextMenuListeners() {
+  const menu = document.querySelector('.app-context-menu');
+  const listeners = menu?.__divaultContextListeners;
+  if (listeners) {
+    document.removeEventListener('pointerdown', listeners.closeOutside, true);
+    document.removeEventListener('keydown', listeners.closeOnEscape);
+  }
+  window.removeEventListener('scroll', closeDesktopContextMenu, true);
+  window.removeEventListener('resize', closeDesktopContextMenu);
 }
 
 async function createDriveFolder() {
@@ -2271,7 +2526,42 @@ async function extractDriveZip(id, name) {
 }
 
 function driveVisibleSelectionKeys() {
-  return [...(state.driveFolders || []).map(item => `folder:${item.id}`), ...(state.driveFiles || []).map(item => `file:${item.id}`)];
+  const folders = sortDriveItems(state.driveFolders || [], 'folder').map(item => `folder:${item.id}`);
+  const files = sortDriveItems(state.driveFiles || [], 'file').map(item => `file:${item.id}`);
+  return [...folders, ...files];
+}
+
+function toggleDriveSelection(key) {
+  if (!key || /:(undefined|null)?$/.test(key)) return;
+  state.driveSelectionMode = true;
+  if (state.selectedDriveItems.has(key)) state.selectedDriveItems.delete(key);
+  else state.selectedDriveItems.add(key);
+  state.lastSelectedDriveKey = key;
+}
+
+function selectDriveRangeTo(key) {
+  if (!key || /:(undefined|null)?$/.test(key)) return;
+  const visible = driveVisibleSelectionKeys();
+  const end = visible.indexOf(key);
+  if (end < 0) return toggleDriveSelection(key);
+  const anchorKey = visible.includes(state.lastSelectedDriveKey) ? state.lastSelectedDriveKey : key;
+  const start = visible.indexOf(anchorKey);
+  const [from, to] = start < end ? [start, end] : [end, start];
+  state.driveSelectionMode = true;
+  state.selectedDriveItems.clear();
+  visible.slice(from, to + 1).forEach(visibleKey => state.selectedDriveItems.add(visibleKey));
+  state.lastSelectedDriveKey = key;
+}
+
+function handleDriveSelectionClick(event, key) {
+  if (!event.shiftKey && !event.ctrlKey && !event.metaKey) return false;
+  if (!key || /:(undefined|null)?$/.test(key)) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.shiftKey) selectDriveRangeTo(key);
+  else toggleDriveSelection(key);
+  refreshContentArea(renderDrive());
+  return true;
 }
 
 function selectedVisibleDriveKeys() {
@@ -2388,6 +2678,43 @@ async function openDriveTextEditor(id, name) {
       }, 'File save failed');
     });
   }, 'Open editor failed');
+}
+
+async function openDriveOfficeEditor(id, name) {
+  await runUserAction(async () => {
+    const result = await api(`/drive/files/${encodeURIComponent(id)}/office`);
+    const modal = document.createElement('div');
+    const editorId = `onlyoffice-editor-${Date.now()}`;
+    modal.className = 'editor onlyoffice-editor';
+    modal.innerHTML = `<section class="editor-panel onlyoffice-editor-panel"><div class="topbar"><div><p class="terminal-path">divault ~/drive/office</p><h2>${esc(name || 'Document')}</h2><p class="muted small">Edits save back to Drive after OnlyOffice finishes processing the document.</p></div><button class="btn ghost" type="button" data-close>Close</button></div><div class="onlyoffice-frame" id="${editorId}"><p class="muted">Loading OnlyOffice...</p></div></section>`;
+    document.body.appendChild(modal);
+    setupAccessibleModal(modal, '[data-close]');
+    let editor = null;
+    modal.querySelector('[data-close]')?.addEventListener('click', async () => {
+      if (editor && typeof editor.destroyEditor === 'function') editor.destroyEditor();
+      await loadDrive();
+      renderApp();
+    }, { once: true });
+    await loadOnlyOfficeApi(result.api_script);
+    if (!window.DocsAPI?.DocEditor) throw new Error('OnlyOffice API did not load');
+    editor = new window.DocsAPI.DocEditor(editorId, result.config);
+  }, 'Open OnlyOffice editor failed');
+}
+
+function loadOnlyOfficeApi(src) {
+  if (window.DocsAPI?.DocEditor) return Promise.resolve();
+  if (!src) return Promise.reject(new Error('OnlyOffice public URL is not configured'));
+  if (!onlyOfficeScriptPromise) {
+    onlyOfficeScriptPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = src;
+      script.async = true;
+      script.onload = resolve;
+      script.onerror = () => reject(new Error('OnlyOffice script could not be loaded'));
+      document.head.appendChild(script);
+    });
+  }
+  return onlyOfficeScriptPromise;
 }
 
 function bindCalendarTaskActions() {
@@ -3111,16 +3438,34 @@ function renderDrive() {
   const crumbs = renderDriveBreadcrumbs();
   const empty = !folders.length && !files.length;
   const bulkActions = renderDriveBulkActions(folders.length + files.length);
-  return `<section class="drive-shell ${state.driveLayout === 'list' ? 'list-view' : 'grid-view'} ${state.driveSelectionMode ? 'selecting' : ''}">
-    <div class="drive-header card"><div class="drive-path-line">${crumbs}</div><div class="drive-stats"><span class="pill">${folders.length} folder${folders.length === 1 ? '' : 's'}</span><span class="pill">${files.length} file${files.length === 1 ? '' : 's'}</span></div></div>
-    ${bulkActions}${empty ? `<div class="empty card drive-empty"><h2>${state.q ? 'No matching files' : 'This folder is empty'}</h2><p>${state.q ? 'Try another search term.' : 'Use Upload, New folder, or Text file to add content.'}</p></div>` : `<div class="drive-list-card"><div class="drive-list-head">${renderDriveSortHeader('name', 'Name')}${renderDriveSortHeader('size', 'Size')}${renderDriveSortHeader('type', 'Type')}${renderDriveSortHeader('date', 'Modified')}<span>Actions</span></div><div class="drive-items">${folders.map(renderDriveFolder).join('')}${files.map(renderDriveFile).join('')}</div></div>`}
+  const currentName = driveCurrentFolderName();
+  const totalItems = folders.length + files.length;
+  const totalBytes = files.reduce((sum, file) => sum + Number(file.size || file.bytes || 0), 0);
+  const latest = latestDriveTimestamp([...folders, ...files]);
+  const pathText = drivePathText();
+  const parentFolderId = driveParentFolderId();
+  const itemSummary = `${totalItems} item${totalItems === 1 ? '' : 's'}`;
+  const statPills = [`${folders.length} folder${folders.length === 1 ? '' : 's'}`, `${files.length} file${files.length === 1 ? '' : 's'}`];
+  if (totalBytes) statPills.push(formatDriveSize(totalBytes));
+  if (latest) statPills.push(`Updated ${formatDateTime(latest)}`);
+  const upLabel = state.driveFolderId ? `Up from ${currentName}` : 'Already at Drive root';
+  const upButton = state.driveFolderId ? `<button class="drive-up-btn" data-drive-folder="${esc(parentFolderId)}" type="button" aria-label="${esc(upLabel)}" title="${esc(upLabel)}"><span aria-hidden="true">‹</span></button>` : `<button class="drive-up-btn" type="button" aria-label="${esc(upLabel)}" title="${esc(upLabel)}" disabled><span aria-hidden="true">‹</span></button>`;
+  return `<section class="drive-shell ${state.driveLayout === 'list' ? 'list-view' : 'grid-view'} ${state.driveSelectionMode ? 'selecting' : ''}" aria-label="Drive file browser">
+    ${bulkActions}<div class="drive-header card"><div class="drive-path-controls">${upButton}<span class="drive-root-mark compact" aria-hidden="true">${icon('folder')}</span></div><div class="drive-path-line"><span class="drive-path-label">Drive</span>${crumbs}</div><div class="drive-stats" aria-label="Folder summary"><span class="drive-summary" title="/${esc(pathText)}">${esc(itemSummary)}</span>${statPills.map(stat => `<span class="pill">${esc(stat)}</span>`).join('')}</div></div>
+    ${empty ? renderDriveEmptyState() : `<div class="drive-list-card" role="region" aria-label="${esc(currentName)} contents"><div class="drive-list-head">${renderDriveSortHeader('name', 'Name')}${renderDriveSortHeader('size', 'Size')}${renderDriveSortHeader('type', 'Type')}${renderDriveSortHeader('date', 'Modified')}<span>Actions</span></div><div class="drive-items">${folders.map(renderDriveFolder).join('')}${files.map(renderDriveFile).join('')}</div></div>`}
   </section>`;
+}
+
+function renderDriveEmptyState() {
+  const title = state.q ? 'No matching files' : 'This folder is empty';
+  const hint = state.q ? 'Try another search term or use the path above to move up.' : 'Use the compact toolbar to upload, create a folder, or start a text file here.';
+  return `<div class="empty card drive-empty"><span class="drive-empty-mark">${icon('folder')}</span><div><span class="drive-path-label">Ready at</span><div class="drive-empty-path">/${esc(drivePathText())}</div></div><h2>${esc(title)}</h2><p>${esc(hint)}</p></div>`;
 }
 
 function renderDriveBulkActions(total) {
   if (!state.driveSelectionMode) return '';
   const selectedCount = selectedVisibleDriveKeys().length;
-  return `<div class="bulk-note-actions drive-bulk-actions card ${selectedCount ? 'has-selection' : ''}"><span class="small muted">${selectedCount ? `${selectedCount} selected` : 'Select files or folders for bulk actions.'}</span><button class="btn ghost bulk-icon-btn" type="button" id="selectAllDriveItems">${toolIcon('selectAll', 'Select all')}<span>Select all</span></button>${selectedCount ? `<button class="btn ghost bulk-icon-btn" type="button" id="selectNoDriveItems">${toolIcon('selectNone', 'Select none')}<span>Select none</span></button><button class="btn" type="button" id="compressSelectedDrive">Compress selected</button><span class="bulk-danger-zone"><button class="btn danger icon-only-btn" type="button" id="deleteSelectedDrive" aria-label="Delete selected" title="Delete selected">${toolIcon('trash', 'Delete selected')}</button></span>` : total ? '' : '<span class="small muted">This folder is empty.</span>'}</div>`;
+  return `<div class="bulk-note-actions drive-bulk-actions card ${selectedCount ? 'has-selection' : ''}"><span class="small muted">${selectedCount ? `${selectedCount} selected` : 'Select files or folders for bulk actions.'}</span><button class="btn ghost bulk-icon-btn" type="button" id="selectAllDriveItems" aria-label="Select all" title="Select all">${toolIcon('selectAll', 'Select all')}<span>Select all</span></button>${selectedCount ? `<button class="btn ghost bulk-icon-btn" type="button" id="selectNoDriveItems" aria-label="Select none" title="Select none">${toolIcon('selectNone', 'Select none')}<span>Select none</span></button><button class="btn" type="button" id="compressSelectedDrive" aria-label="Compress selected" title="Compress selected">Compress</button><span class="bulk-danger-zone"><button class="btn danger icon-only-btn" type="button" id="deleteSelectedDrive" aria-label="Delete selected" title="Delete selected">${toolIcon('trash', 'Delete selected')}</button></span>` : total ? '' : '<span class="small muted">This folder is empty.</span>'}</div>`;
 }
 
 function renderDriveSortHeader(field, label) {
@@ -3149,8 +3494,19 @@ function driveSortValue(item, kind, field) {
 
 function renderDriveBreadcrumbs() {
   const crumbs = normalizeDriveBreadcrumbs();
-  if (!crumbs.length) return `<div class="drive-breadcrumbs"><span class="drive-path-label">Path</span><button class="link-button" data-drive-folder="" type="button">Root</button></div>`;
-  return `<div class="drive-breadcrumbs"><button class="link-button" data-drive-folder="" type="button">Root</button>${crumbs.map(crumb => `<span>/</span><button class="link-button" data-drive-folder="${esc(crumb.id || '')}" type="button">${esc(crumb.name || 'Folder')}</button>`).join('')}</div>`;
+  if (!crumbs.length) return `<div class="drive-breadcrumbs" aria-label="Current Drive path"><button class="link-button" data-drive-folder="" type="button" aria-current="page">Root</button></div>`;
+  return `<div class="drive-breadcrumbs" aria-label="Current Drive path"><button class="link-button" data-drive-folder="" type="button">Root</button>${crumbs.map((crumb, index) => `<span aria-hidden="true">/</span><button class="link-button" data-drive-folder="${esc(crumb.id || '')}" type="button" ${index === crumbs.length - 1 ? 'aria-current="page"' : ''}>${esc(crumb.name || 'Folder')}</button>`).join('')}</div>`;
+}
+
+function drivePathText() {
+  const crumbs = normalizeDriveBreadcrumbs();
+  return ['Root', ...crumbs.map(crumb => crumb.name || 'Folder')].join(' / ');
+}
+
+function driveParentFolderId() {
+  const crumbs = normalizeDriveBreadcrumbs();
+  if (!state.driveFolderId || crumbs.length < 2) return '';
+  return crumbs.at(-2)?.id || '';
 }
 
 function normalizeDriveBreadcrumbs() {
@@ -3159,38 +3515,90 @@ function normalizeDriveBreadcrumbs() {
 
 function driveCurrentFolderName() {
   const last = normalizeDriveBreadcrumbs().at(-1);
+  if (!state.driveFolderId) return 'Root';
   return last?.name || state.driveFolders.find(folder => String(folder.id) === String(state.driveFolderId))?.name || 'Folder';
+}
+
+function latestDriveTimestamp(items) {
+  const latest = items.map(item => new Date(normalizeDate(item.updated_at || item.created_at || 0)).getTime() || 0).filter(Boolean).sort((a, b) => b - a)[0];
+  return latest ? new Date(latest).toISOString() : '';
 }
 
 function renderDriveFolder(folder) {
   const name = folder.name || folder.title || 'Untitled folder';
   const updated = folder.updated_at || folder.created_at || '';
+  const contents = driveFolderContentsLabel(folder);
+  const modified = updated ? `Modified ${formatDateTime(updated)}` : '';
+  const meta = [contents, modified].filter(Boolean).join(' · ');
   const canManage = driveCanManage(folder);
   const selectionKey = `folder:${folder.id}`;
   const selected = state.selectedDriveItems.has(selectionKey);
   const selector = state.driveSelectionMode ? `<label class="drive-select"><input type="checkbox" data-select-drive="${esc(selectionKey)}" ${selected ? 'checked' : ''} aria-label="Select ${esc(name)}"><span class="sr-only">Select ${esc(name)}</span></label>` : '';
   const actions = `${driveActionButton('Compress', 'box', `data-zip-drive-folder="${esc(folder.id)}" data-name="${esc(name)}"`)}${driveActionButton('Rename', 'rename', `data-rename-drive-folder="${esc(folder.id)}" data-name="${esc(name)}"`)}${canManage ? driveActionButton('Share', 'share', `data-share-drive-folder="${esc(folder.id)}" data-name="${esc(name)}"`) : ''}${driveActionButton('Delete', 'trash', `data-delete-drive-folder="${esc(folder.id)}" data-name="${esc(name)}"`, 'danger-link')}`;
-  return `<article class="drive-item folder-item ${selected ? 'selected' : ''}" data-drive-folder-card="${esc(folder.id)}">${selector}<button class="drive-main" data-drive-folder="${esc(folder.id)}" type="button"><span class="drive-icon">${icon('folder')}</span><span><b>${esc(name)}</b></span></button><span class="drive-size">-</span><span class="drive-kind">Folder</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
+  return `<article class="drive-item folder-item ${selected ? 'selected' : ''}" data-drive-folder-card="${esc(folder.id)}" data-drive-key="${esc(selectionKey)}">${selector}<button class="drive-main" data-drive-folder="${esc(folder.id)}" type="button"><span class="drive-icon">${icon('folder')}</span><span class="drive-name-stack"><b>${esc(name)}</b><small>${esc(meta)}</small><span class="drive-meta-row"><span>${esc(contents)}</span>${modified ? `<span>${esc(modified)}</span>` : ''}</span></span></button><span class="drive-size">-</span><span class="drive-kind">Folder</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
 }
 
 function renderDriveFile(file) {
   const name = file.original_name || file.name || file.filename || 'Untitled file';
   const mime = file.mime || file.mime_type || file.type || '';
-  const size = formatDriveSize(file.size || file.bytes || 0);
+  const size = formatDriveSize(file.size || file.bytes || 0) || '0 B';
   const id = file.id;
   const previewUrl = `/api/drive/files/${encodeURIComponent(id)}/preview`;
   const downloadUrl = `/api/drive/files/${encodeURIComponent(id)}/download`;
   const editable = isDriveEditable(name, mime);
+  const officeEditable = isDriveOfficeEditable(name, mime);
   const zip = isDriveZip(name, mime);
   const selectionKey = `file:${id}`;
   const selected = state.selectedDriveItems.has(selectionKey);
   const selector = state.driveSelectionMode ? `<label class="drive-select"><input type="checkbox" data-select-drive="${esc(selectionKey)}" ${selected ? 'checked' : ''} aria-label="Select ${esc(name)}"><span class="sr-only">Select ${esc(name)}</span></label>` : '';
-  const thumb = isImage(mime) ? `<img class="drive-thumb" src="${previewUrl}" alt="${esc(name)}">` : `<span class="drive-file-mark">${driveFileExtension(name)}</span>`;
+  const thumb = renderDriveFileThumb(name, mime, previewUrl);
   const canManage = driveCanManage(file);
   const updated = file.updated_at || file.created_at || '';
-  const previewAttrs = `data-preview-file="${previewUrl}" data-file-name="${esc(name)}" data-file-mime="${esc(mime)}" data-download-file="${downloadUrl}" data-drive-preview-id="${esc(id)}"${editable ? ` data-drive-preview-edit="${esc(id)}"` : ''}${zip ? ` data-drive-preview-extract="${esc(id)}"` : ''}`;
-  const actions = `${driveActionLink('Download', 'download', downloadUrl)}${editable ? driveActionButton('Edit', 'draw', `data-edit-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${zip ? driveActionButton('Extract', 'folder', `data-extract-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${driveActionButton('Compress', 'box', `data-zip-drive-file="${esc(id)}" data-name="${esc(name)}"`)}${driveActionButton('Rename', 'rename', `data-rename-drive-file="${esc(id)}" data-name="${esc(name)}"`)}${canManage ? driveActionButton('Share', 'share', `data-share-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${driveActionButton('Delete', 'trash', `data-delete-drive-file="${esc(id)}" data-name="${esc(name)}"`, 'danger-link')}`;
-  return `<article class="drive-item file-item ${selected ? 'selected' : ''}">${selector}<button class="drive-main" ${previewAttrs} type="button">${thumb}<span><b>${esc(name)}</b></span></button><span class="drive-size">${size ? esc(size) : '-'}</span><span class="drive-kind">${esc(driveFileExtension(name))}</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
+  const typeLabel = driveFileTypeLabel(name, mime);
+  const modified = updated ? `Modified ${formatDateTime(updated)}` : '';
+  const meta = [typeLabel, size, modified].filter(Boolean).join(' · ');
+  const previewAttrs = `data-preview-file="${previewUrl}" data-file-name="${esc(name)}" data-file-mime="${esc(mime)}" data-download-file="${downloadUrl}" data-drive-preview-id="${esc(id)}"${editable ? ` data-drive-preview-edit="${esc(id)}"` : ''}${officeEditable ? ` data-drive-preview-office="${esc(id)}"` : ''}${zip ? ` data-drive-preview-extract="${esc(id)}"` : ''}`;
+  const actions = `${driveActionLink('Download', 'download', downloadUrl)}${editable ? driveActionButton('Edit text', 'draw', `data-edit-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${officeEditable ? driveActionButton('Edit document', 'documentEdit', `data-office-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${zip ? driveActionButton('Extract', 'extract', `data-extract-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${driveActionButton('Compress', 'box', `data-zip-drive-file="${esc(id)}" data-name="${esc(name)}"`)}${driveActionButton('Rename', 'rename', `data-rename-drive-file="${esc(id)}" data-name="${esc(name)}"`)}${canManage ? driveActionButton('Share', 'share', `data-share-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${driveActionButton('Delete', 'trash', `data-delete-drive-file="${esc(id)}" data-name="${esc(name)}"`, 'danger-link')}`;
+  return `<article class="drive-item file-item ${selected ? 'selected' : ''}" data-drive-key="${esc(selectionKey)}">${selector}<button class="drive-main" ${previewAttrs} type="button">${thumb}<span class="drive-name-stack"><b>${esc(name)}</b><small>${esc(meta)}</small><span class="drive-meta-row"><span>${esc(typeLabel)}</span><span>${esc(size)}</span>${modified ? `<span>${esc(modified)}</span>` : ''}</span></span></button><span class="drive-size">${esc(size)}</span><span class="drive-kind">${esc(driveFileExtension(name))}</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
+}
+
+function driveFolderContentsLabel(folder) {
+  const folderCount = Number(folder.folder_count ?? folder.folders_count ?? folder.child_folder_count ?? 0);
+  const fileCount = Number(folder.file_count ?? folder.files_count ?? 0);
+  if (!folderCount && !fileCount) return 'Folder';
+  return `${folderCount} folder${folderCount === 1 ? '' : 's'} · ${fileCount} file${fileCount === 1 ? '' : 's'}`;
+}
+
+function driveFileTypeLabel(name, mime) {
+  if (mime) return mime;
+  const ext = driveFileExtension(name);
+  return ext === 'FILE' ? 'File' : `${ext} file`;
+}
+
+function renderDriveFileThumb(name, mime, previewUrl) {
+  const type = driveFileVisualType(name, mime);
+  const ext = driveFileExtension(name);
+  if (isImage(mime)) return `<span class="drive-thumb-wrap drive-file-${type}"><img class="drive-thumb" src="${previewUrl}" alt="${esc(name)}"><span class="drive-file-badge">${esc(ext)}</span></span>`;
+  return `<span class="drive-file-mark drive-file-${type}" aria-hidden="true"><span class="drive-file-glyph">${icon(driveFileVisualIcon(type))}</span><span class="drive-file-badge">${esc(ext)}</span></span>`;
+}
+
+function driveFileVisualType(name, mime) {
+  const value = String(mime || '').toLowerCase();
+  const ext = String(driveFileExtension(name)).toLowerCase();
+  if (value.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'heic', 'avif'].includes(ext)) return 'image';
+  if (value.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'm4a', 'flac'].includes(ext)) return 'audio';
+  if (value.startsWith('video/') || ['mp4', 'mov', 'webm', 'mkv', 'avi'].includes(ext)) return 'media';
+  if (ext === 'pdf' || value === 'application/pdf') return 'pdf';
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext) || value.includes('zip') || value.includes('archive')) return 'archive';
+  if (['xls', 'xlsx', 'csv', 'ods'].includes(ext) || value.includes('spreadsheet')) return 'sheet';
+  if (['ppt', 'pptx', 'odp'].includes(ext) || value.includes('presentation')) return 'slides';
+  if (['doc', 'docx', 'odt', 'rtf', 'md', 'txt'].includes(ext) || value.includes('wordprocessingml')) return 'document';
+  if (['js', 'ts', 'css', 'html', 'json', 'xml', 'yaml', 'yml', 'php', 'py', 'sh', 'sql'].includes(ext) || value.includes('json') || value.includes('xml')) return 'code';
+  return 'generic';
+}
+
+function driveFileVisualIcon(type) {
+  return ({ image: 'fileImage', audio: 'fileAudio', media: 'fileMedia', pdf: 'filePdf', archive: 'archive', sheet: 'fileSheet', slides: 'fileSlides', document: 'textFile', code: 'code' }[type] || 'file');
 }
 
 function renderDriveActionMenu(actions) {
@@ -3214,13 +3622,19 @@ function isDriveEditable(name, mime) {
   return value.startsWith('text/') || ['application/json', 'application/xml', 'application/csv', 'application/x-yaml'].includes(value) || /\.(txt|md|markdown|csv|json|xml|yaml|yml|log|html|css|js|ts)$/i.test(name || '');
 }
 
+function isDriveOfficeEditable(name, mime) {
+  return /\.(docx?|docm|dotx?|odt|ott|rtf|xlsx?|xlsm|xltx?|ods|ots|pptx?|pptm|potx?|odp|otp)$/i.test(name || '');
+}
+
 function isDriveZip(name, mime) {
   const value = String(mime || '').toLowerCase();
   return value === 'application/zip' || value === 'application/x-zip-compressed' || /\.zip$/i.test(name || '');
 }
 
 function driveFileExtension(name) {
-  return (String(name || '').split('.').pop() || 'file').slice(0, 4).toUpperCase();
+  const parts = String(name || '').split('.');
+  if (parts.length < 2 || !parts.at(-1)) return 'FILE';
+  return parts.at(-1).slice(0, 4).toUpperCase();
 }
 
 function formatDriveSize(size) {
@@ -3234,7 +3648,7 @@ function formatDriveSize(size) {
 function renderAssetTable() {
   const rows = state.assets;
   if (!rows.length) return `<div class="empty card"><h2>No ${esc(sectionLabel(state.section))}</h2><p>Create the first record for this documentation section.</p></div>`;
-  return `<div class="table-wrap"><table class="asset-table"><thead><tr>${assetColumns().map(c => `<th>${esc(c.label)}</th>`).join('')}<th></th></tr></thead><tbody>${rows.map(row => `<tr>${assetColumns().map(c => `<td data-label="${esc(c.label)}">${formatAssetCell(row, c.key)}</td>`).join('')}<td class="row-actions" data-label="Actions"><button class="icon-btn" data-asset="${row.id}" title="Edit">edit</button><button class="icon-btn" data-archive-asset="${row.id}" title="Archive">archive</button></td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="table-wrap"><table class="asset-table"><thead><tr>${assetColumns().map(c => `<th>${esc(c.label)}</th>`).join('')}<th></th></tr></thead><tbody>${rows.map(row => `<tr>${assetColumns().map(c => `<td data-label="${esc(c.label)}">${formatAssetCell(row, c.key)}</td>`).join('')}<td class="row-actions" data-label="Actions"><button class="icon-btn" data-asset="${row.id}" title="Edit" aria-label="Edit">${toolIcon('draw', 'Edit')}</button><button class="icon-btn" data-archive-asset="${row.id}" title="Archive" aria-label="Archive">${toolIcon('archive', 'Archive')}</button></td></tr>`).join('')}</tbody></table></div>`;
 }
 
 function assetColumns() {
@@ -4376,7 +4790,8 @@ function openFilePreview(src, name, mime = '', options = {}) {
   const inline = image || media || pdf || text;
   const downloadUrl = options.downloadUrl || previewDownloadUrl(src);
   const editButton = options.editId ? `<button class="btn primary icon-only-btn" type="button" data-preview-edit-drive-file="${esc(options.editId)}" data-name="${esc(name || 'file')}" title="Edit" aria-label="Edit">${toolIcon('draw', 'Edit')}</button>` : '';
-  const extractButton = options.extractId ? `<button class="btn ghost icon-only-btn" type="button" data-preview-extract-drive-file="${esc(options.extractId)}" data-name="${esc(name || 'file')}" title="Extract" aria-label="Extract">${toolIcon('folder', 'Extract')}</button>` : '';
+  const officeButton = options.officeId ? `<button class="btn primary icon-only-btn" type="button" data-preview-office-drive-file="${esc(options.officeId)}" data-name="${esc(name || 'file')}" title="Edit document" aria-label="Edit document">${toolIcon('documentEdit', 'Edit document')}</button>` : '';
+  const extractButton = options.extractId ? `<button class="btn ghost icon-only-btn" type="button" data-preview-extract-drive-file="${esc(options.extractId)}" data-name="${esc(name || 'file')}" title="Extract" aria-label="Extract">${toolIcon('extract', 'Extract')}</button>` : '';
   const imageControls = image ? '<span class="image-preview-meta" data-image-preview-meta>Loading image...</span><button class="btn ghost icon-only-btn" type="button" data-image-zoom="out" title="Zoom out" aria-label="Zoom out">-</button><button class="btn ghost icon-only-btn" type="button" data-image-zoom="fit" title="Fit image" aria-label="Fit image">Fit</button><button class="btn ghost icon-only-btn" type="button" data-image-zoom="in" title="Zoom in" aria-label="Zoom in">+</button>' : '';
   const preview = image
     ? `<div class="file-preview-stage image-stage"><img class="image-preview-img" data-image-preview-img src="${esc(src)}" alt="${esc(name || 'Image preview')}"></div>`
@@ -4387,7 +4802,7 @@ function openFilePreview(src, name, mime = '', options = {}) {
       : text
         ? `<div class="file-preview-stage text-preview-stage" data-text-preview-stage><p class="muted">Loading text preview...</p></div>`
       : `<div class="file-preview-stage file-detail-stage" data-file-detail-stage><p class="muted">Loading file details...</p></div>`;
-  modal.innerHTML = `<section class="editor-panel image-lightbox-panel"><div class="topbar preview-topbar"><div><p class="terminal-path">divault ~/files</p><h2>${esc(name || 'File preview')}</h2></div><div class="btn-row preview-action-row">${imageControls}${editButton}${extractButton}<a class="btn ghost icon-only-btn" href="${esc(downloadUrl)}" title="Download" aria-label="Download">${toolIcon('download', 'Download')}</a><button class="btn ghost icon-only-btn" type="button" data-close title="Close" aria-label="Close">×</button></div></div>${preview}</section>`;
+  modal.innerHTML = `<section class="editor-panel image-lightbox-panel"><div class="topbar preview-topbar"><div><p class="terminal-path">divault ~/files</p><h2>${esc(name || 'File preview')}</h2></div><div class="btn-row preview-action-row">${imageControls}${editButton}${officeButton}${extractButton}<a class="btn ghost icon-only-btn" href="${esc(downloadUrl)}" title="Download" aria-label="Download">${toolIcon('download', 'Download')}</a><button class="btn ghost icon-only-btn" type="button" data-close title="Close" aria-label="Close">×</button></div></div>${preview}</section>`;
   document.body.appendChild(modal);
   setupAccessibleModal(modal, '[data-close]');
   if (image) bindImagePreviewControls(modal);
@@ -4398,6 +4813,10 @@ function openFilePreview(src, name, mime = '', options = {}) {
   modal.querySelector('[data-preview-edit-drive-file]')?.addEventListener('click', btn => {
     modal.remove();
     openDriveTextEditor(btn.currentTarget.dataset.previewEditDriveFile, btn.currentTarget.dataset.name || name);
+  });
+  modal.querySelector('[data-preview-office-drive-file]')?.addEventListener('click', btn => {
+    modal.remove();
+    openDriveOfficeEditor(btn.currentTarget.dataset.previewOfficeDriveFile, btn.currentTarget.dataset.name || name);
   });
   modal.querySelector('[data-preview-extract-drive-file]')?.addEventListener('click', async btn => {
     modal.remove();
@@ -4486,6 +4905,7 @@ async function loadDriveFileDetails(modal, id, name, mime) {
     const result = await api(`/drive/files/${encodeURIComponent(id)}/metadata`);
     const file = result.file || {};
     stage.innerHTML = renderDriveFileDetails(file, result.zip, name, mime);
+    stage.querySelector('[data-office-drive-file]')?.addEventListener('click', btn => openDriveOfficeEditor(btn.dataset.officeDriveFile, btn.dataset.name));
   } catch (err) {
     stage.innerHTML = `<div class="file-detail-empty"><h3>Preview unavailable</h3><p class="muted small">${esc(err.message || 'Could not load file details.')}</p></div>`;
   }
@@ -4494,13 +4914,14 @@ async function loadDriveFileDetails(modal, id, name, mime) {
 function renderDriveFileDetails(file, zip, fallbackName, fallbackMime, message = '') {
   const name = file.original_name || fallbackName || 'File';
   const mime = file.mime || fallbackMime || 'application/octet-stream';
+  const officeButton = file.id && isDriveOfficeEditable(name, mime) ? `<button class="btn primary" type="button" data-office-drive-file="${esc(file.id)}" data-name="${esc(name)}">Edit in OnlyOffice</button>` : '';
   const rows = [
     ['Name', name],
     ['Type', mime || driveFileExtension(name)],
     ['Size', formatDriveSize(file.size || 0) || '0 B'],
     ['Modified', file.updated_at ? formatDateTime(file.updated_at) : '-'],
   ];
-  const zipHtml = zip ? renderZipPreview(zip) : `<p class="muted small">${esc(message || 'This file type does not have an inline browser preview yet. You can still download it and open it in a local app.')}</p>`;
+  const zipHtml = zip ? renderZipPreview(zip) : `<p class="muted small">${esc(message || 'This file type does not have an inline browser preview yet. You can still download it and open it in a local app.')}</p>${officeButton ? `<div class="btn-row">${officeButton}</div>` : ''}`;
   return `<div class="file-detail-card"><div><span class="drive-file-mark detail-file-mark">${esc(driveFileExtension(name))}</span></div><div class="file-detail-copy"><h3>${esc(name)}</h3><div class="file-detail-grid">${rows.map(([label, value]) => `<span>${esc(label)}</span><b>${esc(String(value || '-'))}</b>`).join('')}</div>${zipHtml}</div></div>`;
 }
 
@@ -4709,7 +5130,7 @@ async function openAssetEditor(id = null) {
           <label class="field"><span>Location</span><input name="location" value="${esc(asset.location || '')}"></label>
           <label class="field"><span>Contact</span><input name="contact" value="${esc(asset.contact || '')}"></label>
         </div>
-        <div class="two-col"><label class="field"><span>Username</span><input name="username" value="${esc(asset.username || '')}" autocomplete="off"></label><label class="field"><span>Password</span><input name="password" type="password" placeholder="Optional, encrypted" autocomplete="new-password"></label></div>${asset.has_secret ? `<div class="card"><h3>Stored password</h3><div class="secret-row"><div class="secret-value">••••••••••</div><div class="btn-row"><button type="button" class="btn" id="assetReveal">Eye</button><button type="button" class="btn" id="assetCopy">Copy</button></div></div></div>` : ''}
+        <div class="two-col"><label class="field"><span>Username</span><input name="username" value="${esc(asset.username || '')}" autocomplete="off"></label><label class="field"><span>Password</span><input name="password" type="password" placeholder="Optional, encrypted" autocomplete="new-password"></label></div>${asset.has_secret ? `<div class="card"><h3>Stored password</h3><div class="secret-row"><div class="secret-value">••••••••••</div><div class="btn-row"><button type="button" class="btn icon-only-btn" id="assetReveal" title="Reveal password" aria-label="Reveal password">${toolIcon('preview', 'Reveal password')}</button><button type="button" class="btn icon-only-btn" id="assetCopy" title="Copy password" aria-label="Copy password">${toolIcon('copy', 'Copy password')}</button></div></div></div>` : ''}
         <label class="field"><span>Notes</span><textarea name="notes">${esc(asset.notes || '')}</textarea></label>
         <div class="btn-row"><button class="btn primary">Save</button>${id ? `<button type="button" class="btn danger" id="archiveAsset">Archive</button>` : ''}</div>
       </div>
@@ -5295,14 +5716,22 @@ function renderOnlyOfficeSettings(status) {
   const enabled = status.enabled === true;
   const composeFile = status.compose_file || 'docker-compose.onlyoffice.yml';
   const internalUrl = status.recommended_internal_url || 'http://onlyoffice';
+  const configuredInternalUrl = status.url || internalUrl;
+  const publicUrl = status.public_url || 'http://127.0.0.1:8082';
+  const callbackBaseUrl = status.callback_base_url || 'http://notes:3443';
   return `<p class="muted small">Run OnlyOffice Document Server next to DiVault when you want real Word, Excel, and PowerPoint editing. It is optional and not bundled into the main lightweight DiVault container.</p>
-    <div class="file-row"><span>Status<br><span class="small muted">${enabled ? esc(status.url || internalUrl) : 'Not configured'}</span></span><span class="pill">${enabled ? 'on' : 'off'}</span></div>
+    <div class="file-row"><span>Status<br><span class="small muted">${enabled ? 'Ready for document editing' : 'Needs URL and JWT settings'}</span></span><span class="pill ${enabled ? '' : 'secret'}">${enabled ? 'ready' : 'setup'}</span></div>
+    <div class="file-row"><span>Internal URL<br><span class="small muted">${esc(configuredInternalUrl)}</span></span><span class="pill ${status.url ? '' : 'secret'}">app to server</span></div>
+    <div class="file-row"><span>Public URL<br><span class="small muted">${esc(publicUrl || 'Not configured')}</span></span><span class="pill ${publicUrl ? '' : 'secret'}">browser</span></div>
+    <div class="file-row"><span>Callback URL<br><span class="small muted">${esc(callbackBaseUrl || 'Not configured')}</span></span><span class="pill ${callbackBaseUrl ? '' : 'secret'}">server to app</span></div>
     <div class="file-row"><span>JWT secret<br><span class="small muted">${status.jwt_configured ? 'Configured' : 'Missing'}</span></span><span class="pill ${status.jwt_configured ? '' : 'secret'}">${status.jwt_configured ? 'set' : 'required'}</span></div>
-    <div class="inline-note-blocks"><div class="inline-note active"><b>Sidecar compose</b><span>${esc(composeFile)}</span></div><div class="inline-note"><b>Internal URL</b><span>${esc(internalUrl)}</span></div></div>
-    <pre class="settings-code-block">ONLYOFFICE_JWT_SECRET=change-this-secret
+    <div class="inline-note-blocks"><div class="inline-note active"><b>Sidecar compose</b><span>${esc(composeFile)}</span></div><div class="inline-note"><b>Internal URL</b><span>${esc(internalUrl)}</span></div><div class="inline-note"><b>Browser URL</b><span>${esc(publicUrl)}</span></div><div class="inline-note"><b>Callback URL</b><span>${esc(callbackBaseUrl)}</span></div></div>
+    <pre class="settings-code-block">ONLYOFFICE_JWT_SECRET=change-this-long-random-secret
 ONLYOFFICE_URL=${esc(internalUrl)}
+ONLYOFFICE_PUBLIC_URL=${esc(publicUrl)}
+ONLYOFFICE_CALLBACK_BASE_URL=${esc(callbackBaseUrl)}
 docker compose -f docker-compose.yml -f ${esc(composeFile)} up -d</pre>
-    <p class="small muted">Expose port <code>8082</code> only if browsers need direct access through your reverse proxy. For production, put both DiVault and OnlyOffice behind HTTPS and use the same JWT secret in both containers.</p>`;
+    <p class="small muted">The browser must reach the public URL, and the OnlyOffice Document Server must reach the callback URL. For production, put both DiVault and OnlyOffice behind HTTPS and use the same JWT secret in both containers.</p>`;
 }
 
 function showRecoveryCodes(modal, codes) {
