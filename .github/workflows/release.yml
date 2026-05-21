@@ -150,12 +150,16 @@ jobs:
 
       - name: Build Docker image
         run: |
+          IMAGE_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${IMAGE_OWNER}/divault"
           docker build \
-            --tag ghcr.io/d1same/divault:latest \
-            --tag ghcr.io/d1same/divault:${{ github.ref_name }} \
+            --tag "${IMAGE}:latest" \
+            --tag "${IMAGE}:${{ github.ref_name }}" \
             .
 
       - name: Push Docker image
         run: |
-          docker push ghcr.io/d1same/divault:latest
-          docker push ghcr.io/d1same/divault:${{ github.ref_name }}
+          IMAGE_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${IMAGE_OWNER}/divault"
+          docker push "${IMAGE}:latest"
+          docker push "${IMAGE}:${{ github.ref_name }}"
