@@ -1,7 +1,7 @@
 {
   "name": "DiVault",
   "short_name": "DiVault",
-  "description": "A private notes, calendar, tasks, and reminders workspace.",
+  "description": "A private notes, files, secrets, calendar, tasks, and reminders workspace.",
   "id": "/",
   "start_url": "/",
   "scope": "/",

@@ -6,6 +6,8 @@ Run it with Docker, open it in a browser, install it as a PWA, use the Windows d
 
 ![DiVault desktop showcase](docs/screenshots/desktop-showcase.png)
 
+![DiVault Drive file manager showcase](docs/screenshots/drive-showcase.png)
+
 ![DiVault calendar showcase](docs/screenshots/calendar-showcase.png)
 
 ![DiVault task planning showcase](docs/screenshots/tasks-showcase.png)
@@ -17,7 +19,7 @@ Run it with Docker, open it in a browser, install it as a PWA, use the Windows d
 ### Docker Compose
 
 ```bash
-git clone https://github.com/d1same/DiVault.git
+git clone https://github.com/<github-owner-or-org>/DiVault.git
 cd DiVault
 docker compose up -d --build
 ```
@@ -29,15 +31,17 @@ The included Compose file binds DiVault to `127.0.0.1` by default so a fresh set
 ### Prebuilt Image
 
 ```text
-ghcr.io/d1same/divault:latest
+ghcr.io/<github-owner-or-org>/divault:latest
 ```
+
+Replace `<github-owner-or-org>` with the GitHub account or organization that owns the package.
 
 Example Compose service:
 
 ```yaml
 services:
   notes:
-    image: ghcr.io/d1same/divault:latest
+    image: ghcr.io/<github-owner-or-org>/divault:latest
     container_name: divault-notes
     ports:
       - "127.0.0.1:3443:3443"
@@ -50,6 +54,8 @@ services:
       DRIVE_FILES_DIR: ""
       DRIVE_UPLOAD_MAX_MB: ""
       ONLYOFFICE_URL: ""
+      ONLYOFFICE_PUBLIC_URL: ""
+      ONLYOFFICE_CALLBACK_BASE_URL: ""
       ONLYOFFICE_JWT_SECRET: ""
       TRUST_PROXY: "true"
       SECURE_COOKIES: "true"
@@ -85,7 +91,7 @@ The container listens on HTTP port `3443`. Your reverse proxy provides public HT
 - Notes, quick notes, archive, recycle bin, categories, and subcategories
 - Rich note blocks for text, headings, lists, checklists, code, tables, drawings, files, and secrets
 - File, photo, and document attachments
-- Drive workspace for private folders, uploaded documents, preview, and download
+- Drive workspace with a native-style file manager, private folders, explicit sharing, previews, multi-select, ZIP compress/extract, and document editing hooks
 - Auto-hidden encrypted sensitive lines such as passwords, tokens, API keys, and secrets
 - Optional Calendar and Tasks modules per user
 - Day, Week, Month, Year, and Schedule calendar views
@@ -94,6 +100,7 @@ The container listens on HTTP port `3443`. Your reverse proxy provides public HT
 - Browser reminders for events and tasks
 - `.ics` calendar import/export for Google Calendar, Apple Calendar, Outlook, and Microsoft 365 workflows
 - Multi-user accounts with owner/admin/editor/viewer roles
+- Admin user management for creating users, resetting another user's password, and safely disabling accounts
 - Optional 2FA, recovery codes, sessions, audit log, and passkeys/WebAuthn
 - PWA, Windows desktop app, and Android WebView client
 - JSON export, full backup ZIPs, encrypted backup ZIPs, and restore staging
@@ -131,21 +138,26 @@ Full backup ZIPs include the SQLite database, uploaded files, and the master key
 
 ## Drive
 
-Drive is the DiVault file workspace for documents that should live outside an individual note. The MVP is designed around private, user-owned folders and files with simple browser access:
+Drive is the DiVault file workspace for documents that should live outside an individual note. It is designed around private, user-owned folders and files with a compact file-manager interface:
 
 - Create folders for clients, projects, procedures, and reference material.
 - Upload small business documents, text files, PDFs, images, and other file types supported by the server upload limits.
 - List folders and files, preview browser-safe files, and download originals.
 - Rename, move, or delete files and folders as the Drive API exposes those actions.
 - Share specific files or folders with other DiVault users using explicit permissions.
+- Select multiple visible files or folders with checkboxes, Ctrl/Cmd-click, or Shift-click range selection on desktop-class pointers.
+- Right-click files, folders, and note cards on desktop-class pointers to open context actions; touch devices keep explicit `...` actions.
+- Compress selected Drive items into ZIP files and extract ZIP archives into folders.
 - Edit text-like files such as TXT, Markdown, CSV, JSON, XML, HTML, CSS, and JS directly in the browser.
+- Edit Word, Excel, and PowerPoint-style files through an optional OnlyOffice Document Server sidecar.
 
 Privacy model:
 
 - Drive items are private to the owning user by default.
-- Owner/admin accounts can administer users and backups, but normal users should not be able to browse another user's Drive files through Drive URLs.
+- Owner/admin accounts can administer users and backups, but normal users cannot browse another user's Drive files through Drive URLs.
 - Admin role alone does not grant read access to another user's private Drive files.
 - Mutating Drive requests use the same logged-in session and CSRF protection as notes, files, backups, and settings.
+- User deletion in Settings is a safe disable operation: it revokes sessions and sign-in while preserving existing data for backups, ownership, and audit history.
 
 Backup model:
 
@@ -190,14 +202,14 @@ Office editing:
 Optional OnlyOffice sidecar:
 
 ```bash
-ONLYOFFICE_JWT_SECRET='change-this-long-random-secret' \
+ONLYOFFICE_JWT_SECRET='<generate-a-long-random-secret>' \
 ONLYOFFICE_URL='http://onlyoffice' \
 ONLYOFFICE_PUBLIC_URL='http://127.0.0.1:8082' \
 ONLYOFFICE_CALLBACK_BASE_URL='http://notes:3443' \
 docker compose -f docker-compose.yml -f docker-compose.onlyoffice.yml up -d
 ```
 
-The sidecar compose file starts `onlyoffice/documentserver` as `divault-onlyoffice` and exposes it on host port `8082` by default. Local Docker uses `ONLYOFFICE_URL=http://onlyoffice` for DiVault-to-OnlyOffice traffic, `ONLYOFFICE_PUBLIC_URL=http://127.0.0.1:8082` so the browser can load the editor, and `ONLYOFFICE_CALLBACK_BASE_URL=http://notes:3443` so Document Server can fetch and save Drive files over the Docker network. For production, put both DiVault and OnlyOffice behind HTTPS and set the public/callback URLs to routable HTTPS origins.
+Generate a unique JWT secret before enabling the sidecar and reuse the same value for DiVault and OnlyOffice. The sidecar compose file starts `onlyoffice/documentserver` as `divault-onlyoffice` and exposes it on host port `8082` by default. Local Docker uses `ONLYOFFICE_URL=http://onlyoffice` for DiVault-to-OnlyOffice traffic, `ONLYOFFICE_PUBLIC_URL=http://127.0.0.1:8082` so the browser can load the editor, and `ONLYOFFICE_CALLBACK_BASE_URL=http://notes:3443` so Document Server can fetch and save Drive files over the Docker network. For production, put both DiVault and OnlyOffice behind HTTPS and set the public/callback URLs to routable HTTPS origins.
 
 OnlyOffice configuration variables:
 
@@ -206,6 +218,7 @@ OnlyOffice configuration variables:
 - `ONLYOFFICE_CALLBACK_BASE_URL` is the DiVault URL reachable from the Document Server for signed download and save callbacks.
 - `ONLYOFFICE_JWT_SECRET` must match the sidecar `JWT_SECRET`.
 - `ONLYOFFICE_PORT` changes the host port for the sidecar. The default is `8082`.
+- `ONLYOFFICE_IMAGE` can pin the Document Server image tag. Keep the default only for local testing; pin a tested version in production.
 
 ## Notes And Secrets
 
@@ -379,6 +392,7 @@ Preferred migration between servers:
 - Mutating browser API requests use double-submit CSRF protection.
 - Calendar sharing is internal-only and permission checked server-side.
 - Export/import/backup/admin tools require admin-level access where appropriate.
+- Owner/admin users can reset other users' passwords and disable accounts; self-password changes still use the profile password flow.
 - 2FA recovery codes are shown once. Store them outside DiVault.
 - Sensitive security actions may require fresh 2FA reauthentication.
 
@@ -439,7 +453,7 @@ The smoke test covers health, setup, login, CSRF, notes, categories, encrypted n
 ## Clean First-Run Test
 
 ```powershell
-docker run --rm -d --name divault-clean-test -p 3453:3443 -v "${PWD}\tmp-clean-config:/config" -e SECURE_COOKIES=false notes-notes:latest
+docker run --rm -d --name divault-clean-test -p 3453:3443 -v "${PWD}\tmp-clean-config:/config" -e SECURE_COOKIES=false ghcr.io/<github-owner-or-org>/divault:latest
 powershell -ExecutionPolicy Bypass -File scripts\smoke.ps1 -BaseUrl http://localhost:3453
 docker rm -f divault-clean-test
 ```
@@ -452,7 +466,7 @@ docker rm -f divault-clean-test
 - Google Keep Takeout import
 - OCR for PDFs and images
 - Optional S3-compatible file storage
-- Optional Office-style document editing integration for Drive
+- External calendar feed sync controls
 
 ## License
 
