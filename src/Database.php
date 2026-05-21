@@ -11,6 +11,8 @@ final class Database
         $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $this->pdo->exec('PRAGMA foreign_keys = ON');
         $this->pdo->exec('PRAGMA journal_mode = WAL');
+        $this->pdo->exec('PRAGMA synchronous = NORMAL');
+        $this->pdo->exec('PRAGMA busy_timeout = 5000');
         $this->migrate();
     }
 
@@ -347,6 +349,14 @@ SQL);
         $this->addColumnIfMissing('calendar_feeds', 'color', 'TEXT');
         $this->addColumnIfMissing('calendar_feeds', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_notes_category_id ON notes(category_id)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_notes_user_state_updated ON notes(user_id, deleted, archived, category_id, pinned, updated_at, id)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_notes_deleted_updated ON notes(deleted, updated_at)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_files_note_user ON files(note_id, user_id)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_note_secrets_note ON note_secrets(note_id)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_note_versions_note_id ON note_versions(note_id, id)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, id)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_recovery_codes_user ON recovery_codes(user_id)');
+        $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_audit_log_user_created ON audit_log(user_id, created_at)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_asset_categories_parent ON asset_categories(parent_id)');
         $this->pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_webauthn_credentials_credential_id ON webauthn_credentials(credential_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_sync_events_id ON sync_events(id)');

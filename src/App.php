@@ -1386,10 +1386,23 @@ final class App
         if (!$parts || !in_array(strtolower((string)($parts['scheme'] ?? '')), ['http', 'https'], true) || empty($parts['host'])) throw new RuntimeException('Enter a valid HTTP or HTTPS calendar URL');
         $host = strtolower((string)$parts['host']);
         if (in_array($host, ['localhost', '127.0.0.1', '::1'], true) || str_ends_with($host, '.local')) throw new RuntimeException('Local calendar feed URLs are not allowed');
-        $addresses = filter_var($host, FILTER_VALIDATE_IP) ? [$host] : (gethostbynamel($host) ?: []);
+        $addresses = filter_var($host, FILTER_VALIDATE_IP) ? [$host] : $this->resolveCalendarFeedHost($host);
+        if (!$addresses) throw new RuntimeException('Calendar feed host could not be resolved');
         foreach ($addresses as $address) {
             if (!filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) throw new RuntimeException('Private network calendar feed URLs are not allowed');
         }
+    }
+
+    private function resolveCalendarFeedHost(string $host): array
+    {
+        $records = @dns_get_record($host, DNS_A | DNS_AAAA) ?: [];
+        $addresses = [];
+        foreach ($records as $record) {
+            foreach (['ip', 'ipv6'] as $key) {
+                if (!empty($record[$key]) && is_string($record[$key])) $addresses[] = $record[$key];
+            }
+        }
+        return array_values(array_unique($addresses));
     }
 
     private function fetchCalendarFeed(string $url): string
@@ -1906,7 +1919,10 @@ final class App
 
     private function applyRetentionPolicy(): void
     {
+        $lastRun = (int)$this->setting('retention.last_pruned_at');
+        if ($lastRun > 0 && $lastRun > time() - 3600) return;
         $this->pruneTrashByPolicy();
+        $this->saveSetting('retention.last_pruned_at', (string)time());
     }
 
     private function pruneTrashByPolicy(): void

@@ -24,6 +24,8 @@ docker compose up -d --build
 
 Open `http://localhost:3443` and create the owner account.
 
+The included Compose file binds DiVault to `127.0.0.1` by default so a fresh setup is not exposed before the owner account exists. To expose it directly on your LAN, set `DIVAULT_BIND=0.0.0.0`; for production, keep it behind an HTTPS reverse proxy and set `SECURE_COOKIES=true`.
+
 ### Prebuilt Image
 
 ```text
@@ -38,7 +40,7 @@ services:
     image: ghcr.io/d1same/divault:latest
     container_name: divault-notes
     ports:
-      - "3443:3443"
+      - "127.0.0.1:3443:3443"
     volumes:
       - /mnt/user/appdata/divault:/config
       - /mnt/user/divault-drive-files:/media

@@ -27,6 +27,13 @@ RUN sed -i 's/Listen 80/Listen 3443/' /etc/apache2/ports.conf \
         echo 'max_input_time=600'; \
         echo 'memory_limit=512M'; \
     } > /usr/local/etc/php/conf.d/divault-uploads.ini \
+    && { \
+        echo 'opcache.enable=1'; \
+        echo 'opcache.enable_cli=0'; \
+        echo 'opcache.validate_timestamps=0'; \
+        echo 'opcache.memory_consumption=128'; \
+        echo 'opcache.max_accelerated_files=10000'; \
+    } > /usr/local/etc/php/conf.d/divault-opcache.ini \
     && chmod +x /usr/local/bin/divault-entrypoint \
     && chown -R www-data:www-data /var/www/html /var/www/src
 

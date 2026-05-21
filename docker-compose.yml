@@ -3,7 +3,7 @@ services:
     build: .
     container_name: divault-notes
     ports:
-      - "3443:3443"
+      - "${DIVAULT_BIND:-127.0.0.1}:${APP_PORT:-3443}:3443"
     volumes:
       - ./config:/config
       # Optional external Drive storage. Set DRIVE_FILES_DIR=/media in Settings or env to use it.
