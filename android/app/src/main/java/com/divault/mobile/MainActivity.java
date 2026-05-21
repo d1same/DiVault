@@ -14,6 +14,7 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
@@ -30,6 +31,8 @@ import android.widget.FrameLayout;
 import android.widget.Toast;
 
 import java.util.ArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends Activity {
     private static final String PREFS_NAME = "divault_mobile";
@@ -364,11 +367,11 @@ public class MainActivity extends Activity {
         return Build.VERSION.SDK_INT < 33 || checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
     }
 
-    private void showDeviceNotification(String title, String body, String url) {
+    private boolean showDeviceNotification(String title, String body, String url) {
         if (!canPostNotifications()) {
             Toast.makeText(this, title + ": " + body, Toast.LENGTH_LONG).show();
             requestNotificationPermissionIfNeeded();
-            return;
+            return false;
         }
 
         Intent intent = new Intent(this, MainActivity.class);
@@ -391,7 +394,9 @@ public class MainActivity extends Activity {
                 .build();
 
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        if (manager != null) manager.notify(Math.abs((title + body).hashCode()), notification);
+        if (manager == null) return false;
+        manager.notify(Math.abs((title + body).hashCode()), notification);
+        return true;
     }
 
     private final class Bridge {
@@ -406,8 +411,28 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void notify(String title, String body, String url) {
-            runOnUiThread(() -> showDeviceNotification(title == null ? "DiVault" : title, body == null ? "" : body, url == null ? "" : url));
+        public boolean notify(String title, String body, String url) {
+            final String safeTitle = title == null ? "DiVault" : title;
+            final String safeBody = body == null ? "" : body;
+            final String safeUrl = url == null ? "" : url;
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                return showDeviceNotification(safeTitle, safeBody, safeUrl);
+            }
+            AtomicBoolean delivered = new AtomicBoolean(false);
+            CountDownLatch latch = new CountDownLatch(1);
+            runOnUiThread(() -> {
+                try {
+                    delivered.set(showDeviceNotification(safeTitle, safeBody, safeUrl));
+                } finally {
+                    latch.countDown();
+                }
+            });
+            try {
+                latch.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return delivered.get();
         }
     }
 }
