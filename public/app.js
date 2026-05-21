@@ -4768,7 +4768,7 @@ async function openSettings(options = {}) {
   if (options.route !== false) syncSectionRoute();
   renderApp();
   const isAdmin = canAdminSettings();
-  const [users, audit, sessions, backups, syncManifest, retentionSettings, aiIntegration, desktopServer, passkeys, calendarFeeds] = await Promise.all([
+  const [users, audit, sessions, backups, syncManifest, retentionSettings, aiIntegration, onlyOfficeIntegration, driveStorage, desktopServer, passkeys, calendarFeeds] = await Promise.all([
     isAdmin ? api('/users').catch(() => ({ users: [] })) : { users: [] },
     isAdmin ? api('/audit').catch(() => ({ audit: [] })) : { audit: [] },
     api('/sessions').catch(() => ({ sessions: [] })),
@@ -4776,6 +4776,8 @@ async function openSettings(options = {}) {
     api('/sync/manifest').catch(() => null),
     isAdmin ? api('/retention-settings').catch(() => ({ settings: { version_limit: 3, trash_days: 30 } })) : { settings: { version_limit: 3, trash_days: 30 } },
     isAdmin ? api('/integrations/ai/status').catch(() => null) : null,
+    isAdmin ? api('/integrations/onlyoffice/status').catch(() => null) : null,
+    isAdmin ? api('/drive/storage-settings').catch(() => null) : null,
     state.desktop && isAdmin ? api('/desktop/server').catch(() => ({ server_url: '' })) : { server_url: '' },
     api('/webauthn/credentials').catch(() => ({ credentials: [] })),
     api('/calendar-feeds').catch(() => ({ feeds: [] }))
@@ -4797,11 +4799,15 @@ async function openSettings(options = {}) {
   const deviceCards = `${desktopServerCard}${androidClientCard}`;
   const settingsTabs = [
     ['account', 'Account'],
-    ['features', 'Features'],
-    ['sync', 'Sync'],
+    ['workspace', 'Workspace'],
+    ['calendar', 'Calendar'],
+    ['devices', 'Devices & sync'],
+    ...(isAdmin ? [['integrations', 'Integrations']] : []),
     ['security', 'Security'],
     ...(isAdmin ? [['data', 'Data'], ['people', 'People']] : [])
   ];
+  const legacySettingsTabs = { features: 'workspace', sync: 'devices' };
+  state.settingsTab = legacySettingsTabs[state.settingsTab] || state.settingsTab;
   if (!settingsTabs.some(([key]) => key === state.settingsTab)) state.settingsTab = settingsTabs[0][0];
   const settingsTabButtons = settingsTabs.map(([key, label]) => `<button class="btn ghost settings-tab ${state.settingsTab === key ? 'active' : ''}" type="button" role="tab" aria-selected="${state.settingsTab === key ? 'true' : 'false'}" data-settings-tab="${key}">${label}</button>`).join('');
   state.settingsHtml = `
@@ -4817,21 +4823,29 @@ async function openSettings(options = {}) {
           <aside class="stack"><div class="card"><h3>Sessions</h3>${groupedSessionsHtml(sessions.sessions)}</div></aside>
         </div>
       </section>
-      <section class="settings-tab-panel ${state.settingsTab === 'features' ? '' : 'hidden'}" data-settings-panel="features" role="tabpanel">
-        <div class="card stack"><h3>Calendar, tasks, and home widgets</h3>${renderFeatureSettings()}</div>
-        <div class="card stack"><h3>Read-only calendar feeds</h3>${renderCalendarFeedSettings(state.calendarFeeds)}</div>
+      <section class="settings-tab-panel ${state.settingsTab === 'workspace' ? '' : 'hidden'}" data-settings-panel="workspace" role="tabpanel">
+        <div class="editor-grid settings-grid">
+          <div class="stack"><div class="card stack"><h3>Workspace modules</h3><p class="muted small">Choose which major areas appear in this user's sidebar.</p>${renderFeatureSettings()}</div></div>
+          <aside class="stack"><div class="card stack"><h3>Files workspace</h3><p class="muted small">Files/Drive is private by default. Admins do not automatically get access to another user's private Drive files.</p><p class="small muted">Use the Files toggle here for this user. Use Drive sharing for file/folder access.</p></div>${isAdmin ? `<div class="card stack"><h3>Drive storage</h3>${renderDriveStorageSettings(driveStorage)}</div>` : ''}</aside>
+        </div>
       </section>
-      <section class="settings-tab-panel ${state.settingsTab === 'sync' ? '' : 'hidden'}" data-settings-panel="sync" role="tabpanel">
+      <section class="settings-tab-panel ${state.settingsTab === 'calendar' ? '' : 'hidden'}" data-settings-panel="calendar" role="tabpanel">
+        <div class="editor-grid settings-grid">
+          <div class="stack"><div class="card stack"><h3>Calendar and task behavior</h3>${renderCalendarTaskFeatureSettings()}</div></div>
+          <aside class="stack"><div class="card stack"><h3>Read-only calendar feeds</h3>${renderCalendarFeedSettings(state.calendarFeeds)}</div></aside>
+        </div>
+      </section>
+      <section class="settings-tab-panel ${state.settingsTab === 'devices' ? '' : 'hidden'}" data-settings-panel="devices" role="tabpanel">
         <div class="stack">
           <div class="card stack"><h3>Sync</h3>${renderSyncSettings(syncManifest)}</div>
           ${deviceCards}
         </div>
       </section>
+      ${isAdmin ? `<section class="settings-tab-panel ${state.settingsTab === 'integrations' ? '' : 'hidden'}" data-settings-panel="integrations" role="tabpanel"><div class="editor-grid settings-grid"><div class="stack"><div class="card stack"><h3>OnlyOffice document editing</h3>${renderOnlyOfficeSettings(onlyOfficeIntegration)}</div></div><aside class="stack"><div class="card stack"><h3>AI review API</h3>${renderAiIntegrationSettings(aiIntegration)}</div></aside></div></section>` : ''}
       <section class="settings-tab-panel ${state.settingsTab === 'security' ? '' : 'hidden'}" data-settings-panel="security" role="tabpanel">
         <div class="editor-grid settings-grid">
           <div class="stack">
             ${retentionCard}
-            ${isAdmin ? `<div class="card stack"><h3>AI review API</h3>${renderAiIntegrationSettings(aiIntegration)}</div>` : ''}
           </div>
           <aside class="stack">
             <div class="card stack"><h3>Emergency offline snapshot</h3><p class="muted small">Create or update an encrypted localStorage snapshot for offline access. Keep the passphrase; it is required to unlock the snapshot.</p><button class="btn" id="emergencySnapshotBtn">Create/update encrypted snapshot</button><p class="small muted">Pending offline notes remain unencrypted local-only drafts until synced.</p></div>
@@ -4901,7 +4915,7 @@ async function openSettings(options = {}) {
       toast('Password updated');
     }, 'Password update failed');
   });
-  modal.querySelector('#featureSettingsForm')?.addEventListener('submit', async e => {
+  modal.querySelectorAll('.feature-settings-form').forEach(formEl => formEl.addEventListener('submit', async e => {
     e.preventDefault();
     await runUserAction(async () => {
       const form = new FormData(e.target);
@@ -4920,6 +4934,14 @@ async function openSettings(options = {}) {
       await loadCurrentSection();
       openSettings();
     }, 'Feature settings failed');
+  }));
+  modal.querySelector('#driveStorageSettingsForm')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    await runUserAction(async () => {
+      await api('/drive/storage-settings', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) });
+      toast('Drive storage settings saved');
+      openSettings();
+    }, 'Drive storage update failed');
   });
   modal.querySelector('#calendarFeedForm')?.addEventListener('submit', async e => {
     e.preventDefault();
@@ -5211,23 +5233,48 @@ function renderFeatureSettings() {
   const tasks = feature('tasks');
   const home = feature('home');
   const drive = feature('drive');
-  return `<form id="featureSettingsForm" class="stack"><div class="feature-toggle-grid">
+  return `<form class="stack feature-settings-form">${featureHidden('calendar_enabled', calendar.enabled)}${featureHidden('tasks_enabled', tasks.enabled)}${featureHidden('calendar_home_enabled', calendar.settings.home_enabled)}${featureHidden('tasks_home_enabled', tasks.settings.home_enabled)}${featureHidden('calendar_reminders_enabled', calendar.settings.reminders_enabled)}${featureHidden('tasks_reminders_enabled', tasks.settings.reminders_enabled)}${featureHidden('tasks_shared_calendar_tasks', tasks.settings.shared_calendar_tasks)}<input name="calendar_default_reminder_minutes" type="hidden" value="${esc(calendar.settings.default_reminder_minutes ?? 10)}"><input name="tasks_default_reminder_minutes" type="hidden" value="${esc(tasks.settings.default_reminder_minutes ?? 10)}"><div class="feature-toggle-grid">
+    <label class="checkline"><input name="drive_enabled" type="checkbox" ${drive.enabled ? 'checked' : ''}> Enable Files</label>
+    <label class="checkline"><input name="home_notes_enabled" type="checkbox" ${home.settings.notes_enabled ? 'checked' : ''}> Show notes on Home</label>
+  </div><button class="btn primary">Save workspace settings</button></form>`;
+}
+
+function renderCalendarTaskFeatureSettings() {
+  const calendar = feature('calendar');
+  const tasks = feature('tasks');
+  const home = feature('home');
+  const drive = feature('drive');
+  return `<form class="stack feature-settings-form">${featureHidden('drive_enabled', drive.enabled)}${featureHidden('home_notes_enabled', home.settings.notes_enabled)}<div class="feature-toggle-grid">
     <label class="checkline"><input name="calendar_enabled" type="checkbox" ${calendar.enabled ? 'checked' : ''}> Enable Calendar</label>
     <label class="checkline"><input name="tasks_enabled" type="checkbox" ${tasks.enabled ? 'checked' : ''}> Enable Tasks</label>
-    <label class="checkline"><input name="drive_enabled" type="checkbox" ${drive.enabled ? 'checked' : ''}> Enable Files</label>
     <label class="checkline"><input name="calendar_home_enabled" type="checkbox" ${calendar.settings.home_enabled ? 'checked' : ''}> Show calendar on Home</label>
     <label class="checkline"><input name="tasks_home_enabled" type="checkbox" ${tasks.settings.home_enabled ? 'checked' : ''}> Show tasks on Home</label>
-    <label class="checkline"><input name="home_notes_enabled" type="checkbox" ${home.settings.notes_enabled ? 'checked' : ''}> Show notes on Home</label>
     <label class="checkline"><input name="calendar_reminders_enabled" type="checkbox" ${calendar.settings.reminders_enabled ? 'checked' : ''}> Calendar reminders</label>
     <label class="checkline"><input name="tasks_reminders_enabled" type="checkbox" ${tasks.settings.reminders_enabled ? 'checked' : ''}> Task reminders</label>
     <label class="checkline"><input name="tasks_shared_calendar_tasks" type="checkbox" ${tasks.settings.shared_calendar_tasks ? 'checked' : ''}> Shared-calendar tasks</label>
-  </div><div class="editor-grid"><label class="field"><span>Default calendar reminder minutes</span><input name="calendar_default_reminder_minutes" type="number" min="0" max="10080" value="${esc(calendar.settings.default_reminder_minutes ?? 10)}"></label><label class="field"><span>Default task reminder minutes</span><input name="tasks_default_reminder_minutes" type="number" min="0" max="10080" value="${esc(tasks.settings.default_reminder_minutes ?? 10)}"></label></div><button class="btn primary">Save feature settings</button></form>`;
+  </div><div class="editor-grid"><label class="field"><span>Default calendar reminder minutes</span><input name="calendar_default_reminder_minutes" type="number" min="0" max="10080" value="${esc(calendar.settings.default_reminder_minutes ?? 10)}"></label><label class="field"><span>Default task reminder minutes</span><input name="tasks_default_reminder_minutes" type="number" min="0" max="10080" value="${esc(tasks.settings.default_reminder_minutes ?? 10)}"></label></div><button class="btn primary">Save calendar/task settings</button></form>`;
+}
+
+function featureHidden(name, enabled) {
+  return enabled ? `<input name="${esc(name)}" type="hidden" value="on">` : '';
 }
 
 function renderCalendarFeedSettings(feeds = []) {
   const rows = feeds.map(feed => `<div class="file-row calendar-feed-row"><span><b>${esc(feed.name)}</b><br><span class="small muted">${esc(feed.url)}${feed.last_synced_at ? ` · synced ${esc(feed.last_synced_at)}` : ''}${feed.last_error ? ` · ${esc(feed.last_error)}` : ''}</span></span><span class="btn-row"><span class="pill" style="--calendar-color:${esc(feed.color || '#22c55e')}">${Number(feed.enabled) === 1 ? 'on' : 'off'}</span><button class="btn ghost" type="button" data-edit-feed="${feed.id}">Edit</button><button class="btn" type="button" data-sync-feed="${feed.id}">Sync</button><button class="btn danger" type="button" data-delete-feed="${feed.id}">Remove</button></span></div>`).join('') || '<p class="small muted">No external calendar feeds yet.</p>';
   return `<p class="muted small">Add private ICS/iCalendar subscription links from Microsoft, Google, Apple, Proton, or another calendar provider. These are read-only one-way pulls into your DiVault account. Other DiVault users do not see your synced calendars unless you share the resulting DiVault calendar with them.</p>
     <form id="calendarFeedForm" class="stack"><input id="calendarFeedId" name="id" type="hidden"><div class="editor-grid"><label class="field"><span>Feed name</span><input id="calendarFeedName" name="name" placeholder="Work Outlook" required></label><label class="field"><span>Color</span><input id="calendarFeedColor" name="color" type="color" value="#22c55e"></label></div><label class="field"><span>ICS subscription URL</span><input id="calendarFeedUrl" name="url" type="url" placeholder="https://.../calendar.ics" autocomplete="off" required></label><div class="editor-grid"><label class="field"><span>Refresh minutes</span><input id="calendarFeedRefresh" name="refresh_minutes" type="number" min="15" max="10080" value="360"></label><label class="checkline"><input id="calendarFeedEnabled" name="enabled" type="checkbox" checked> Feed enabled</label></div><label class="checkline"><input name="sync_now" type="checkbox" checked> Sync after saving</label><div class="btn-row"><button class="btn primary" id="calendarFeedSaveBtn">Add feed</button><button class="btn ghost" id="calendarFeedResetBtn" type="reset">Clear</button></div></form><div class="stack">${rows}</div>`;
+}
+
+function renderDriveStorageSettings(settings) {
+  if (!settings) return '<p class="small muted">Drive storage settings are unavailable.</p>';
+  const dir = settings.drive_files_dir || '/config/drive-files';
+  const uploadMax = settings.drive_upload_max_mb || 250;
+  return `<p class="muted small">Choose the container path for Drive file contents. To use a host disk, mount it into the container first, then set this to that container path, for example <code>/media</code>.</p>
+    <form id="driveStorageSettingsForm" class="stack"><label class="field"><span>Drive files path</span><input name="drive_files_dir" value="${esc(dir)}" placeholder="/media" autocomplete="off"></label><label class="field"><span>Upload limit MB</span><input name="drive_upload_max_mb" type="number" min="1" max="2048" value="${esc(uploadMax)}"></label><button class="btn primary">Save storage settings</button></form>
+    <div class="file-row"><span>Current path<br><span class="small muted">${esc(dir)}</span></span><span class="pill ${settings.writable ? '' : 'secret'}">${settings.writable ? 'writable' : 'not writable'}</span></div>
+    <pre class="settings-code-block">DIVAULT_MEDIA_PATH=/host/path/for/files
+Drive files path: /media</pre>
+    <p class="small muted">When you change this path, DiVault copies existing Drive files into the new path. The path is inside the container; Docker controls which host folder it maps to.</p>`;
 }
 
 function renderAiIntegrationSettings(status) {
@@ -5241,6 +5288,21 @@ function renderAiIntegrationSettings(status) {
     <label class="field ai-token-preview"><span>Token</span><textarea id="aiApiTokenPreview" class="hidden" readonly spellcheck="false" aria-label="AI API token"></textarea><span id="aiApiTokenStatus" class="small muted">${enabled && status.can_reveal ? 'Copy requires your current password.' : 'Token is shown after enable/regenerate.'}</span></label>
     <div class="btn-row"><button class="btn" type="button" id="enableAiApiBtn">${enabled ? 'Regenerate token' : 'Enable API'}</button>${localTokenControls}<button class="btn ghost" type="button" id="testAiTokenBtn">Test token</button>${enabled && status.can_disable !== false ? '<button class="btn danger" type="button" id="disableAiApiBtn">Disable</button>' : ''}</div>
     <p class="small muted">Use header <code>X-DiVault-AI-Token</code> or <code>Authorization: Bearer TOKEN</code>. Local tokens can be copied here with your password. Environment-managed tokens must be read from your server config or hosting secrets.</p>`;
+}
+
+function renderOnlyOfficeSettings(status) {
+  if (!status) return '<p class="small muted">OnlyOffice status is unavailable.</p>';
+  const enabled = status.enabled === true;
+  const composeFile = status.compose_file || 'docker-compose.onlyoffice.yml';
+  const internalUrl = status.recommended_internal_url || 'http://onlyoffice';
+  return `<p class="muted small">Run OnlyOffice Document Server next to DiVault when you want real Word, Excel, and PowerPoint editing. It is optional and not bundled into the main lightweight DiVault container.</p>
+    <div class="file-row"><span>Status<br><span class="small muted">${enabled ? esc(status.url || internalUrl) : 'Not configured'}</span></span><span class="pill">${enabled ? 'on' : 'off'}</span></div>
+    <div class="file-row"><span>JWT secret<br><span class="small muted">${status.jwt_configured ? 'Configured' : 'Missing'}</span></span><span class="pill ${status.jwt_configured ? '' : 'secret'}">${status.jwt_configured ? 'set' : 'required'}</span></div>
+    <div class="inline-note-blocks"><div class="inline-note active"><b>Sidecar compose</b><span>${esc(composeFile)}</span></div><div class="inline-note"><b>Internal URL</b><span>${esc(internalUrl)}</span></div></div>
+    <pre class="settings-code-block">ONLYOFFICE_JWT_SECRET=change-this-secret
+ONLYOFFICE_URL=${esc(internalUrl)}
+docker compose -f docker-compose.yml -f ${esc(composeFile)} up -d</pre>
+    <p class="small muted">Expose port <code>8082</code> only if browsers need direct access through your reverse proxy. For production, put both DiVault and OnlyOffice behind HTTPS and use the same JWT secret in both containers.</p>`;
 }
 
 function showRecoveryCodes(modal, codes) {

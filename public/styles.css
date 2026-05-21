@@ -1176,6 +1176,7 @@ body.resizing-note-pane { cursor: col-resize; user-select: none; }
 .settings-tab.active { background: var(--primary); color: white; }
 .settings-tab-panel { display: grid; gap: 14px; }
 .settings-grid { grid-template-columns: minmax(0, 1fr) minmax(280px, 380px); align-items: start; }
+.settings-code-block { margin: 0; padding: 12px; overflow-x: auto; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); background: var(--terminal-surface); color: var(--terminal-text); font: .82rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; }
 .ai-token-preview textarea { min-height: 96px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .78rem; word-break: break-all; }
 .profile-row { display: flex; align-items: center; gap: 12px; }
 .profile-avatar { width: 58px; height: 58px; border-radius: var(--radius-xl); object-fit: cover; background: var(--surface-soft); border: 1px solid var(--border); }

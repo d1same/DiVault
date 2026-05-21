@@ -14,14 +14,31 @@ final class Config
 
     public static function driveFilesDir(): string
     {
-        $dir = rtrim(getenv('DRIVE_FILES_DIR') ?: self::dir() . '/drive-files', '/');
+        $settings = self::driveStorageSettings();
+        $dir = rtrim((string)($settings['drive_files_dir'] ?? '') ?: (getenv('DRIVE_FILES_DIR') ?: self::dir() . '/drive-files'), '/');
         return $dir !== '' ? $dir : self::dir() . '/drive-files';
     }
 
     public static function driveUploadMaxBytes(): int
     {
-        $mb = (int)(getenv('DRIVE_UPLOAD_MAX_MB') ?: 250);
+        $settings = self::driveStorageSettings();
+        $mb = (int)((string)($settings['drive_upload_max_mb'] ?? '') ?: (getenv('DRIVE_UPLOAD_MAX_MB') ?: 250));
         return max(1, $mb) * 1024 * 1024;
+    }
+
+    public static function driveStorageSettings(): array
+    {
+        $file = self::dir() . '/drive-storage.json';
+        if (!is_file($file)) return [];
+        $data = json_decode((string)file_get_contents($file), true);
+        return is_array($data) ? $data : [];
+    }
+
+    public static function saveDriveStorageSettings(array $settings): void
+    {
+        $file = self::dir() . '/drive-storage.json';
+        file_put_contents($file, json_encode($settings, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX);
+        @chmod($file, 0660);
     }
 
     public static function secureCookies(): bool
@@ -47,6 +64,16 @@ final class Config
     public static function aiReviewUserEmail(): string
     {
         return strtolower(trim(getenv('AI_REVIEW_USER_EMAIL') ?: ''));
+    }
+
+    public static function onlyOfficeUrl(): string
+    {
+        return rtrim(trim(getenv('ONLYOFFICE_URL') ?: ''), '/');
+    }
+
+    public static function onlyOfficeJwtSecret(): string
+    {
+        return trim(getenv('ONLYOFFICE_JWT_SECRET') ?: '');
     }
 
     public static function ensureDirs(): void

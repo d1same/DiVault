@@ -41,11 +41,14 @@ services:
       - "3443:3443"
     volumes:
       - /mnt/user/appdata/divault:/config
+      - /mnt/user/divault-drive-files:/media
     environment:
       APP_URL: "https://notes.example.com"
       APP_CONFIG_DIR: "/config"
-      DRIVE_FILES_DIR: "/config/drive-files"
-      DRIVE_UPLOAD_MAX_MB: "250"
+      DRIVE_FILES_DIR: ""
+      DRIVE_UPLOAD_MAX_MB: ""
+      ONLYOFFICE_URL: ""
+      ONLYOFFICE_JWT_SECRET: ""
       TRUST_PROXY: "true"
       SECURE_COOKIES: "true"
       TZ: "America/New_York"
@@ -152,6 +155,7 @@ Storage and upload limits:
 
 - `DRIVE_FILES_DIR` changes where Drive file contents are stored. Leave it unset for the default `/config/drive-files` path.
 - `DRIVE_UPLOAD_MAX_MB` controls the app-level Drive upload limit. The Docker default is `250` MB.
+- Admins can also set the Drive files path in Settings → Workspace → Drive storage. Use a container path such as `/media`, and mount a host folder there first.
 - The Docker image PHP upload ceiling is higher (`upload_max_filesize=2G`, `post_max_size=2G`, `max_execution_time=600`, `max_input_time=600`, `memory_limit=512M`) so the app limit can be raised without rebuilding the image.
 
 Example external Drive storage mount:
@@ -161,18 +165,42 @@ services:
   notes:
     volumes:
       - /mnt/user/appdata/divault:/config
-      - /mnt/user/divault-drive-files:/drive-files
+      - /mnt/user/divault-drive-files:/media
     environment:
       APP_CONFIG_DIR: "/config"
-      DRIVE_FILES_DIR: "/drive-files"
-      DRIVE_UPLOAD_MAX_MB: "1024"
+      DRIVE_FILES_DIR: ""
+      DRIVE_UPLOAD_MAX_MB: ""
 ```
 
-Office-editing roadmap:
+Then open Settings → Workspace → Drive storage and set:
+
+```text
+Drive files path: /media
+Upload limit MB: 1024
+```
+
+Office editing:
 
 - The first Drive release focuses on upload, preview, download, organization, sharing, privacy checks, backup inclusion, and built-in text-file editing.
-- Browser-based editing for binary Office-style documents is planned as an integration layer rather than a requirement for the MVP.
-- Candidate integrations include OnlyOffice, Collabora, or another self-hosted editor that can be permission-checked through DiVault and store revisions back into Drive.
+- Browser-based editing for binary Office-style documents is handled as an optional integration layer rather than a requirement for the main container.
+- OnlyOffice Document Server can run side-by-side with DiVault using `docker-compose.onlyoffice.yml`.
+- Leave OnlyOffice disabled if you want the smallest/default DiVault deployment.
+
+Optional OnlyOffice sidecar:
+
+```bash
+ONLYOFFICE_JWT_SECRET='change-this-long-random-secret' \
+ONLYOFFICE_URL='http://onlyoffice' \
+docker compose -f docker-compose.yml -f docker-compose.onlyoffice.yml up -d
+```
+
+The sidecar compose file starts `onlyoffice/documentserver` as `divault-onlyoffice` and exposes it on host port `8082` by default. For production, put OnlyOffice behind HTTPS with the same reverse proxy as DiVault and set `ONLYOFFICE_URL` to the browser-reachable HTTPS URL if clients must load it directly.
+
+OnlyOffice configuration variables:
+
+- `ONLYOFFICE_URL` tells DiVault where the Document Server is. Use `http://onlyoffice` for internal Docker networking or a public HTTPS URL behind your proxy.
+- `ONLYOFFICE_JWT_SECRET` must match the sidecar `JWT_SECRET`.
+- `ONLYOFFICE_PORT` changes the host port for the sidecar. The default is `8082`.
 
 ## Notes And Secrets
 

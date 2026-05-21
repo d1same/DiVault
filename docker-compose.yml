@@ -6,11 +6,15 @@ services:
       - "3443:3443"
     volumes:
       - ./config:/config
+      # Optional external Drive storage. Set DRIVE_FILES_DIR=/media in Settings or env to use it.
+      - ${DIVAULT_MEDIA_PATH:-./config/drive-files}:/media
     environment:
       APP_URL: "https://notes.example.com"
       APP_CONFIG_DIR: "/config"
-      DRIVE_FILES_DIR: "${DRIVE_FILES_DIR:-/config/drive-files}"
-      DRIVE_UPLOAD_MAX_MB: "${DRIVE_UPLOAD_MAX_MB:-250}"
+      DRIVE_FILES_DIR: "${DRIVE_FILES_DIR:-}"
+      DRIVE_UPLOAD_MAX_MB: "${DRIVE_UPLOAD_MAX_MB:-}"
+      ONLYOFFICE_URL: "${ONLYOFFICE_URL:-}"
+      ONLYOFFICE_JWT_SECRET: "${ONLYOFFICE_JWT_SECRET:-}"
       TRUST_PROXY: "${TRUST_PROXY:-false}"
       SECURE_COOKIES: "${SECURE_COOKIES:-false}"
       AI_REVIEW_API_TOKEN: "${AI_REVIEW_API_TOKEN:-}"

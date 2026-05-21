@@ -72,6 +72,8 @@ final class App
         if ($method === 'GET' && $path === '/features') $this->featureSettings($user);
         if ($method === 'PATCH' && $path === '/features') $this->saveFeatureSettings($user);
         if ($method === 'GET' && preg_match('#^/sync/files/(\d+)$#', $path, $m)) $this->downloadFile($user, (int)$m[1]);
+        if ($method === 'GET' && $path === '/drive/storage-settings') $this->driveStorageSettings($user);
+        if ($method === 'POST' && $path === '/drive/storage-settings') $this->saveDriveStorageSettings($user);
         if (str_starts_with($path, '/drive')) $this->requireFeatureEnabled($user, 'drive', 'Files are disabled');
         if ($method === 'GET' && in_array($path, ['/drive', '/drive/folders', '/drive/files'], true)) $this->driveList($user);
         if ($method === 'POST' && $path === '/drive/zip') $this->driveZipSelection($user);
@@ -97,6 +99,7 @@ final class App
         if ($method === 'POST' && $path === '/integrations/ai/reveal') $this->revealAiReviewApiToken($user);
         if ($method === 'POST' && $path === '/integrations/ai/test') $this->testAiReviewApiToken($user);
         if ($method === 'POST' && $path === '/integrations/ai/disable') $this->disableAiReviewApi($user);
+        if ($method === 'GET' && $path === '/integrations/onlyoffice/status') $this->onlyOfficeStatus($user);
         if ($method === 'GET' && $path === '/categories') $this->categories($user);
         if ($method === 'POST' && $path === '/categories') $this->createCategory($user);
         if ($method === 'PUT' && preg_match('#^/categories/(\d+)$#', $path, $m)) $this->updateCategory($user, (int)$m[1]);
@@ -995,6 +998,23 @@ final class App
         if (is_file($path)) unlink($path);
         $this->audit((int)$user['id'], 'integration.ai_review_disabled', 'integration', null);
         $this->json(['enabled' => false]);
+    }
+
+    private function onlyOfficeStatus(array $user): void
+    {
+        $this->requireAdmin($user);
+        $url = Config::onlyOfficeUrl();
+        $this->json([
+            'enabled' => $url !== '',
+            'url' => $url,
+            'jwt_configured' => Config::onlyOfficeJwtSecret() !== '',
+            'recommended_internal_url' => 'http://onlyoffice',
+            'compose_file' => 'docker-compose.onlyoffice.yml',
+            'profiles' => [],
+            'message' => $url !== ''
+                ? 'OnlyOffice is configured as an external sidecar service. Office editing integration can use this URL.'
+                : 'OnlyOffice is not enabled. Set ONLYOFFICE_URL and ONLYOFFICE_JWT_SECRET, then start the optional sidecar compose file.',
+        ]);
     }
 
     private function featureSettings(array $user): void
@@ -1988,6 +2008,46 @@ final class App
         $this->json(['folders' => $folders->fetchAll(PDO::FETCH_ASSOC), 'files' => $files->fetchAll(PDO::FETCH_ASSOC), 'breadcrumbs' => $this->driveBreadcrumbs($user, $parentId)]);
     }
 
+    private function driveStorageSettings(array $user): void
+    {
+        $this->requireAdmin($user);
+        $settings = Config::driveStorageSettings();
+        $dir = Config::driveFilesDir();
+        $this->json([
+            'drive_files_dir' => $dir,
+            'drive_upload_max_mb' => (int)round(Config::driveUploadMaxBytes() / 1024 / 1024),
+            'configured_drive_files_dir' => (string)($settings['drive_files_dir'] ?? ''),
+            'configured_drive_upload_max_mb' => (int)($settings['drive_upload_max_mb'] ?? 0),
+            'writable' => is_dir($dir) && is_writable($dir),
+            'exists' => is_dir($dir),
+            'recommended_mount' => '/media',
+        ]);
+    }
+
+    private function saveDriveStorageSettings(array $user): void
+    {
+        $this->requireAdmin($user);
+        $data = $this->input();
+        $currentDir = Config::driveFilesDir();
+        $dir = rtrim(trim((string)($data['drive_files_dir'] ?? '')), '/');
+        if ($dir === '') $dir = Config::dir() . '/drive-files';
+        if (!str_starts_with($dir, '/') || in_array($dir, ['/', '/proc', '/sys', '/dev'], true)) throw new RuntimeException('Use a safe absolute container path such as /media');
+        $uploadMaxMb = max(1, min(2048, (int)($data['drive_upload_max_mb'] ?? round(Config::driveUploadMaxBytes() / 1024 / 1024))));
+        if (!is_dir($dir) && !mkdir($dir, 0770, true)) throw new RuntimeException('Drive storage path could not be created');
+        if (!is_writable($dir)) throw new RuntimeException('Drive storage path is not writable');
+
+        if ($dir !== $currentDir) $this->migrateDriveFiles($currentDir, $dir);
+
+        Config::saveDriveStorageSettings([
+            'drive_files_dir' => $dir,
+            'drive_upload_max_mb' => $uploadMaxMb,
+            'updated_at' => gmdate('c'),
+            'updated_by' => (int)$user['id'],
+        ]);
+        $this->audit((int)$user['id'], 'settings.drive_storage_updated', 'settings', null);
+        $this->driveStorageSettings($user);
+    }
+
     private function driveCreateFolder(array $user): void
     {
         $this->requireEditor($user);
@@ -2310,6 +2370,20 @@ final class App
         $stmt->execute([(int)$user['id'], $folderId, $name, $stored, $mime, $size]);
         $id = (int)$this->db->lastInsertId();
         return $this->driveFileAccess($user, $id, 'view');
+    }
+
+    private function migrateDriveFiles(string $fromDir, string $toDir): void
+    {
+        $stmt = $this->db->query('SELECT stored_name FROM drive_files WHERE deleted = 0');
+        foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $storedName) {
+            $name = basename((string)$storedName);
+            if ($name === '') continue;
+            $source = rtrim($fromDir, '/') . '/' . $name;
+            $target = rtrim($toDir, '/') . '/' . $name;
+            if (!is_file($source) || is_file($target)) continue;
+            if (!copy($source, $target)) throw new RuntimeException('Drive files could not be migrated to the new storage path');
+            @chmod($target, 0600);
+        }
     }
 
     private function driveAddFolderToZip(ZipArchive $zip, int $folderId, string $entryPath): void

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "DiVault",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "identifier": "com.divault.notes",
   "build": {
     "frontendDist": "../public"
@@ -22,7 +22,7 @@
     "resources": [
       "../public",
       "../src",
-      "resources/php-2.0.0"
+      "resources/php-2.0.1"
     ],
     "windows": {
       "nsis": {

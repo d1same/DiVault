@@ -1,0 +1,24 @@
+services:
+  notes:
+    environment:
+      ONLYOFFICE_URL: "${ONLYOFFICE_URL:-http://onlyoffice}"
+      ONLYOFFICE_JWT_SECRET: "${ONLYOFFICE_JWT_SECRET:-change-this-onlyoffice-secret}"
+    depends_on:
+      - onlyoffice
+
+  onlyoffice:
+    image: onlyoffice/documentserver:latest
+    container_name: divault-onlyoffice
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: "${ONLYOFFICE_JWT_SECRET:-change-this-onlyoffice-secret}"
+      JWT_HEADER: "Authorization"
+      JWT_IN_BODY: "true"
+    ports:
+      - "${ONLYOFFICE_PORT:-8082}:80"
+    volumes:
+      - ./config/onlyoffice/logs:/var/log/onlyoffice
+      - ./config/onlyoffice/data:/var/www/onlyoffice/Data
+      - ./config/onlyoffice/lib:/var/lib/onlyoffice
+      - ./config/onlyoffice/db:/var/lib/postgresql
+    restart: unless-stopped
