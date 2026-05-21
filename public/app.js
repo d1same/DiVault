@@ -1261,14 +1261,14 @@ function renderNotificationBell() {
 
 function renderNotificationDropdown() {
   const items = notificationItems();
-  return `<div class="notification-menu" id="notificationMenu"><div class="section-title-row"><h3>Notifications</h3><span class="small muted">${items.length}</span></div>${items.length ? items.slice(0, 12).map(entry => {
+  return `<div class="notification-menu" id="notificationMenu"><div class="section-title-row"><h3>Notifications</h3><span class="small muted">${items.length}</span></div><div class="notification-list">${items.length ? items.slice(0, 12).map(entry => {
     if (entry.kind === 'task') {
       const task = entry.item;
-      return `<div class="notification-row notification-link" data-open-task="${task.id}" role="button" tabindex="0"><span class="agenda-kind task-kind">Task</span><span><b>${esc(task.title)}</b><br><span class="small muted">Due ${formatScheduleDateTime(task.due_at)}</span></span><button class="task-complete-btn" data-task-complete="${task.id}" type="button" aria-label="Complete task" title="Complete task">${toolIcon('check', 'Complete task')}</button></div>`;
+      return `<div class="notification-row notification-link notification-task-row" data-open-task="${task.id}" role="button" tabindex="0"><span class="agenda-kind task-kind notification-kind">Task</span><span class="notification-copy"><b class="notification-title">${esc(task.title)}</b><span class="small muted notification-meta">Due ${formatScheduleDateTime(task.due_at)}</span></span><button class="task-complete-btn notification-complete-btn" data-task-complete="${task.id}" type="button" aria-label="Complete task" title="Complete task">${toolIcon('check', 'Complete task')}</button></div>`;
     }
     const event = entry.item;
-      return `<div class="notification-row notification-link" data-open-event="${event.series_id || event.id}" role="button" tabindex="0"><span class="agenda-kind event-kind">Event</span><span><b>${esc(event.title)}</b><br><span class="small muted">${formatScheduleDateTime(event.starts_at)}</span></span></div>`;
-  }).join('') : '<p class="small muted">Nothing needs attention.</p>'}</div>`;
+      return `<div class="notification-row notification-link" data-open-event="${event.series_id || event.id}" role="button" tabindex="0"><span class="agenda-kind event-kind notification-kind">Event</span><span class="notification-copy"><b class="notification-title">${esc(event.title)}</b><span class="small muted notification-meta">${formatScheduleDateTime(event.starts_at)}</span></span></div>`;
+  }).join('') : '<p class="small muted notification-empty">Nothing needs attention.</p>'}</div></div>`;
 }
 
 async function completeTask(task, after = async () => {}) {
@@ -4915,21 +4915,27 @@ function renderDriveFileDetails(file, zip, fallbackName, fallbackMime, message =
   const name = file.original_name || fallbackName || 'File';
   const mime = file.mime || fallbackMime || 'application/octet-stream';
   const officeButton = file.id && isDriveOfficeEditable(name, mime) ? `<button class="btn primary" type="button" data-office-drive-file="${esc(file.id)}" data-name="${esc(name)}">Edit in OnlyOffice</button>` : '';
+  const typeLabel = driveFileTypeLabel(name, mime);
+  const sizeLabel = formatDriveSize(file.size || 0) || '0 B';
+  const modifiedLabel = file.updated_at ? formatDateTime(file.updated_at) : '-';
+  const visualType = driveFileVisualType(name, mime);
+  const extension = driveFileExtension(name);
   const rows = [
     ['Name', name],
-    ['Type', mime || driveFileExtension(name)],
-    ['Size', formatDriveSize(file.size || 0) || '0 B'],
-    ['Modified', file.updated_at ? formatDateTime(file.updated_at) : '-'],
+    ['Type', typeLabel],
+    ['Size', sizeLabel],
+    ['Modified', modifiedLabel],
   ];
   const zipHtml = zip ? renderZipPreview(zip) : `<p class="muted small">${esc(message || 'This file type does not have an inline browser preview yet. You can still download it and open it in a local app.')}</p>${officeButton ? `<div class="btn-row">${officeButton}</div>` : ''}`;
-  return `<div class="file-detail-card"><div><span class="drive-file-mark detail-file-mark">${esc(driveFileExtension(name))}</span></div><div class="file-detail-copy"><h3>${esc(name)}</h3><div class="file-detail-grid">${rows.map(([label, value]) => `<span>${esc(label)}</span><b>${esc(String(value || '-'))}</b>`).join('')}</div>${zipHtml}</div></div>`;
+  return `<div class="file-detail-card"><header class="file-detail-identity"><span class="drive-file-mark drive-file-${esc(visualType)} detail-file-mark" aria-hidden="true"><span class="drive-file-glyph">${icon(driveFileVisualIcon(visualType))}</span><span class="drive-file-badge">${esc(extension)}</span></span><div class="file-detail-heading"><p class="file-detail-kicker">File inspector</p><h3>${esc(name)}</h3><p class="muted small">${esc(typeLabel)} · ${esc(sizeLabel)}</p></div></header><div class="file-detail-copy"><div class="file-detail-grid" aria-label="File metadata">${rows.map(([label, value]) => `<div class="file-detail-meta"><span>${esc(label)}</span><b>${esc(String(value || '-'))}</b></div>`).join('')}</div>${zipHtml}</div></div>`;
 }
 
 function renderZipPreview(zip) {
-  if (!zip.available) return `<section class="zip-preview"><h4>ZIP contents</h4><p class="muted small">${esc(zip.error || 'ZIP contents could not be read.')}</p></section>`;
+  if (!zip.available) return `<section class="zip-preview"><div class="zip-preview-head"><div><p class="file-detail-kicker">Archive</p><h4>ZIP contents</h4></div></div><p class="muted small">${esc(zip.error || 'ZIP contents could not be read.')}</p></section>`;
   const entries = zip.entries || [];
-  const rows = entries.map(entry => `<div class="zip-entry"><span>${esc(entry.name || 'file')}</span><b>${esc(formatDriveSize(entry.size || 0) || '0 B')}</b></div>`).join('') || '<p class="muted small">This ZIP archive is empty.</p>';
-  return `<section class="zip-preview"><div class="section-title-row"><h4>ZIP contents</h4><span class="pill">${Number(zip.count || entries.length)} items</span></div><div class="zip-entry-list">${rows}</div>${zip.truncated ? '<p class="muted small">Showing first 200 entries.</p>' : ''}</section>`;
+  const count = Number(zip.count || entries.length);
+  const rows = entries.map(entry => `<div class="zip-entry"><span class="zip-entry-name"><span class="zip-entry-dot" aria-hidden="true"></span><span>${esc(entry.name || 'file')}</span></span><b>${esc(formatDriveSize(entry.size || 0) || '0 B')}</b></div>`).join('') || '<p class="muted small zip-empty-note">This ZIP archive is empty.</p>';
+  return `<section class="zip-preview"><div class="zip-preview-head"><div><p class="file-detail-kicker">Archive</p><h4>ZIP contents</h4></div><span class="pill">${count} item${count === 1 ? '' : 's'}</span></div><div class="zip-entry-list" role="list" aria-label="ZIP archive contents"><div class="zip-entry zip-entry-head" aria-hidden="true"><span>Name</span><b>Size</b></div>${rows}</div>${zip.truncated ? '<p class="muted small zip-preview-note">Showing first 200 entries.</p>' : ''}</section>`;
 }
 
 function isPdfPreview(name, mime) {
@@ -5206,8 +5212,14 @@ async function openSettings(options = {}) {
   state.calendarFeeds = calendarFeeds.feeds || [];
   const adminDataCards = isAdmin ? `<div class="card stack"><h3>Import / export</h3><div class="btn-row"><a class="btn" href="/api/export">Export JSON</a><button class="btn" id="backupBtn">Create full backup</button></div><p class="small muted">Optional backup passphrases encrypt backups. Keep the passphrase; encrypted backups cannot be restored without it.</p><label class="field"><span>Import Markdown notes</span><input id="markdownImportFiles" type="file" accept=".md,text/markdown" multiple></label><label class="field"><span>Import Markdown folder</span><input id="markdownImportFolder" type="file" accept=".md,text/markdown" webkitdirectory multiple></label><button class="btn" id="importMarkdownBtn">Import Markdown</button><p class="small muted">Markdown files are read locally in this browser and imported directly. Folder imports map subfolders to categories.</p><label class="field"><span>Import JSON notes</span><textarea id="importJson" placeholder='{"notes":[{"title":"Imported","body":"Hello"}]}'></textarea></label><button class="btn" id="importBtn">Import JSON</button></div>
         <div class="card stack"><h3>Backups</h3>${backups.pending_restore ? '<p class="pill secret">Restore pending. Restart container to apply.</p>' : ''}<div class="btn-row"><input id="restoreUpload" type="file" accept=".zip,application/zip"><button class="btn danger" id="uploadRestoreBtn">Upload restore ZIP</button></div>${backups.backups.map(b => `<div class="file-row"><span>${esc(b.file)}<br><span class="small muted">${Math.ceil(Number(b.size) / 1024)} KB</span></span><span class="btn-row"><a class="btn" href="/api/backups/${esc(b.file)}">Download</a><button class="btn danger" data-restore="${esc(b.file)}">Schedule restore</button></span></div>`).join('') || '<p class="small muted">No backups yet.</p>'}</div>` : '';
+  const userRows = (users.users || []).map(u => {
+    const disabled = Number(u.disabled) === 1;
+    const isSelf = Number(u.id) === Number(state.user.id);
+    const actions = !isSelf ? `<span class="btn-row"><button class="btn ghost" type="button" data-reset-user-password="${esc(u.id)}" data-user-email="${esc(u.email)}" ${disabled ? 'disabled' : ''}>Reset password</button><button class="btn danger" type="button" data-delete-user="${esc(u.id)}" data-user-email="${esc(u.email)}" ${disabled ? 'disabled' : ''}>Delete user</button></span>` : '<span class="small muted">Current user</span>';
+    return `<div class="file-row user-management-row"><span><b>${esc(u.name || u.email)}</b><br><span class="small muted">${esc(u.email)} · ${esc(u.role)}</span></span><span class="pill-row"><span class="pill ${disabled ? 'danger' : ''}">${disabled ? 'disabled' : esc(u.role)}</span>${actions}</span></div>`;
+  }).join('') || '<p class="small muted">No users.</p>';
   const adminSidebarCards = isAdmin ? `<div class="card stack"><h3>Add user</h3><form id="userForm" class="stack"><label class="field"><span>Name</span><input name="name" placeholder="Name" autocomplete="name" required></label><label class="field"><span>Email</span><input name="email" type="email" placeholder="Email" autocomplete="email" required></label><label class="field"><span>Temporary password</span><input name="password" type="password" minlength="10" placeholder="Temporary password" autocomplete="new-password" required></label><label class="field"><span>Confirm password</span><input name="password_confirm" type="password" minlength="10" placeholder="Type temporary password again" autocomplete="new-password" required></label><label class="field"><span>Role</span><select name="role"><option value="editor">editor</option><option value="viewer">viewer</option><option value="admin">admin</option></select></label><button class="btn">Create user</button></form></div>
-        <div class="card"><h3>Users</h3>${users.users.map(u => `<div class="user-row"><span>${esc(u.email)}</span><span class="pill">${esc(u.role)}</span></div>`).join('') || '<p class="small muted">No users.</p>'}</div>
+        <div class="card stack"><h3>Users</h3><p class="small muted">Delete disables login and revokes sessions without removing the user's notes or files.</p>${userRows}</div>
         <div class="card"><h3>Audit</h3>${auditRowsHtml(audit.audit)}</div>` : '';
   const avatarPreview = state.user.avatar_data ? `<img class="profile-avatar" src="${esc(state.user.avatar_data)}" alt="Current avatar">` : `<img class="profile-avatar" src="/assets/divault-logo.svg" alt="DiVault">`;
   const removeAvatarButton = state.user.avatar_data ? '<button class="btn ghost" id="removeAvatarBtn" type="button">Remove avatar</button>' : '';
@@ -5602,6 +5614,27 @@ async function openSettings(options = {}) {
       openSettings();
     }, 'User creation failed');
   });
+  modal.querySelectorAll('[data-reset-user-password]').forEach(btn => btn.addEventListener('click', async () => {
+    const email = btn.dataset.userEmail || 'this user';
+    const password = await promptDialog({ title: 'Reset user password', message: `Enter a new temporary password for ${email}.`, type: 'password', required: true, confirmText: 'Continue' });
+    if (password === null) return;
+    const passwordConfirm = await promptDialog({ title: 'Confirm password', message: `Type the new temporary password for ${email} again.`, type: 'password', required: true, confirmText: 'Reset password' });
+    if (passwordConfirm === null) return;
+    await runUserAction(async () => {
+      await api(`/users/${btn.dataset.resetUserPassword}`, { method: 'PATCH', body: { password, password_confirm: passwordConfirm } });
+      toast('Password reset and sessions revoked');
+      openSettings();
+    }, 'User password reset failed');
+  }));
+  modal.querySelectorAll('[data-delete-user]').forEach(btn => btn.addEventListener('click', async () => {
+    const email = btn.dataset.userEmail || 'this user';
+    if (!await confirmDialog({ title: 'Delete user?', message: `Disable sign-in for ${email} and revoke all of their active sessions? Their notes and files stay in place.`, confirmText: 'Delete user' })) return;
+    await runUserAction(async () => {
+      await api(`/users/${btn.dataset.deleteUser}`, { method: 'DELETE' });
+      toast('User disabled and sessions revoked');
+      openSettings();
+    }, 'User delete failed');
+  }));
   modal.querySelectorAll('[data-session]').forEach(btn => btn.addEventListener('click', async () => {
     await api(`/sessions/${btn.dataset.session}`, { method: 'DELETE' });
     toast('Session revoked');
