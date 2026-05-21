@@ -2173,17 +2173,7 @@ function bindContentActions() {
   document.querySelector('#bulkPermanentDeleteNotes')?.addEventListener('click', () => bulkNoteAction('permanent'));
   document.querySelectorAll('[data-preview-version]').forEach(btn => btn.addEventListener('click', () => previewVersion(Number(btn.dataset.noteId), Number(btn.dataset.previewVersion))));
   document.querySelectorAll('[data-restore-version]').forEach(btn => btn.addEventListener('click', () => restoreVersion(Number(btn.dataset.noteId), Number(btn.dataset.restoreVersion))));
-  document.querySelectorAll('[data-preview-file]').forEach(btn => btn.addEventListener('click', e => {
-    const main = btn.closest('.drive-main');
-    if (main && handleDriveSelectionClick(e, `file:${btn.dataset.drivePreviewId}`)) return;
-    openFilePreview(btn.dataset.previewFile, btn.dataset.fileName || 'File preview', btn.dataset.fileMime || '', {
-    downloadUrl: btn.dataset.downloadFile || '',
-    editId: btn.dataset.drivePreviewEdit || '',
-    officeId: btn.dataset.drivePreviewOffice || '',
-    metadataId: btn.dataset.drivePreviewId || '',
-    extractId: btn.dataset.drivePreviewExtract || '',
-    });
-  }));
+  document.querySelectorAll('[data-preview-file]').forEach(btn => btn.addEventListener('click', e => openDriveFileFromButton(btn, e)));
   document.querySelector('[data-inline-editor]') && bindInlineEditor(document.querySelector('[data-inline-editor]'));
   document.querySelectorAll('[data-note-id]').forEach(card => {
     card.addEventListener('dragstart', e => {
@@ -2354,8 +2344,9 @@ function focusNoteForContextMenu(card, id) {
 function openDriveContextMenu(item, event) {
   focusDriveItemForContextMenu(item);
   const main = item.querySelector('.drive-main');
-  const openLabel = item.classList.contains('folder-item') ? 'Open folder' : 'Preview file';
-  const openIcon = item.classList.contains('folder-item') ? 'folder' : 'preview';
+  const officeEditable = Boolean(main?.dataset.drivePreviewOffice);
+  const openLabel = item.classList.contains('folder-item') ? 'Open folder' : officeEditable ? 'Edit document' : 'Open file';
+  const openIcon = item.classList.contains('folder-item') ? 'folder' : officeEditable ? 'documentEdit' : 'preview';
   const actions = main ? [{ label: openLabel, iconName: openIcon, run: () => main.click() }] : [];
   item.querySelectorAll('.drive-action-menu [role="menuitem"]').forEach(action => {
     const label = action.getAttribute('aria-label') || action.getAttribute('title') || action.textContent?.trim() || 'Action';
@@ -2681,24 +2672,38 @@ async function openDriveTextEditor(id, name) {
 }
 
 async function openDriveOfficeEditor(id, name) {
-  await runUserAction(async () => {
-    const result = await api(`/drive/files/${encodeURIComponent(id)}/office`);
-    const modal = document.createElement('div');
-    const editorId = `onlyoffice-editor-${Date.now()}`;
-    modal.className = 'editor onlyoffice-editor';
-    modal.innerHTML = `<section class="editor-panel onlyoffice-editor-panel"><div class="topbar"><div><p class="terminal-path">divault ~/drive/office</p><h2>${esc(name || 'Document')}</h2><p class="muted small">Edits save back to Drive after OnlyOffice finishes processing the document.</p></div><button class="btn ghost" type="button" data-close>Close</button></div><div class="onlyoffice-frame" id="${editorId}"><p class="muted">Loading OnlyOffice...</p></div></section>`;
-    document.body.appendChild(modal);
-    setupAccessibleModal(modal, '[data-close]');
-    let editor = null;
-    modal.querySelector('[data-close]')?.addEventListener('click', async () => {
-      if (editor && typeof editor.destroyEditor === 'function') editor.destroyEditor();
-      await loadDrive();
-      renderApp();
-    }, { once: true });
+  let result;
+  try {
+    result = await api(`/drive/files/${encodeURIComponent(id)}/office`);
+  } catch (error) {
+    toast(error.message || 'Open OnlyOffice editor failed');
+    return false;
+  }
+  const modal = document.createElement('div');
+  const editorId = `onlyoffice-editor-${Date.now()}`;
+  modal.className = 'editor onlyoffice-editor';
+  modal.innerHTML = `<section class="editor-panel onlyoffice-editor-panel"><div class="topbar"><div><p class="terminal-path">divault ~/drive/office</p><h2>${esc(name || 'Document')}</h2><p class="muted small">Edits save back to Drive after OnlyOffice finishes processing the document.</p></div><button class="btn ghost" type="button" data-close>Close</button></div><div class="onlyoffice-frame" id="${editorId}"><p class="muted">Loading OnlyOffice...</p></div></section>`;
+  document.body.appendChild(modal);
+  setupAccessibleModal(modal, '[data-close]');
+  let editor = null;
+  modal.querySelector('[data-close]')?.addEventListener('click', async () => {
+    if (editor && typeof editor.destroyEditor === 'function') editor.destroyEditor();
+    await loadDrive();
+    renderApp();
+  }, { once: true });
+  try {
     await loadOnlyOfficeApi(result.api_script);
-    if (!window.DocsAPI?.DocEditor) throw new Error('OnlyOffice API did not load');
     editor = new window.DocsAPI.DocEditor(editorId, result.config);
-  }, 'Open OnlyOffice editor failed');
+  } catch (error) {
+    renderOnlyOfficeLoadError(document.getElementById(editorId), error);
+    toast('OnlyOffice could not load');
+  }
+  return true;
+}
+
+function renderOnlyOfficeLoadError(frame, error) {
+  if (!frame) return;
+  frame.innerHTML = `<div class="onlyoffice-error"><span class="drive-file-mark drive-file-document">${icon('documentEdit')}</span><div><h3>OnlyOffice could not load</h3><p class="muted">${esc(error?.message || 'Check the OnlyOffice public URL, browser access, and Content Security Policy settings.')}</p><p class="muted small">The document is still safe in Drive. Close this window, verify the OnlyOffice Docker URL settings, then try again.</p></div></div>`;
 }
 
 function loadOnlyOfficeApi(src) {
@@ -2706,15 +2711,46 @@ function loadOnlyOfficeApi(src) {
   if (!src) return Promise.reject(new Error('OnlyOffice public URL is not configured'));
   if (!onlyOfficeScriptPromise) {
     onlyOfficeScriptPromise = new Promise((resolve, reject) => {
+      let settled = false;
+      const fail = message => {
+        onlyOfficeScriptPromise = null;
+        reject(new Error(message));
+      };
+      const timeout = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        fail('OnlyOffice script timed out. Check ONLYOFFICE_PUBLIC_URL and network access.');
+      }, 15000);
+      const finish = callback => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        callback();
+      };
       const script = document.createElement('script');
       script.src = src;
       script.async = true;
-      script.onload = resolve;
-      script.onerror = () => reject(new Error('OnlyOffice script could not be loaded'));
+      script.onload = () => finish(() => window.DocsAPI?.DocEditor ? resolve() : fail('OnlyOffice script loaded, but DocsAPI was not available.'));
+      script.onerror = () => finish(() => fail('OnlyOffice script could not be loaded. Check ONLYOFFICE_PUBLIC_URL and CSP settings.'));
       document.head.appendChild(script);
     });
   }
   return onlyOfficeScriptPromise;
+}
+
+async function openDriveFileFromButton(btn, event) {
+  const main = btn.closest('.drive-main');
+  if (main && handleDriveSelectionClick(event, `file:${btn.dataset.drivePreviewId}`)) return;
+  const options = {
+    downloadUrl: btn.dataset.downloadFile || '',
+    editId: btn.dataset.drivePreviewEdit || '',
+    officeId: btn.dataset.drivePreviewOffice || '',
+    metadataId: btn.dataset.drivePreviewId || '',
+    extractId: btn.dataset.drivePreviewExtract || '',
+  };
+  const name = btn.dataset.fileName || 'File preview';
+  if (options.officeId && await openDriveOfficeEditor(options.officeId, name)) return;
+  openFilePreview(btn.dataset.previewFile, name, btn.dataset.fileMime || '', options);
 }
 
 function bindCalendarTaskActions() {
