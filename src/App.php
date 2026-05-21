@@ -72,15 +72,21 @@ final class App
         if ($method === 'GET' && $path === '/features') $this->featureSettings($user);
         if ($method === 'PATCH' && $path === '/features') $this->saveFeatureSettings($user);
         if ($method === 'GET' && preg_match('#^/sync/files/(\d+)$#', $path, $m)) $this->downloadFile($user, (int)$m[1]);
+        if (str_starts_with($path, '/drive')) $this->requireFeatureEnabled($user, 'drive', 'Files are disabled');
         if ($method === 'GET' && in_array($path, ['/drive', '/drive/folders', '/drive/files'], true)) $this->driveList($user);
+        if ($method === 'POST' && $path === '/drive/zip') $this->driveZipSelection($user);
         if ($method === 'POST' && $path === '/drive/folders') $this->driveCreateFolder($user);
+        if ($method === 'POST' && preg_match('#^/drive/folders/(\d+)/zip$#', $path, $m)) $this->driveZipFolder($user, (int)$m[1]);
         if ($method === 'PATCH' && preg_match('#^/drive/folders/(\d+)$#', $path, $m)) $this->driveUpdateFolder($user, (int)$m[1]);
         if ($method === 'DELETE' && preg_match('#^/drive/folders/(\d+)$#', $path, $m)) $this->driveDeleteFolder($user, (int)$m[1]);
         if ($method === 'POST' && $path === '/drive/files') $this->driveUploadFile($user);
         if ($method === 'POST' && $path === '/drive/files/upload') $this->driveUploadFile($user);
+        if ($method === 'POST' && preg_match('#^/drive/files/(\d+)/zip$#', $path, $m)) $this->driveZipFile($user, (int)$m[1]);
+        if ($method === 'POST' && preg_match('#^/drive/files/(\d+)/extract$#', $path, $m)) $this->driveExtractZipFile($user, (int)$m[1]);
         if ($method === 'PATCH' && preg_match('#^/drive/files/(\d+)/content$#', $path, $m)) $this->driveUpdateFileContent($user, (int)$m[1]);
         if ($method === 'PATCH' && preg_match('#^/drive/files/(\d+)$#', $path, $m)) $this->driveUpdateFile($user, (int)$m[1]);
         if ($method === 'DELETE' && preg_match('#^/drive/files/(\d+)$#', $path, $m)) $this->driveDeleteFile($user, (int)$m[1]);
+        if ($method === 'GET' && preg_match('#^/drive/files/(\d+)/metadata$#', $path, $m)) $this->driveFileMetadata($user, (int)$m[1]);
         if ($method === 'GET' && preg_match('#^/drive/files/(\d+)$#', $path, $m)) $this->driveDownloadFile($user, (int)$m[1], false);
         if ($method === 'GET' && preg_match('#^/drive/files/(\d+)/(download|preview)$#', $path, $m)) $this->driveDownloadFile($user, (int)$m[1], $m[2] === 'preview');
         if ($method === 'GET' && preg_match('#^/drive/(folders|files)/(\d+)/shares$#', $path, $m)) $this->driveListShares($user, $m[1], (int)$m[2]);
@@ -1000,7 +1006,7 @@ final class App
     {
         $data = $this->input();
         $features = $this->userFeatures((int)$user['id']);
-        foreach (['calendar', 'tasks', 'home'] as $feature) {
+        foreach (['calendar', 'tasks', 'home', 'drive'] as $feature) {
             if (!isset($data[$feature]) || !is_array($data[$feature])) continue;
             $current = $features[$feature];
             $incoming = $data[$feature];
@@ -1601,6 +1607,7 @@ final class App
             'calendar' => ['enabled' => true, 'settings' => ['home_enabled' => true, 'reminders_enabled' => true, 'default_reminder_minutes' => 10, 'default_calendar_id' => null]],
             'tasks' => ['enabled' => true, 'settings' => ['home_enabled' => true, 'reminders_enabled' => true, 'default_reminder_minutes' => 10, 'shared_calendar_tasks' => false]],
             'home' => ['enabled' => true, 'settings' => ['notes_enabled' => true]],
+            'drive' => ['enabled' => true, 'settings' => []],
         ];
         $stmt = $this->db->prepare('SELECT feature, enabled, settings_json FROM user_feature_settings WHERE user_id = ?');
         $stmt->execute([$userId]);
@@ -1612,6 +1619,11 @@ final class App
             if (is_array($settings)) $features[$feature]['settings'] = array_replace($features[$feature]['settings'], $settings);
         }
         return $features;
+    }
+
+    private function requireFeatureEnabled(array $user, string $feature, string $message): void
+    {
+        if (empty($this->userFeatures((int)$user['id'])[$feature]['enabled'])) throw new RuntimeException($message);
     }
 
     private function ensureDefaultCalendar(array $user): int
@@ -1936,6 +1948,11 @@ final class App
         header('Content-Type: ' . ($file['mime'] ?: 'application/octet-stream'));
         $mode = $inline && $this->isPreviewable($file['mime'] ?? '') ? 'inline' : 'attachment';
         header('Content-Disposition: ' . $this->contentDisposition($mode, $file['original_name']));
+        if ($mode === 'inline') {
+            header_remove('X-Frame-Options');
+            header_remove('Content-Security-Policy');
+            header("Content-Security-Policy: default-src 'none'; img-src 'self' data: blob:; style-src 'unsafe-inline'; frame-ancestors 'self'");
+        }
         header('X-Content-Type-Options: nosniff');
         readfile($path);
         exit;
@@ -2048,7 +2065,7 @@ final class App
         $file = $this->driveFileAccess($user, $id, 'edit');
         $data = $this->input();
         $name = array_key_exists('name', $data) ? $this->driveName($data['name']) : $file['original_name'];
-        $folderId = array_key_exists('folder_id', $data) && $data['folder_id'] !== '' ? (int)$data['folder_id'] : null;
+        $folderId = array_key_exists('folder_id', $data) ? ($data['folder_id'] !== '' ? (int)$data['folder_id'] : null) : ($file['folder_id'] !== null ? (int)$file['folder_id'] : null);
         if ($folderId) $this->driveFolderAccess($user, $folderId, 'edit');
         $this->db->prepare('UPDATE drive_files SET original_name = ?, folder_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$name, $folderId, $id]);
         $this->audit((int)$user['id'], 'drive_file.updated', 'drive_file', $id);
@@ -2062,6 +2079,146 @@ final class App
         $this->db->prepare('UPDATE drive_files SET deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$id]);
         $this->audit((int)$user['id'], 'drive_file.deleted', 'drive_file', $id);
         $this->json(['ok' => true]);
+    }
+
+    private function driveZipSelection(array $user): void
+    {
+        $this->requireEditor($user);
+        $data = $this->input();
+        $fileIds = array_values(array_unique(array_map('intval', $data['file_ids'] ?? [])));
+        $folderIds = array_values(array_unique(array_map('intval', $data['folder_ids'] ?? [])));
+        if (!$fileIds && !$folderIds) throw new RuntimeException('Select files or folders to compress');
+        $parentId = !empty($data['parent_id']) ? (int)$data['parent_id'] : null;
+        if ($parentId) $this->driveFolderAccess($user, $parentId, 'edit');
+        if (!class_exists('ZipArchive')) throw new RuntimeException('ZIP support unavailable');
+        $dir = Config::driveFilesDir();
+        if (!is_dir($dir) && !mkdir($dir, 0775, true)) throw new RuntimeException('Drive storage unavailable');
+        $zipName = $this->driveZipName((string)($data['name'] ?? ('Selected files ' . gmdate('Ymd-His'))));
+        $stored = bin2hex(random_bytes(16)) . '-' . preg_replace('/[^a-zA-Z0-9._-]/', '_', $zipName);
+        $path = $dir . '/' . $stored;
+        $zip = new ZipArchive();
+        if ($zip->open($path, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) throw new RuntimeException('ZIP could not be created');
+        foreach ($folderIds as $folderId) {
+            $folder = $this->driveFolderAccess($user, $folderId, 'edit');
+            $this->driveAddFolderToZip($zip, $folderId, (string)$folder['name']);
+        }
+        foreach ($fileIds as $fileId) {
+            $file = $this->driveFileAccess($user, $fileId, 'edit');
+            $source = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+            if (!is_file($source)) continue;
+            if (!$zip->addFile($source, $this->driveZipEntryName((string)$file['original_name']))) {
+                $zip->close();
+                @unlink($path);
+                throw new RuntimeException('File could not be added to ZIP');
+            }
+        }
+        if (!$zip->close()) {
+            @unlink($path);
+            throw new RuntimeException('ZIP could not be saved');
+        }
+        @chmod($path, 0600);
+        $file = $this->driveStoreGeneratedFile($user, $parentId, $zipName, $stored, 'application/zip', filesize($path) ?: 0);
+        $this->audit((int)$user['id'], 'drive_selection.zipped', 'drive_file', (int)$file['id']);
+        $this->json(['file' => $file]);
+    }
+
+    private function driveZipFolder(array $user, int $id): void
+    {
+        $this->requireEditor($user);
+        $folder = $this->driveFolderAccess($user, $id, 'edit');
+        $parentId = $folder['parent_id'] !== null ? (int)$folder['parent_id'] : null;
+        if ($parentId) $this->driveFolderAccess($user, $parentId, 'edit');
+        if (!class_exists('ZipArchive')) throw new RuntimeException('ZIP support unavailable');
+        $dir = Config::driveFilesDir();
+        if (!is_dir($dir) && !mkdir($dir, 0775, true)) throw new RuntimeException('Drive storage unavailable');
+        $zipName = $this->driveZipName((string)$folder['name']);
+        $stored = bin2hex(random_bytes(16)) . '-' . preg_replace('/[^a-zA-Z0-9._-]/', '_', $zipName);
+        $path = $dir . '/' . $stored;
+        $zip = new ZipArchive();
+        if ($zip->open($path, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) throw new RuntimeException('ZIP could not be created');
+        $this->driveAddFolderToZip($zip, $id, (string)$folder['name']);
+        if (!$zip->close()) {
+            @unlink($path);
+            throw new RuntimeException('ZIP could not be saved');
+        }
+        @chmod($path, 0600);
+        $file = $this->driveStoreGeneratedFile($user, $parentId, $zipName, $stored, 'application/zip', filesize($path) ?: 0);
+        $this->audit((int)$user['id'], 'drive_folder.zipped', 'drive_folder', $id);
+        $this->json(['file' => $file]);
+    }
+
+    private function driveZipFile(array $user, int $id): void
+    {
+        $this->requireEditor($user);
+        $file = $this->driveFileAccess($user, $id, 'edit');
+        $folderId = $file['folder_id'] !== null ? (int)$file['folder_id'] : null;
+        if ($folderId) $this->driveFolderAccess($user, $folderId, 'edit');
+        if (!class_exists('ZipArchive')) throw new RuntimeException('ZIP support unavailable');
+        $source = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+        if (!is_file($source)) throw new RuntimeException('File not found');
+        $dir = Config::driveFilesDir();
+        $zipName = $this->driveZipName((string)$file['original_name']);
+        $stored = bin2hex(random_bytes(16)) . '-' . preg_replace('/[^a-zA-Z0-9._-]/', '_', $zipName);
+        $path = $dir . '/' . $stored;
+        $zip = new ZipArchive();
+        if ($zip->open($path, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) throw new RuntimeException('ZIP could not be created');
+        $entry = $this->driveZipEntryName((string)$file['original_name']);
+        if (!$zip->addFile($source, $entry)) {
+            $zip->close();
+            @unlink($path);
+            throw new RuntimeException('File could not be added to ZIP');
+        }
+        if (!$zip->close()) {
+            @unlink($path);
+            throw new RuntimeException('ZIP could not be saved');
+        }
+        @chmod($path, 0600);
+        $created = $this->driveStoreGeneratedFile($user, $folderId, $zipName, $stored, 'application/zip', filesize($path) ?: 0);
+        $this->audit((int)$user['id'], 'drive_file.zipped', 'drive_file', $id);
+        $this->json(['file' => $created]);
+    }
+
+    private function driveExtractZipFile(array $user, int $id): void
+    {
+        $this->requireEditor($user);
+        $file = $this->driveFileAccess($user, $id, 'edit');
+        $path = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+        if (!is_file($path)) throw new RuntimeException('File not found');
+        if (!$this->driveZipPreview($file, $path)) throw new RuntimeException('Only ZIP files can be extracted');
+        $parentId = $file['folder_id'] !== null ? (int)$file['folder_id'] : null;
+        if ($parentId) $this->driveFolderAccess($user, $parentId, 'edit');
+        if (!class_exists('ZipArchive')) throw new RuntimeException('ZIP support unavailable');
+
+        $zip = new ZipArchive();
+        if ($zip->open($path) !== true) throw new RuntimeException('ZIP could not be read');
+        $limit = Config::driveUploadMaxBytes();
+        $total = 0;
+        $createdFiles = 0;
+        $folderMap = ['' => $this->driveCreateExtractFolder($user, $parentId, $this->driveExtractFolderName((string)$file['original_name']))];
+        try {
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $entry = $this->driveSafeZipEntry($zip->getNameIndex($i) ?: '');
+                if ($entry === '') continue;
+                if (str_ends_with($entry, '/')) {
+                    $this->driveEnsureExtractFolder($user, $folderMap, trim($entry, '/'));
+                    continue;
+                }
+                $stat = $zip->statIndex($i) ?: [];
+                $size = (int)($stat['size'] ?? 0);
+                $total += $size;
+                if ($total > $limit || $createdFiles >= 1000) throw new RuntimeException('ZIP extract limit exceeded');
+                $parentPath = str_replace('\\', '/', dirname($entry));
+                $targetFolderId = $this->driveEnsureExtractFolder($user, $folderMap, $parentPath === '.' ? '' : $parentPath);
+                $content = $zip->getFromIndex($i);
+                if ($content === false) throw new RuntimeException('ZIP entry could not be read');
+                $this->driveStoreExtractedFile($user, $targetFolderId, basename($entry), $content);
+                $createdFiles++;
+            }
+        } finally {
+            $zip->close();
+        }
+        $this->audit((int)$user['id'], 'drive_file.extracted', 'drive_file', $id);
+        $this->json(['folder' => $this->driveFolderAccess($user, $folderMap[''], 'view'), 'files' => $createdFiles]);
     }
 
     private function driveUpdateFileContent(array $user, int $id): void
@@ -2097,6 +2254,147 @@ final class App
         header('Content-Length: ' . filesize($path));
         readfile($path);
         exit;
+    }
+
+    private function driveFileMetadata(array $user, int $id): void
+    {
+        $file = $this->driveFileAccess($user, $id, 'view');
+        $path = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+        if (!is_file($path)) throw new RuntimeException('File not found');
+        unset($file['stored_name']);
+        $file['size'] = filesize($path) ?: (int)($file['size'] ?? 0);
+        $this->audit((int)$user['id'], 'drive_file.metadata_viewed', 'drive_file', $id);
+        $this->json(['file' => $file, 'zip' => $this->driveZipPreview($file, $path), 'pdf' => $this->drivePdfPreview($file, $path)]);
+    }
+
+    private function drivePdfPreview(array $file, string $path): ?array
+    {
+        $name = strtolower((string)($file['original_name'] ?? ''));
+        $mime = strtolower((string)($file['mime'] ?? ''));
+        if (!str_ends_with($name, '.pdf') && $mime !== 'application/pdf') return null;
+        $fh = @fopen($path, 'rb');
+        if (!$fh) return ['valid' => false, 'error' => 'PDF could not be read'];
+        $head = fread($fh, 262144) ?: '';
+        fclose($fh);
+        if (!str_starts_with($head, '%PDF-')) return ['valid' => false, 'error' => 'File is not a valid PDF'];
+        if (!preg_match('/\/Type\s*\/Pages?\b/', $head)) return ['valid' => false, 'error' => 'PDF has no readable pages'];
+        return ['valid' => true];
+    }
+
+    private function driveZipPreview(array $file, string $path): ?array
+    {
+        $name = strtolower((string)($file['original_name'] ?? ''));
+        $mime = strtolower((string)($file['mime'] ?? ''));
+        if (!str_ends_with($name, '.zip') && !in_array($mime, ['application/zip', 'application/x-zip-compressed'], true)) return null;
+        if (!class_exists('ZipArchive')) return ['available' => false, 'entries' => [], 'truncated' => false, 'error' => 'ZIP support unavailable'];
+        $zip = new ZipArchive();
+        if ($zip->open($path) !== true) return ['available' => false, 'entries' => [], 'truncated' => false, 'error' => 'ZIP could not be read'];
+        $entries = [];
+        $limit = min($zip->numFiles, 200);
+        for ($i = 0; $i < $limit; $i++) {
+            $stat = $zip->statIndex($i) ?: [];
+            $entries[] = [
+                'name' => (string)($stat['name'] ?? 'file'),
+                'size' => (int)($stat['size'] ?? 0),
+                'compressed_size' => (int)($stat['comp_size'] ?? 0),
+            ];
+        }
+        $count = $zip->numFiles;
+        $zip->close();
+        return ['available' => true, 'entries' => $entries, 'truncated' => $count > $limit, 'count' => $count];
+    }
+
+    private function driveStoreGeneratedFile(array $user, ?int $folderId, string $name, string $stored, string $mime, int $size): array
+    {
+        $stmt = $this->db->prepare('INSERT INTO drive_files (owner_user_id, folder_id, original_name, stored_name, mime, size) VALUES (?, ?, ?, ?, ?, ?)');
+        $stmt->execute([(int)$user['id'], $folderId, $name, $stored, $mime, $size]);
+        $id = (int)$this->db->lastInsertId();
+        return $this->driveFileAccess($user, $id, 'view');
+    }
+
+    private function driveAddFolderToZip(ZipArchive $zip, int $folderId, string $entryPath): void
+    {
+        $entryPath = trim($this->driveZipPathName($entryPath), '/');
+        if ($entryPath !== '') $zip->addEmptyDir($entryPath);
+        $folderStmt = $this->db->prepare('SELECT id, name FROM drive_folders WHERE deleted = 0 AND parent_id = ? ORDER BY name COLLATE NOCASE');
+        $folderStmt->execute([$folderId]);
+        foreach ($folderStmt->fetchAll(PDO::FETCH_ASSOC) as $folder) {
+            $this->driveAddFolderToZip($zip, (int)$folder['id'], $entryPath . '/' . (string)$folder['name']);
+        }
+        $fileStmt = $this->db->prepare('SELECT original_name, stored_name FROM drive_files WHERE deleted = 0 AND folder_id = ? ORDER BY original_name COLLATE NOCASE');
+        $fileStmt->execute([$folderId]);
+        foreach ($fileStmt->fetchAll(PDO::FETCH_ASSOC) as $file) {
+            $path = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+            if (!is_file($path)) continue;
+            $entry = trim($entryPath . '/' . $this->driveZipEntryName((string)$file['original_name']), '/');
+            if (!$zip->addFile($path, $entry)) throw new RuntimeException('File could not be added to ZIP');
+        }
+    }
+
+    private function driveZipName(string $name): string
+    {
+        $base = preg_replace('/\.zip$/i', '', $this->driveName($name));
+        return substr($base ?: 'Archive', 0, 170) . '.zip';
+    }
+
+    private function driveExtractFolderName(string $name): string
+    {
+        $base = preg_replace('/\.zip$/i', '', $this->driveName($name));
+        return substr($base ?: 'Extracted archive', 0, 170);
+    }
+
+    private function driveZipEntryName(string $name): string
+    {
+        return trim(str_replace(['\\', "\r", "\n"], ['/', '_', '_'], $this->driveName($name)), '/');
+    }
+
+    private function driveZipPathName(string $path): string
+    {
+        $parts = array_values(array_filter(explode('/', str_replace('\\', '/', $path)), static fn($part) => $part !== ''));
+        return implode('/', array_map(fn($part) => $this->driveZipEntryName($part), $parts));
+    }
+
+    private function driveSafeZipEntry(string $entry): string
+    {
+        $entry = str_replace('\\', '/', trim($entry));
+        if ($entry === '' || str_starts_with($entry, '/') || preg_match('/^[a-zA-Z]:\//', $entry)) throw new RuntimeException('ZIP contains an unsafe path');
+        $parts = array_values(array_filter(explode('/', $entry), static fn($part) => $part !== '' && $part !== '.'));
+        if (!$parts || in_array('..', $parts, true)) throw new RuntimeException('ZIP contains an unsafe path');
+        return implode('/', array_map(fn($part) => $this->driveName($part), $parts)) . (str_ends_with($entry, '/') ? '/' : '');
+    }
+
+    private function driveCreateExtractFolder(array $user, ?int $parentId, string $name): int
+    {
+        $stmt = $this->db->prepare('INSERT INTO drive_folders (owner_user_id, parent_id, name) VALUES (?, ?, ?)');
+        $stmt->execute([(int)$user['id'], $parentId, $name]);
+        return (int)$this->db->lastInsertId();
+    }
+
+    private function driveEnsureExtractFolder(array $user, array &$folderMap, string $path): int
+    {
+        $path = trim(str_replace('\\', '/', $path), '/');
+        if ($path === '') return $folderMap[''];
+        $currentPath = '';
+        foreach (explode('/', $path) as $part) {
+            $parentPath = $currentPath;
+            $currentPath = $currentPath === '' ? $part : $currentPath . '/' . $part;
+            if (isset($folderMap[$currentPath])) continue;
+            $folderMap[$currentPath] = $this->driveCreateExtractFolder($user, $folderMap[$parentPath], $this->driveName($part));
+        }
+        return $folderMap[$path];
+    }
+
+    private function driveStoreExtractedFile(array $user, int $folderId, string $name, string $content): void
+    {
+        $dir = Config::driveFilesDir();
+        if (!is_dir($dir) && !mkdir($dir, 0775, true)) throw new RuntimeException('Drive storage unavailable');
+        $safeName = $this->driveName($name);
+        $stored = bin2hex(random_bytes(16)) . '-' . preg_replace('/[^a-zA-Z0-9._-]/', '_', $safeName);
+        $path = $dir . '/' . $stored;
+        if (file_put_contents($path, $content, LOCK_EX) === false) throw new RuntimeException('Extracted file could not be saved');
+        @chmod($path, 0600);
+        $mime = (new finfo(FILEINFO_MIME_TYPE))->file($path) ?: 'application/octet-stream';
+        $this->driveStoreGeneratedFile($user, $folderId, $safeName, $stored, $mime, strlen($content));
     }
 
     private function driveListShares(array $user, string $kind, int $id): void
@@ -2889,10 +3187,10 @@ final class App
     private function securityHeaders(): void
     {
         header('X-Content-Type-Options: nosniff');
-        header('X-Frame-Options: DENY');
+        header('X-Frame-Options: SAMEORIGIN');
         header('Referrer-Policy: same-origin');
         header('Permissions-Policy: camera=(self), microphone=(), geolocation=(), payment=(), usb=()');
-        header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self'; media-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
+        header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self'; media-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'");
         if ($this->isSecureRequest()) {
             header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
         }
@@ -3009,7 +3307,7 @@ final class App
     private function isPreviewable(string $mime): bool
     {
         if (in_array($mime, ['image/svg+xml', 'text/html', 'application/xhtml+xml'], true)) return false;
-        return str_starts_with($mime, 'image/') || in_array($mime, ['application/pdf', 'text/plain', 'text/markdown'], true);
+        return str_starts_with($mime, 'image/') || str_starts_with($mime, 'audio/') || str_starts_with($mime, 'video/') || in_array($mime, ['application/pdf', 'text/plain', 'text/markdown'], true);
     }
 
     private function contentDisposition(string $mode, string $filename): string

@@ -1,4 +1,4 @@
-const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), taskFilter: localStorage.getItem('divault_task_filter') || 'open', driveFolderId: localStorage.getItem('divault_drive_folder_id') || '', driveFolders: [], driveFiles: [], driveBreadcrumbs: [], driveLayout: localStorage.getItem('divault_drive_layout') || 'grid', theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
+const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), taskFilter: localStorage.getItem('divault_task_filter') || 'open', driveFolderId: localStorage.getItem('divault_drive_folder_id') || '', driveFolders: [], driveFiles: [], driveBreadcrumbs: [], driveLayout: localStorage.getItem('divault_drive_layout') || 'grid', driveSelectionMode: false, selectedDriveItems: new Set(), theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
 Object.assign(state, { features: null, calendars: [], calendarFeeds: [], events: [], tasks: [], calendarDate: new Date(), miniCalendarDate: new Date(), calendarView: localStorage.getItem('divault_calendar_view') || 'schedule', reminders: [], reminderTimer: null, linkableNotesLoaded: false, routeNoteId: null });
 if (state.calendarView === 'agenda') state.calendarView = 'schedule';
 const app = document.querySelector('#app');
@@ -6,7 +6,8 @@ const app = document.querySelector('#app');
 const defaultFeatures = () => ({
   calendar: { enabled: true, settings: { home_enabled: true, reminders_enabled: true, default_reminder_minutes: 10, default_calendar_id: null } },
   tasks: { enabled: true, settings: { home_enabled: true, reminders_enabled: true, default_reminder_minutes: 10, shared_calendar_tasks: false } },
-  home: { enabled: true, settings: { notes_enabled: true } }
+  home: { enabled: true, settings: { notes_enabled: true } },
+  drive: { enabled: true, settings: {} }
 });
 const feature = key => state.features?.[key] || defaultFeatures()[key];
 const featureOn = key => Boolean(feature(key).enabled);
@@ -370,6 +371,10 @@ const icon = name => ({
   secret: '<svg viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2M6 10h12v10H6zM12 14v2"/></svg>',
   draw: '<svg viewBox="0 0 24 24"><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20ZM14 7l3 3"/></svg>',
   file: '<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v5h5M9 13h6M9 17h6"/></svg>',
+  download: '<svg viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M5 20h14"/></svg>',
+  preview: '<svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12ZM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>',
+  rename: '<svg viewBox="0 0 24 24"><path d="M4 7h10M4 12h8M4 17h6M15 17l5-5M17 10h5v5"/></svg>',
+  share: '<svg viewBox="0 0 24 24"><path d="M16 6a3 3 0 1 0 0 .1M6 15a3 3 0 1 0 0 .1M18 18a3 3 0 1 0 0 .1M8.5 13.5l5-5M8.7 16.1l6.6 2.8"/></svg>',
   upload: '<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>',
   folderPlus: '<svg viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v11H3zM12 14h6M15 11v6"/></svg>',
   textFile: '<svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7zM14 3v5h5M9 13h6M9 17h4"/></svg>',
@@ -448,6 +453,7 @@ function sectionAllowed(section) {
   if (section === 'home') return homeAvailable();
   if (section === 'calendar') return featureOn('calendar');
   if (section === 'tasks') return featureOn('tasks');
+  if (section === 'drive') return featureOn('drive');
   return true;
 }
 
@@ -1190,7 +1196,8 @@ function renderFilterBar(panelOpen) {
 }
 
 function renderDriveFilterBar() {
-  return `<div class="filterbar drive-filter"><input class="search" id="search" type="search" aria-label="Search files" placeholder="Search files and folders...  Q" value="${esc(state.q)}"><div class="filter-actions drive-commandbar"><label class="btn primary drive-upload-label drive-tool-btn icon-only-btn" title="Upload" aria-label="Upload">${toolIcon('upload', 'Upload')}<input id="driveUploadInput" type="file" multiple></label><button class="btn drive-tool-btn icon-only-btn" id="newDriveFolderBtn" type="button" aria-label="New folder" title="New folder">${toolIcon('folderPlus', 'New folder')}</button><button class="btn drive-tool-btn icon-only-btn" id="newDriveTextBtn" type="button" aria-label="Text file" title="Text file">${toolIcon('textFile', 'Text file')}</button><div class="note-layout-toggle drive-layout-toggle" role="group" aria-label="Drive layout"><button class="btn ghost ${state.driveLayout === 'grid' ? 'active' : ''}" data-drive-layout="grid" type="button">Grid</button><button class="btn ghost ${state.driveLayout === 'list' ? 'active' : ''}" data-drive-layout="list" type="button">List</button></div></div></div>`;
+  const selectLabel = state.driveSelectionMode ? 'Cancel selection' : 'Select files';
+  return `<div class="filterbar drive-filter"><input class="search" id="search" type="search" aria-label="Search files" placeholder="Search files and folders...  Q" value="${esc(state.q)}"><div class="filter-actions drive-commandbar"><button class="btn drive-tool-btn icon-only-btn ${state.driveSelectionMode ? 'active' : ''}" id="toggleDriveSelect" type="button" aria-label="${esc(selectLabel)}" title="${esc(selectLabel)}">${toolIcon('selectAll', selectLabel)}</button><label class="btn primary drive-upload-label drive-tool-btn icon-only-btn" title="Upload" aria-label="Upload">${toolIcon('upload', 'Upload')}<input id="driveUploadInput" type="file" multiple></label><button class="btn drive-tool-btn icon-only-btn" id="newDriveFolderBtn" type="button" aria-label="New folder" title="New folder">${toolIcon('folderPlus', 'New folder')}</button><button class="btn drive-tool-btn icon-only-btn" id="newDriveTextBtn" type="button" aria-label="Text file" title="Text file">${toolIcon('textFile', 'Text file')}</button><div class="note-layout-toggle drive-layout-toggle" role="group" aria-label="Drive layout"><button class="btn ghost ${state.driveLayout === 'grid' ? 'active' : ''}" data-drive-layout="grid" type="button">Grid</button><button class="btn ghost ${state.driveLayout === 'list' ? 'active' : ''}" data-drive-layout="list" type="button">List</button></div></div></div>`;
 }
 
 function notificationItems() {
@@ -1284,17 +1291,16 @@ function renderMainContent() {
 }
 
 function renderNavGroups() {
-  const utility = `<div class="nav-group"><div class="nav-heading">Workspace</div>${homeAvailable() ? renderNavButton('home', 'Home', 0) : ''}${featureOn('calendar') ? renderNavButton('calendar', 'Calendar', state.events.length || 0) : ''}${featureOn('tasks') ? renderNavButton('tasks', 'Tasks', state.tasks.filter(t => t.status !== 'done').length || 0) : ''}${renderNavButton('drive', 'Files', state.driveFiles.length || 0)}</div>`;
-  const noteGroups = `<div class="nav-group"><div class="nav-heading">Categories<button class="mini-add" id="addCategoryBtn" type="button" aria-label="Manage note categories">Manage</button></div>
+  const utility = `<div class="nav-group"><div class="nav-heading">Workspace</div>${homeAvailable() ? renderNavButton('home', 'Home', 0) : ''}${featureOn('calendar') ? renderNavButton('calendar', 'Calendar', state.events.length || 0) : ''}${featureOn('tasks') ? renderNavButton('tasks', 'Tasks', state.tasks.filter(t => t.status !== 'done').length || 0) : ''}${featureOn('drive') ? renderNavButton('drive', 'Files', state.driveFiles.length || 0) : ''}</div>`;
+  const notes = `<div class="nav-group"><div class="nav-heading">Notes</div>
     ${renderNavButton('notes:all', 'All', state.counts['notes:all'] ?? 0, '')}
     ${renderNavButton('notes:quick', 'Quick notes', state.counts['notes:quick'] ?? 0, '')}
-    ${renderCategoryTree(null, 'notes')}
-    <div class="nav-utility-group">
-      ${renderNavButton('notes:archive', 'Archive', state.counts['notes:archive'] ?? 0)}
-      ${renderNavButton('notes:trash', 'Recycle bin', state.counts['notes:trash'] ?? 0)}
-    </div>
   </div>`;
-  return utility + noteGroups;
+  const categories = `<div class="nav-group nav-category-group"><div class="nav-heading">Categories<button class="mini-add" id="addCategoryBtn" type="button" aria-label="Manage note categories">Manage</button></div>
+    ${renderCategoryTree(null, 'notes')}
+  </div>`;
+  const storage = `<div class="nav-group nav-storage-group"><div class="nav-heading">Storage</div>${renderNavButton('notes:archive', 'Archive', state.counts['notes:archive'] ?? 0)}${renderNavButton('notes:trash', 'Recycle bin', state.counts['notes:trash'] ?? 0)}</div>`;
+  return utility + notes + categories + storage;
 }
 
 function renderNavButton(key, label, count = 0, dropCategoryId = undefined) {
@@ -2076,7 +2082,12 @@ function bindContentActions() {
   document.querySelector('#bulkPermanentDeleteNotes')?.addEventListener('click', () => bulkNoteAction('permanent'));
   document.querySelectorAll('[data-preview-version]').forEach(btn => btn.addEventListener('click', () => previewVersion(Number(btn.dataset.noteId), Number(btn.dataset.previewVersion))));
   document.querySelectorAll('[data-restore-version]').forEach(btn => btn.addEventListener('click', () => restoreVersion(Number(btn.dataset.noteId), Number(btn.dataset.restoreVersion))));
-  document.querySelectorAll('[data-preview-file]').forEach(btn => btn.addEventListener('click', () => openFilePreview(btn.dataset.previewFile, btn.dataset.fileName || 'File preview', btn.dataset.fileMime || '')));
+  document.querySelectorAll('[data-preview-file]').forEach(btn => btn.addEventListener('click', () => openFilePreview(btn.dataset.previewFile, btn.dataset.fileName || 'File preview', btn.dataset.fileMime || '', {
+    downloadUrl: btn.dataset.downloadFile || '',
+    editId: btn.dataset.drivePreviewEdit || '',
+    metadataId: btn.dataset.drivePreviewId || '',
+    extractId: btn.dataset.drivePreviewExtract || '',
+  })));
   document.querySelector('[data-inline-editor]') && bindInlineEditor(document.querySelector('[data-inline-editor]'));
   document.querySelectorAll('[data-note-id]').forEach(card => {
     card.addEventListener('dragstart', e => {
@@ -2127,11 +2138,42 @@ function bindDriveActions() {
   document.querySelector('#newDriveFolderBtn')?.addEventListener('click', createDriveFolder);
   document.querySelector('#newDriveTextBtn')?.addEventListener('click', createDriveTextFile);
   document.querySelector('#driveUploadInput')?.addEventListener('change', e => uploadDriveFiles([...e.target.files]));
+  document.querySelector('#toggleDriveSelect')?.addEventListener('click', () => {
+    state.driveSelectionMode = !state.driveSelectionMode;
+    if (!state.driveSelectionMode) state.selectedDriveItems.clear();
+    renderApp();
+  });
+  document.querySelectorAll('[data-select-drive]').forEach(input => input.addEventListener('click', e => e.stopPropagation()));
+  document.querySelectorAll('[data-select-drive]').forEach(input => input.addEventListener('change', e => {
+    const key = e.target.dataset.selectDrive;
+    if (e.target.checked) state.selectedDriveItems.add(key);
+    else state.selectedDriveItems.delete(key);
+    document.querySelector('#contentArea').innerHTML = renderDrive();
+    bindContentActions();
+  }));
+  document.querySelector('#selectAllDriveItems')?.addEventListener('click', () => {
+    state.driveSelectionMode = true;
+    driveVisibleSelectionKeys().forEach(key => state.selectedDriveItems.add(key));
+    document.querySelector('#contentArea').innerHTML = renderDrive();
+    bindContentActions();
+  });
+  document.querySelector('#selectNoDriveItems')?.addEventListener('click', () => {
+    state.selectedDriveItems.clear();
+    document.querySelector('#contentArea').innerHTML = renderDrive();
+    bindContentActions();
+  });
+  document.querySelector('#compressSelectedDrive')?.addEventListener('click', compressSelectedDriveItems);
+  document.querySelector('#deleteSelectedDrive')?.addEventListener('click', deleteSelectedDriveItems);
   document.querySelectorAll('.drive-menu-toggle').forEach(btn => btn.addEventListener('click', e => {
     e.stopPropagation();
     const menu = btn.closest('.drive-actions');
-    document.querySelectorAll('.drive-actions.open').forEach(item => { if (item !== menu) item.classList.remove('open'); });
-    menu?.classList.toggle('open');
+    document.querySelectorAll('.drive-actions.open').forEach(item => {
+      if (item === menu) return;
+      item.classList.remove('open');
+      item.querySelector('.drive-menu-toggle')?.setAttribute('aria-expanded', 'false');
+    });
+    const open = Boolean(menu?.classList.toggle('open'));
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   }));
   document.addEventListener('click', closeDriveMenus, { once: true });
   document.querySelectorAll('[data-rename-drive-folder]').forEach(btn => btn.addEventListener('click', () => renameDriveItem('folder', btn.dataset.renameDriveFolder, btn.dataset.name)));
@@ -2141,10 +2183,16 @@ function bindDriveActions() {
   document.querySelectorAll('[data-share-drive-folder]').forEach(btn => btn.addEventListener('click', () => openDriveShareDialog('folder', btn.dataset.shareDriveFolder, btn.dataset.name)));
   document.querySelectorAll('[data-share-drive-file]').forEach(btn => btn.addEventListener('click', () => openDriveShareDialog('file', btn.dataset.shareDriveFile, btn.dataset.name)));
   document.querySelectorAll('[data-edit-drive-file]').forEach(btn => btn.addEventListener('click', () => openDriveTextEditor(btn.dataset.editDriveFile, btn.dataset.name)));
+  document.querySelectorAll('[data-zip-drive-folder]').forEach(btn => btn.addEventListener('click', () => zipDriveItem('folder', btn.dataset.zipDriveFolder, btn.dataset.name)));
+  document.querySelectorAll('[data-zip-drive-file]').forEach(btn => btn.addEventListener('click', () => zipDriveItem('file', btn.dataset.zipDriveFile, btn.dataset.name)));
+  document.querySelectorAll('[data-extract-drive-file]').forEach(btn => btn.addEventListener('click', () => extractDriveZip(btn.dataset.extractDriveFile, btn.dataset.name)));
 }
 
 function closeDriveMenus() {
-  document.querySelectorAll('.drive-actions.open').forEach(menu => menu.classList.remove('open'));
+  document.querySelectorAll('.drive-actions.open').forEach(menu => {
+    menu.classList.remove('open');
+    menu.querySelector('.drive-menu-toggle')?.setAttribute('aria-expanded', 'false');
+  });
 }
 
 async function createDriveFolder() {
@@ -2201,6 +2249,71 @@ async function deleteDriveItem(kind, id, name) {
     await loadDrive();
     renderApp();
   }, 'Delete failed');
+}
+
+async function zipDriveItem(kind, id, name) {
+  await runUserAction(async () => {
+    await api(`/drive/${kind === 'folder' ? 'folders' : 'files'}/${encodeURIComponent(id)}/zip`, { method: 'POST' });
+    toast(`${name || kind} compressed`);
+    await loadDrive();
+    renderApp();
+  }, 'Compress failed');
+}
+
+async function extractDriveZip(id, name) {
+  if (!await confirmDialog({ title: 'Extract ZIP?', message: `Extract ${name || 'this ZIP'} into a new folder?`, confirmText: 'Extract' })) return;
+  await runUserAction(async () => {
+    await api(`/drive/files/${encodeURIComponent(id)}/extract`, { method: 'POST' });
+    toast('ZIP extracted');
+    await loadDrive();
+    renderApp();
+  }, 'Extract failed');
+}
+
+function driveVisibleSelectionKeys() {
+  return [...(state.driveFolders || []).map(item => `folder:${item.id}`), ...(state.driveFiles || []).map(item => `file:${item.id}`)];
+}
+
+function selectedVisibleDriveKeys() {
+  const visible = new Set(driveVisibleSelectionKeys());
+  return [...state.selectedDriveItems].filter(key => visible.has(key));
+}
+
+function selectedDrivePayload() {
+  const keys = selectedVisibleDriveKeys();
+  return {
+    keys,
+    folder_ids: keys.filter(key => key.startsWith('folder:')).map(key => Number(key.slice(7))).filter(Boolean),
+    file_ids: keys.filter(key => key.startsWith('file:')).map(key => Number(key.slice(5))).filter(Boolean),
+  };
+}
+
+async function compressSelectedDriveItems() {
+  const selection = selectedDrivePayload();
+  if (!selection.keys.length) return;
+  await runUserAction(async () => {
+    await api('/drive/zip', { method: 'POST', body: { folder_ids: selection.folder_ids, file_ids: selection.file_ids, parent_id: state.driveFolderId || null } });
+    state.selectedDriveItems.clear();
+    state.driveSelectionMode = false;
+    toast(`${selection.keys.length} item${selection.keys.length === 1 ? '' : 's'} compressed`);
+    await loadDrive();
+    renderApp();
+  }, 'Compress selected failed');
+}
+
+async function deleteSelectedDriveItems() {
+  const selection = selectedDrivePayload();
+  if (!selection.keys.length) return;
+  if (!await confirmDialog({ title: 'Delete selected?', message: `Delete ${selection.keys.length} selected Drive item${selection.keys.length === 1 ? '' : 's'}?`, confirmText: 'Delete' })) return;
+  await runUserAction(async () => {
+    for (const id of selection.file_ids) await api(`/drive/files/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    for (const id of selection.folder_ids) await api(`/drive/folders/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    state.selectedDriveItems.clear();
+    state.driveSelectionMode = false;
+    toast('Selected items deleted');
+    await loadDrive();
+    renderApp();
+  }, 'Delete selected failed');
 }
 
 async function openDriveShareDialog(kind, id, name) {
@@ -2997,10 +3110,17 @@ function renderDrive() {
   const files = sortDriveItems(state.driveFiles || [], 'file');
   const crumbs = renderDriveBreadcrumbs();
   const empty = !folders.length && !files.length;
-  return `<section class="drive-shell ${state.driveLayout === 'list' ? 'list-view' : 'grid-view'}">
+  const bulkActions = renderDriveBulkActions(folders.length + files.length);
+  return `<section class="drive-shell ${state.driveLayout === 'list' ? 'list-view' : 'grid-view'} ${state.driveSelectionMode ? 'selecting' : ''}">
     <div class="drive-header card"><div class="drive-path-line">${crumbs}</div><div class="drive-stats"><span class="pill">${folders.length} folder${folders.length === 1 ? '' : 's'}</span><span class="pill">${files.length} file${files.length === 1 ? '' : 's'}</span></div></div>
-    ${empty ? `<div class="empty card drive-empty"><h2>${state.q ? 'No matching files' : 'This folder is empty'}</h2><p>${state.q ? 'Try another search term.' : 'Use Upload, New folder, or Text file to add content.'}</p></div>` : `<div class="drive-list-card"><div class="drive-list-head">${renderDriveSortHeader('name', 'Name')}${renderDriveSortHeader('size', 'Size')}${renderDriveSortHeader('type', 'Type')}${renderDriveSortHeader('date', 'Modified')}<span>Actions</span></div><div class="drive-items">${folders.map(renderDriveFolder).join('')}${files.map(renderDriveFile).join('')}</div></div>`}
+    ${bulkActions}${empty ? `<div class="empty card drive-empty"><h2>${state.q ? 'No matching files' : 'This folder is empty'}</h2><p>${state.q ? 'Try another search term.' : 'Use Upload, New folder, or Text file to add content.'}</p></div>` : `<div class="drive-list-card"><div class="drive-list-head">${renderDriveSortHeader('name', 'Name')}${renderDriveSortHeader('size', 'Size')}${renderDriveSortHeader('type', 'Type')}${renderDriveSortHeader('date', 'Modified')}<span>Actions</span></div><div class="drive-items">${folders.map(renderDriveFolder).join('')}${files.map(renderDriveFile).join('')}</div></div>`}
   </section>`;
+}
+
+function renderDriveBulkActions(total) {
+  if (!state.driveSelectionMode) return '';
+  const selectedCount = selectedVisibleDriveKeys().length;
+  return `<div class="bulk-note-actions drive-bulk-actions card ${selectedCount ? 'has-selection' : ''}"><span class="small muted">${selectedCount ? `${selectedCount} selected` : 'Select files or folders for bulk actions.'}</span><button class="btn ghost bulk-icon-btn" type="button" id="selectAllDriveItems">${toolIcon('selectAll', 'Select all')}<span>Select all</span></button>${selectedCount ? `<button class="btn ghost bulk-icon-btn" type="button" id="selectNoDriveItems">${toolIcon('selectNone', 'Select none')}<span>Select none</span></button><button class="btn" type="button" id="compressSelectedDrive">Compress selected</button><span class="bulk-danger-zone"><button class="btn danger icon-only-btn" type="button" id="deleteSelectedDrive" aria-label="Delete selected" title="Delete selected">${toolIcon('trash', 'Delete selected')}</button></span>` : total ? '' : '<span class="small muted">This folder is empty.</span>'}</div>`;
 }
 
 function renderDriveSortHeader(field, label) {
@@ -3046,8 +3166,11 @@ function renderDriveFolder(folder) {
   const name = folder.name || folder.title || 'Untitled folder';
   const updated = folder.updated_at || folder.created_at || '';
   const canManage = driveCanManage(folder);
-  const actions = `<button class="icon-btn" data-rename-drive-folder="${esc(folder.id)}" data-name="${esc(name)}" type="button">Rename</button>${canManage ? `<button class="icon-btn" data-share-drive-folder="${esc(folder.id)}" data-name="${esc(name)}" type="button">Share</button>` : ''}<button class="icon-btn danger-link" data-delete-drive-folder="${esc(folder.id)}" data-name="${esc(name)}" type="button">Delete</button>`;
-  return `<article class="drive-item folder-item" data-drive-folder-card="${esc(folder.id)}"><button class="drive-main" data-drive-folder="${esc(folder.id)}" type="button"><span class="drive-icon">${icon('folder')}</span><span><b>${esc(name)}</b></span></button><span class="drive-size">-</span><span class="drive-kind">Folder</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
+  const selectionKey = `folder:${folder.id}`;
+  const selected = state.selectedDriveItems.has(selectionKey);
+  const selector = state.driveSelectionMode ? `<label class="drive-select"><input type="checkbox" data-select-drive="${esc(selectionKey)}" ${selected ? 'checked' : ''} aria-label="Select ${esc(name)}"><span class="sr-only">Select ${esc(name)}</span></label>` : '';
+  const actions = `${driveActionButton('Compress', 'box', `data-zip-drive-folder="${esc(folder.id)}" data-name="${esc(name)}"`)}${driveActionButton('Rename', 'rename', `data-rename-drive-folder="${esc(folder.id)}" data-name="${esc(name)}"`)}${canManage ? driveActionButton('Share', 'share', `data-share-drive-folder="${esc(folder.id)}" data-name="${esc(name)}"`) : ''}${driveActionButton('Delete', 'trash', `data-delete-drive-folder="${esc(folder.id)}" data-name="${esc(name)}"`, 'danger-link')}`;
+  return `<article class="drive-item folder-item ${selected ? 'selected' : ''}" data-drive-folder-card="${esc(folder.id)}">${selector}<button class="drive-main" data-drive-folder="${esc(folder.id)}" type="button"><span class="drive-icon">${icon('folder')}</span><span><b>${esc(name)}</b></span></button><span class="drive-size">-</span><span class="drive-kind">Folder</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
 }
 
 function renderDriveFile(file) {
@@ -3057,30 +3180,43 @@ function renderDriveFile(file) {
   const id = file.id;
   const previewUrl = `/api/drive/files/${encodeURIComponent(id)}/preview`;
   const downloadUrl = `/api/drive/files/${encodeURIComponent(id)}/download`;
-  const previewable = isDrivePreviewable(name, mime);
   const editable = isDriveEditable(name, mime);
+  const zip = isDriveZip(name, mime);
+  const selectionKey = `file:${id}`;
+  const selected = state.selectedDriveItems.has(selectionKey);
+  const selector = state.driveSelectionMode ? `<label class="drive-select"><input type="checkbox" data-select-drive="${esc(selectionKey)}" ${selected ? 'checked' : ''} aria-label="Select ${esc(name)}"><span class="sr-only">Select ${esc(name)}</span></label>` : '';
   const thumb = isImage(mime) ? `<img class="drive-thumb" src="${previewUrl}" alt="${esc(name)}">` : `<span class="drive-file-mark">${driveFileExtension(name)}</span>`;
   const canManage = driveCanManage(file);
   const updated = file.updated_at || file.created_at || '';
-  const actions = `<a class="icon-btn" href="${downloadUrl}">Download</a>${previewable ? `<button class="icon-btn" data-preview-file="${previewUrl}" data-file-name="${esc(name)}" data-file-mime="${esc(mime)}" type="button">Preview</button>` : ''}${editable ? `<button class="icon-btn" data-edit-drive-file="${esc(id)}" data-name="${esc(name)}" type="button">Edit</button>` : ''}<button class="icon-btn" data-rename-drive-file="${esc(id)}" data-name="${esc(name)}" type="button">Rename</button>${canManage ? `<button class="icon-btn" data-share-drive-file="${esc(id)}" data-name="${esc(name)}" type="button">Share</button>` : ''}<button class="icon-btn danger-link" data-delete-drive-file="${esc(id)}" data-name="${esc(name)}" type="button">Delete</button>`;
-  return `<article class="drive-item file-item"><button class="drive-main" ${previewable ? `data-preview-file="${previewUrl}" data-file-name="${esc(name)}" data-file-mime="${esc(mime)}"` : ''} type="button" ${previewable ? '' : 'disabled'}>${thumb}<span><b>${esc(name)}</b></span></button><span class="drive-size">${size ? esc(size) : '-'}</span><span class="drive-kind">${esc(driveFileExtension(name))}</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
+  const previewAttrs = `data-preview-file="${previewUrl}" data-file-name="${esc(name)}" data-file-mime="${esc(mime)}" data-download-file="${downloadUrl}" data-drive-preview-id="${esc(id)}"${editable ? ` data-drive-preview-edit="${esc(id)}"` : ''}${zip ? ` data-drive-preview-extract="${esc(id)}"` : ''}`;
+  const actions = `${driveActionLink('Download', 'download', downloadUrl)}${editable ? driveActionButton('Edit', 'draw', `data-edit-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${zip ? driveActionButton('Extract', 'folder', `data-extract-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${driveActionButton('Compress', 'box', `data-zip-drive-file="${esc(id)}" data-name="${esc(name)}"`)}${driveActionButton('Rename', 'rename', `data-rename-drive-file="${esc(id)}" data-name="${esc(name)}"`)}${canManage ? driveActionButton('Share', 'share', `data-share-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${driveActionButton('Delete', 'trash', `data-delete-drive-file="${esc(id)}" data-name="${esc(name)}"`, 'danger-link')}`;
+  return `<article class="drive-item file-item ${selected ? 'selected' : ''}">${selector}<button class="drive-main" ${previewAttrs} type="button">${thumb}<span><b>${esc(name)}</b></span></button><span class="drive-size">${size ? esc(size) : '-'}</span><span class="drive-kind">${esc(driveFileExtension(name))}</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
 }
 
 function renderDriveActionMenu(actions) {
-  return `<div class="drive-actions"><button class="drive-menu-toggle" type="button" aria-label="More actions">...</button><div class="drive-action-menu">${actions}</div></div>`;
+  return `<div class="drive-actions"><button class="drive-menu-toggle" type="button" aria-label="More actions" aria-expanded="false">...</button><div class="drive-action-menu" role="menu">${actions}</div></div>`;
+}
+
+function driveActionButton(label, iconName, attrs, extraClass = '') {
+  return `<button class="icon-btn drive-action-btn ${extraClass}" ${attrs} type="button" title="${esc(label)}" aria-label="${esc(label)}" role="menuitem">${toolIcon(iconName, label)}</button>`;
+}
+
+function driveActionLink(label, iconName, href) {
+  return `<a class="icon-btn drive-action-btn" href="${esc(href)}" title="${esc(label)}" aria-label="${esc(label)}" role="menuitem">${toolIcon(iconName, label)}</a>`;
 }
 
 function driveCanManage(item) {
   return ['owner', 'admin'].includes(String(item?.permission || '').toLowerCase());
 }
 
-function isDrivePreviewable(name, mime) {
-  return isImage(mime) || String(mime || '').includes('pdf') || /\.pdf$/i.test(name || '');
-}
-
 function isDriveEditable(name, mime) {
   const value = String(mime || '').toLowerCase();
   return value.startsWith('text/') || ['application/json', 'application/xml', 'application/csv', 'application/x-yaml'].includes(value) || /\.(txt|md|markdown|csv|json|xml|yaml|yml|log|html|css|js|ts)$/i.test(name || '');
+}
+
+function isDriveZip(name, mime) {
+  const value = String(mime || '').toLowerCase();
+  return value === 'application/zip' || value === 'application/x-zip-compressed' || /\.zip$/i.test(name || '');
 }
 
 function driveFileExtension(name) {
@@ -4229,15 +4365,174 @@ function renderFiles(files) {
   </div>`).join('')}</div>`;
 }
 
-function openFilePreview(src, name, mime = '') {
+function openFilePreview(src, name, mime = '', options = {}) {
   if (!src) return;
   const modal = document.createElement('div');
   modal.className = 'editor image-lightbox';
   const image = isImage(mime) || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name || '');
-  const preview = image ? `<img src="${esc(src)}" alt="${esc(name || 'Image preview')}">` : `<iframe class="file-preview-frame" src="${esc(src)}" title="${esc(name || 'File preview')}"></iframe>`;
-  modal.innerHTML = `<section class="editor-panel image-lightbox-panel"><div class="topbar"><div><p class="terminal-path">divault ~/files</p><h2>${esc(name || 'File preview')}</h2></div><div class="btn-row"><a class="btn" href="${esc(src)}" target="_blank" rel="noopener noreferrer">Full size</a><a class="btn ghost" href="${esc(src.replace('/preview', ''))}">Download</a><button class="btn ghost" type="button" data-close>Close</button></div></div>${preview}</section>`;
+  const media = isMediaPreview(name, mime);
+  const pdf = isPdfPreview(name, mime);
+  const text = isTextFilePreview(name, mime);
+  const inline = image || media || pdf || text;
+  const downloadUrl = options.downloadUrl || previewDownloadUrl(src);
+  const editButton = options.editId ? `<button class="btn primary icon-only-btn" type="button" data-preview-edit-drive-file="${esc(options.editId)}" data-name="${esc(name || 'file')}" title="Edit" aria-label="Edit">${toolIcon('draw', 'Edit')}</button>` : '';
+  const extractButton = options.extractId ? `<button class="btn ghost icon-only-btn" type="button" data-preview-extract-drive-file="${esc(options.extractId)}" data-name="${esc(name || 'file')}" title="Extract" aria-label="Extract">${toolIcon('folder', 'Extract')}</button>` : '';
+  const imageControls = image ? '<span class="image-preview-meta" data-image-preview-meta>Loading image...</span><button class="btn ghost icon-only-btn" type="button" data-image-zoom="out" title="Zoom out" aria-label="Zoom out">-</button><button class="btn ghost icon-only-btn" type="button" data-image-zoom="fit" title="Fit image" aria-label="Fit image">Fit</button><button class="btn ghost icon-only-btn" type="button" data-image-zoom="in" title="Zoom in" aria-label="Zoom in">+</button>' : '';
+  const preview = image
+    ? `<div class="file-preview-stage image-stage"><img class="image-preview-img" data-image-preview-img src="${esc(src)}" alt="${esc(name || 'Image preview')}"></div>`
+    : media
+      ? renderMediaPreview(src, name, mime)
+      : pdf
+      ? `<div class="file-preview-stage file-detail-stage" data-pdf-preview-stage><p class="muted">Checking PDF...</p></div>`
+      : text
+        ? `<div class="file-preview-stage text-preview-stage" data-text-preview-stage><p class="muted">Loading text preview...</p></div>`
+      : `<div class="file-preview-stage file-detail-stage" data-file-detail-stage><p class="muted">Loading file details...</p></div>`;
+  modal.innerHTML = `<section class="editor-panel image-lightbox-panel"><div class="topbar preview-topbar"><div><p class="terminal-path">divault ~/files</p><h2>${esc(name || 'File preview')}</h2></div><div class="btn-row preview-action-row">${imageControls}${editButton}${extractButton}<a class="btn ghost icon-only-btn" href="${esc(downloadUrl)}" title="Download" aria-label="Download">${toolIcon('download', 'Download')}</a><button class="btn ghost icon-only-btn" type="button" data-close title="Close" aria-label="Close">×</button></div></div>${preview}</section>`;
   document.body.appendChild(modal);
   setupAccessibleModal(modal, '[data-close]');
+  if (image) bindImagePreviewControls(modal);
+  if (pdf) loadPdfFilePreview(modal, options.metadataId, src, name, mime);
+  if (text) loadTextFilePreview(modal, downloadUrl, name, mime);
+  if (!inline && options.metadataId) loadDriveFileDetails(modal, options.metadataId, name, mime);
+  if (!inline && !options.metadataId) modal.querySelector('[data-file-detail-stage]').innerHTML = renderDriveFileDetails({}, null, name, mime);
+  modal.querySelector('[data-preview-edit-drive-file]')?.addEventListener('click', btn => {
+    modal.remove();
+    openDriveTextEditor(btn.currentTarget.dataset.previewEditDriveFile, btn.currentTarget.dataset.name || name);
+  });
+  modal.querySelector('[data-preview-extract-drive-file]')?.addEventListener('click', async btn => {
+    modal.remove();
+    await extractDriveZip(btn.currentTarget.dataset.previewExtractDriveFile, btn.currentTarget.dataset.name || name);
+  });
+}
+
+function bindImagePreviewControls(modal) {
+  const img = modal.querySelector('[data-image-preview-img]');
+  const meta = modal.querySelector('[data-image-preview-meta]');
+  if (!img) return;
+  let zoom = 1;
+  const render = () => {
+    img.style.maxWidth = zoom === 1 ? '100%' : 'none';
+    img.style.maxHeight = zoom === 1 ? '100%' : 'none';
+    img.style.width = zoom === 1 ? '' : `${Math.round(img.naturalWidth * zoom)}px`;
+    img.style.height = zoom === 1 ? '' : 'auto';
+    if (meta) meta.textContent = img.naturalWidth ? `${img.naturalWidth} x ${img.naturalHeight} px · ${Math.round(zoom * 100)}%` : `${Math.round(zoom * 100)}%`;
+  };
+  img.addEventListener('load', render, { once: true });
+  modal.querySelectorAll('[data-image-zoom]').forEach(btn => btn.addEventListener('click', () => {
+    const action = btn.dataset.imageZoom;
+    if (action === 'fit') zoom = 1;
+    if (action === 'in') zoom = Math.min(4, Number((zoom + 0.25).toFixed(2)));
+    if (action === 'out') zoom = Math.max(0.25, Number((zoom - 0.25).toFixed(2)));
+    render();
+  }));
+  if (img.complete) render();
+}
+
+async function loadPdfFilePreview(modal, id, src, name, mime) {
+  const stage = modal.querySelector('[data-pdf-preview-stage]');
+  if (!stage) return;
+  if (!id) {
+    stage.classList.remove('file-detail-stage');
+    stage.innerHTML = `<iframe class="file-preview-frame" src="${esc(src)}" title="${esc(name || 'File preview')}"></iframe>`;
+    return;
+  }
+  try {
+    const result = await api(`/drive/files/${encodeURIComponent(id)}/metadata`);
+    if (result.pdf && !result.pdf.valid) {
+      stage.innerHTML = renderDriveFileDetails(result.file || {}, null, name, mime, result.pdf.error || 'PDF could not be previewed');
+      return;
+    }
+    stage.classList.remove('file-detail-stage');
+    stage.innerHTML = `<iframe class="file-preview-frame" src="${esc(src)}" title="${esc(name || 'File preview')}"></iframe>`;
+  } catch (err) {
+    stage.innerHTML = `<div class="file-detail-empty"><h3>Preview unavailable</h3><p class="muted small">${esc(err.message || 'Could not load PDF preview.')}</p></div>`;
+  }
+}
+
+async function loadTextFilePreview(modal, url, name = '', mime = '') {
+  const stage = modal.querySelector('[data-text-preview-stage]');
+  if (!stage) return;
+  try {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('Text preview failed');
+    const size = Number(res.headers.get('content-length') || 0);
+    if (size > 2 * 1024 * 1024) {
+      stage.innerHTML = '<div class="file-detail-empty"><h3>Text preview skipped</h3><p class="muted small">This text file is larger than 2 MB. Download it to view locally.</p></div>';
+      return;
+    }
+    const text = await res.text();
+    stage.innerHTML = isCodeFilePreview(name, mime) ? renderNumberedTextPreview(text) : `<pre class="text-file-preview">${esc(text)}</pre>`;
+  } catch (err) {
+    stage.innerHTML = `<div class="file-detail-empty"><h3>Preview unavailable</h3><p class="muted small">${esc(err.message || 'Could not load text preview.')}</p></div>`;
+  }
+}
+
+function renderNumberedTextPreview(text) {
+  const lines = String(text ?? '').split(/\r?\n/);
+  return `<div class="numbered-code-preview" role="table" aria-label="Code preview">${lines.map((line, index) => `<div class="code-preview-row" role="row"><span class="code-preview-line" role="rowheader">${index + 1}</span><code role="cell">${esc(line || ' ')}</code></div>`).join('')}</div>`;
+}
+
+function renderMediaPreview(src, name, mime) {
+  if (String(mime || '').startsWith('audio/') || /\.(mp3|wav|ogg|m4a|flac|aac|opus)$/i.test(name || '')) {
+    return `<div class="file-preview-stage media-preview-stage"><audio controls preload="metadata" src="${esc(src)}"></audio></div>`;
+  }
+  return `<div class="file-preview-stage media-preview-stage"><video controls preload="metadata" src="${esc(src)}"></video></div>`;
+}
+
+async function loadDriveFileDetails(modal, id, name, mime) {
+  const stage = modal.querySelector('[data-file-detail-stage]');
+  if (!stage) return;
+  try {
+    const result = await api(`/drive/files/${encodeURIComponent(id)}/metadata`);
+    const file = result.file || {};
+    stage.innerHTML = renderDriveFileDetails(file, result.zip, name, mime);
+  } catch (err) {
+    stage.innerHTML = `<div class="file-detail-empty"><h3>Preview unavailable</h3><p class="muted small">${esc(err.message || 'Could not load file details.')}</p></div>`;
+  }
+}
+
+function renderDriveFileDetails(file, zip, fallbackName, fallbackMime, message = '') {
+  const name = file.original_name || fallbackName || 'File';
+  const mime = file.mime || fallbackMime || 'application/octet-stream';
+  const rows = [
+    ['Name', name],
+    ['Type', mime || driveFileExtension(name)],
+    ['Size', formatDriveSize(file.size || 0) || '0 B'],
+    ['Modified', file.updated_at ? formatDateTime(file.updated_at) : '-'],
+  ];
+  const zipHtml = zip ? renderZipPreview(zip) : `<p class="muted small">${esc(message || 'This file type does not have an inline browser preview yet. You can still download it and open it in a local app.')}</p>`;
+  return `<div class="file-detail-card"><div><span class="drive-file-mark detail-file-mark">${esc(driveFileExtension(name))}</span></div><div class="file-detail-copy"><h3>${esc(name)}</h3><div class="file-detail-grid">${rows.map(([label, value]) => `<span>${esc(label)}</span><b>${esc(String(value || '-'))}</b>`).join('')}</div>${zipHtml}</div></div>`;
+}
+
+function renderZipPreview(zip) {
+  if (!zip.available) return `<section class="zip-preview"><h4>ZIP contents</h4><p class="muted small">${esc(zip.error || 'ZIP contents could not be read.')}</p></section>`;
+  const entries = zip.entries || [];
+  const rows = entries.map(entry => `<div class="zip-entry"><span>${esc(entry.name || 'file')}</span><b>${esc(formatDriveSize(entry.size || 0) || '0 B')}</b></div>`).join('') || '<p class="muted small">This ZIP archive is empty.</p>';
+  return `<section class="zip-preview"><div class="section-title-row"><h4>ZIP contents</h4><span class="pill">${Number(zip.count || entries.length)} items</span></div><div class="zip-entry-list">${rows}</div>${zip.truncated ? '<p class="muted small">Showing first 200 entries.</p>' : ''}</section>`;
+}
+
+function isPdfPreview(name, mime) {
+  const value = String(mime || '').toLowerCase();
+  return value.includes('pdf') || /\.pdf$/i.test(name || '');
+}
+
+function isTextFilePreview(name, mime) {
+  const value = String(mime || '').toLowerCase();
+  return value.startsWith('text/') || ['application/json', 'application/xml', 'application/csv', 'application/x-yaml', 'application/yaml', 'application/toml', 'application/javascript', 'application/x-javascript'].includes(value) || /\.(txt|md|markdown|csv|json|xml|yaml|yml|toml|ini|conf|cfg|log|html|htm|css|js|mjs|cjs|ts|tsx|jsx|php|py|rb|go|rs|java|c|h|cpp|hpp|cs|sh|bat|ps1|sql|env)$/i.test(name || '');
+}
+
+function isCodeFilePreview(name, mime) {
+  const value = String(mime || '').toLowerCase();
+  return ['text/css', 'text/html', 'text/javascript', 'application/javascript', 'application/x-javascript', 'application/json', 'application/xml', 'application/x-yaml', 'application/yaml', 'application/toml'].includes(value) || /\.(php|css|scss|sass|less|html|htm|js|mjs|cjs|ts|tsx|jsx|json|xml|yaml|yml|toml|ini|conf|cfg|env|ps1|psm1|psd1|sh|bash|zsh|fish|bat|cmd|sql|py|rb|go|rs|java|c|h|cpp|hpp|cs|swift|kt|kts|dart|vue|svelte|log)$/i.test(name || '');
+}
+
+function isMediaPreview(name, mime) {
+  const value = String(mime || '').toLowerCase();
+  return value.startsWith('audio/') || value.startsWith('video/') || /\.(mp3|wav|ogg|m4a|flac|aac|opus|mp4|webm|mov|m4v|ogv)$/i.test(name || '');
+}
+
+function previewDownloadUrl(src) {
+  return src.includes('/drive/files/') ? src.replace(/\/preview$/, '/download') : src.replace(/\/preview$/, '');
 }
 
 function renderPendingAttachments() {
@@ -4613,7 +4908,8 @@ async function openSettings(options = {}) {
       const payload = {
         calendar: { enabled: form.has('calendar_enabled'), home_enabled: form.has('calendar_home_enabled'), reminders_enabled: form.has('calendar_reminders_enabled'), default_reminder_minutes: Number(form.get('calendar_default_reminder_minutes') || 10) },
         tasks: { enabled: form.has('tasks_enabled'), home_enabled: form.has('tasks_home_enabled'), reminders_enabled: form.has('tasks_reminders_enabled'), shared_calendar_tasks: form.has('tasks_shared_calendar_tasks'), default_reminder_minutes: Number(form.get('tasks_default_reminder_minutes') || 10) },
-        home: { enabled: true, notes_enabled: form.has('home_notes_enabled') }
+        home: { enabled: true, notes_enabled: form.has('home_notes_enabled') },
+        drive: { enabled: form.has('drive_enabled') }
       };
       const result = await api('/features', { method: 'PATCH', body: payload });
       state.features = result.features;
@@ -4914,9 +5210,11 @@ function renderFeatureSettings() {
   const calendar = feature('calendar');
   const tasks = feature('tasks');
   const home = feature('home');
+  const drive = feature('drive');
   return `<form id="featureSettingsForm" class="stack"><div class="feature-toggle-grid">
     <label class="checkline"><input name="calendar_enabled" type="checkbox" ${calendar.enabled ? 'checked' : ''}> Enable Calendar</label>
     <label class="checkline"><input name="tasks_enabled" type="checkbox" ${tasks.enabled ? 'checked' : ''}> Enable Tasks</label>
+    <label class="checkline"><input name="drive_enabled" type="checkbox" ${drive.enabled ? 'checked' : ''}> Enable Files</label>
     <label class="checkline"><input name="calendar_home_enabled" type="checkbox" ${calendar.settings.home_enabled ? 'checked' : ''}> Show calendar on Home</label>
     <label class="checkline"><input name="tasks_home_enabled" type="checkbox" ${tasks.settings.home_enabled ? 'checked' : ''}> Show tasks on Home</label>
     <label class="checkline"><input name="home_notes_enabled" type="checkbox" ${home.settings.notes_enabled ? 'checked' : ''}> Show notes on Home</label>
