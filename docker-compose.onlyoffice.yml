@@ -2,6 +2,8 @@ services:
   notes:
     environment:
       ONLYOFFICE_URL: "${ONLYOFFICE_URL:-http://onlyoffice}"
+      ONLYOFFICE_PUBLIC_URL: "${ONLYOFFICE_PUBLIC_URL:-http://127.0.0.1:8082}"
+      ONLYOFFICE_CALLBACK_BASE_URL: "${ONLYOFFICE_CALLBACK_BASE_URL:-http://notes:3443}"
       ONLYOFFICE_JWT_SECRET: "${ONLYOFFICE_JWT_SECRET:-change-this-onlyoffice-secret}"
     depends_on:
       - onlyoffice

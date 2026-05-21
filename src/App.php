@@ -51,6 +51,8 @@ final class App
         if ($method === 'POST' && $path === '/webauthn/login') $this->webauthnLogin();
         if ($method === 'POST' && $path === '/logout') $this->logout();
         if ($method === 'POST' && $path === '/integrations/ai/review-notes') $this->createAiReviewNote();
+        if ($method === 'GET' && preg_match('#^/integrations/onlyoffice/download/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$#', $path, $m)) $this->onlyOfficeDownloadSigned($m[1]);
+        if ($method === 'POST' && preg_match('#^/integrations/onlyoffice/callback/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$#', $path, $m)) $this->onlyOfficeCallback($m[1]);
 
         $user = $this->requireUser();
         $this->applyRetentionPolicy();
@@ -89,6 +91,7 @@ final class App
         if ($method === 'PATCH' && preg_match('#^/drive/files/(\d+)$#', $path, $m)) $this->driveUpdateFile($user, (int)$m[1]);
         if ($method === 'DELETE' && preg_match('#^/drive/files/(\d+)$#', $path, $m)) $this->driveDeleteFile($user, (int)$m[1]);
         if ($method === 'GET' && preg_match('#^/drive/files/(\d+)/metadata$#', $path, $m)) $this->driveFileMetadata($user, (int)$m[1]);
+        if ($method === 'GET' && preg_match('#^/drive/files/(\d+)/office$#', $path, $m)) $this->driveOnlyOfficeConfig($user, (int)$m[1]);
         if ($method === 'GET' && preg_match('#^/drive/files/(\d+)$#', $path, $m)) $this->driveDownloadFile($user, (int)$m[1], false);
         if ($method === 'GET' && preg_match('#^/drive/files/(\d+)/(download|preview)$#', $path, $m)) $this->driveDownloadFile($user, (int)$m[1], $m[2] === 'preview');
         if ($method === 'GET' && preg_match('#^/drive/(folders|files)/(\d+)/shares$#', $path, $m)) $this->driveListShares($user, $m[1], (int)$m[2]);
@@ -1004,16 +1007,22 @@ final class App
     {
         $this->requireAdmin($user);
         $url = Config::onlyOfficeUrl();
+        $publicUrl = Config::onlyOfficePublicUrl();
+        $callbackBaseUrl = Config::onlyOfficeCallbackBaseUrl();
+        $ready = $url !== '' && $publicUrl !== '' && $callbackBaseUrl !== '' && Config::onlyOfficeJwtSecret() !== '';
         $this->json([
-            'enabled' => $url !== '',
+            'enabled' => $ready,
+            'configured' => $url !== '',
             'url' => $url,
+            'public_url' => $publicUrl,
+            'callback_base_url' => $callbackBaseUrl,
             'jwt_configured' => Config::onlyOfficeJwtSecret() !== '',
             'recommended_internal_url' => 'http://onlyoffice',
             'compose_file' => 'docker-compose.onlyoffice.yml',
             'profiles' => [],
-            'message' => $url !== ''
-                ? 'OnlyOffice is configured as an external sidecar service. Office editing integration can use this URL.'
-                : 'OnlyOffice is not enabled. Set ONLYOFFICE_URL and ONLYOFFICE_JWT_SECRET, then start the optional sidecar compose file.',
+            'message' => $ready
+                ? 'OnlyOffice is ready. Drive documents can open in the sidecar editor when this browser can reach the public URL and the Document Server can reach the callback URL.'
+                : 'OnlyOffice is not enabled. Set ONLYOFFICE_URL, ONLYOFFICE_PUBLIC_URL, ONLYOFFICE_CALLBACK_BASE_URL, and ONLYOFFICE_JWT_SECRET, then start the optional sidecar compose file.',
         ]);
     }
 
@@ -2343,6 +2352,77 @@ final class App
         $this->json(['file' => $file, 'zip' => $this->driveZipPreview($file, $path), 'pdf' => $this->drivePdfPreview($file, $path)]);
     }
 
+    private function driveOnlyOfficeConfig(array $user, int $id): void
+    {
+        $this->requireEditor($user);
+        $file = $this->driveFileAccess($user, $id, 'edit');
+        $office = $this->driveOfficeType($file);
+        if (!$office) throw new RuntimeException('This file type cannot be edited with OnlyOffice');
+        $publicUrl = Config::onlyOfficePublicUrl();
+        if (Config::onlyOfficeUrl() === '' || $publicUrl === '') throw new RuntimeException('OnlyOffice is not configured');
+        $secret = $this->onlyOfficeSecret();
+        $baseUrl = Config::onlyOfficeCallbackBaseUrl() ?: $this->origin();
+        $baseUrl = rtrim($baseUrl, '/');
+        $downloadToken = $this->onlyOfficeSignedToken(['purpose' => 'download', 'file_id' => (int)$file['id'], 'user_id' => (int)$user['id'], 'exp' => time() + 12 * 3600]);
+        $callbackToken = $this->onlyOfficeSignedToken(['purpose' => 'callback', 'file_id' => (int)$file['id'], 'user_id' => (int)$user['id'], 'exp' => time() + 12 * 3600]);
+        $config = [
+            'documentType' => $office['documentType'],
+            'document' => [
+                'fileType' => $office['fileType'],
+                'key' => $this->onlyOfficeDocumentKey($file),
+                'title' => (string)$file['original_name'],
+                'url' => $baseUrl . '/api/integrations/onlyoffice/download/' . $downloadToken,
+                'permissions' => ['edit' => true, 'download' => true, 'print' => true],
+            ],
+            'editorConfig' => [
+                'callbackUrl' => $baseUrl . '/api/integrations/onlyoffice/callback/' . $callbackToken,
+                'mode' => 'edit',
+                'lang' => 'en',
+                'user' => ['id' => (string)$user['id'], 'name' => (string)($user['name'] ?: $user['email'])],
+                'customization' => ['compactToolbar' => true, 'forcesave' => true],
+            ],
+            'height' => '100%',
+            'width' => '100%',
+        ];
+        $config['token'] = $this->onlyOfficeJwt($config, $secret);
+        $this->audit((int)$user['id'], 'drive_file.office_opened', 'drive_file', $id);
+        $this->json(['enabled' => true, 'public_url' => $publicUrl, 'api_script' => $publicUrl . '/web-apps/apps/api/documents/api.js', 'config' => $config]);
+    }
+
+    private function onlyOfficeDownloadSigned(string $token): void
+    {
+        $payload = $this->onlyOfficeTokenPayload($token, 'download');
+        $file = $this->driveFileById((int)$payload['file_id']);
+        $path = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+        if (!is_file($path)) throw new RuntimeException('File not found');
+        $this->audit((int)($payload['user_id'] ?? 0), 'drive_file.office_downloaded', 'drive_file', (int)$file['id']);
+        header_remove('Content-Type');
+        header('Content-Type: ' . ($file['mime'] ?: 'application/octet-stream'));
+        header('Content-Disposition: ' . $this->contentDisposition('attachment', (string)$file['original_name']));
+        header('X-Content-Type-Options: nosniff');
+        header('Content-Length: ' . filesize($path));
+        readfile($path);
+        exit;
+    }
+
+    private function onlyOfficeCallback(string $token): void
+    {
+        $payload = $this->onlyOfficeTokenPayload($token, 'callback');
+        $data = $this->input();
+        $status = (int)($data['status'] ?? 0);
+        if (!in_array($status, [2, 6], true)) $this->json(['error' => 0]);
+        $url = trim((string)($data['url'] ?? ''));
+        if ($url === '') throw new RuntimeException('OnlyOffice save URL missing');
+        $file = $this->driveFileById((int)$payload['file_id']);
+        if (!$this->driveOfficeType($file)) throw new RuntimeException('This file type cannot be saved by OnlyOffice');
+        $size = $this->onlyOfficeStoreFromUrl($file, $url);
+        $path = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+        $mime = (new finfo(FILEINFO_MIME_TYPE))->file($path) ?: (string)($file['mime'] ?: 'application/octet-stream');
+        $this->db->prepare('UPDATE drive_files SET mime = ?, size = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$mime, $size, (int)$file['id']]);
+        $this->audit((int)($payload['user_id'] ?? 0), 'drive_file.office_saved', 'drive_file', (int)$file['id']);
+        $this->json(['error' => 0]);
+    }
+
     private function drivePdfPreview(array $file, string $path): ?array
     {
         $name = strtolower((string)($file['original_name'] ?? ''));
@@ -2612,6 +2692,117 @@ final class App
         if (str_starts_with($mime, 'text/')) return true;
         if (in_array($mime, ['application/json', 'application/xml', 'application/csv', 'application/x-yaml'], true)) return true;
         return (bool)preg_match('/\.(txt|md|markdown|csv|json|xml|yaml|yml|log|html|css|js|ts)$/', $name);
+    }
+
+    private function driveOfficeType(array $file): ?array
+    {
+        $ext = strtolower(pathinfo((string)($file['original_name'] ?? ''), PATHINFO_EXTENSION));
+        if (in_array($ext, ['doc', 'docx', 'docm', 'dot', 'dotx', 'odt', 'ott', 'rtf'], true)) return ['documentType' => 'word', 'fileType' => $ext];
+        if (in_array($ext, ['xls', 'xlsx', 'xlsm', 'xlt', 'xltx', 'ods', 'ots'], true)) return ['documentType' => 'cell', 'fileType' => $ext];
+        if (in_array($ext, ['ppt', 'pptx', 'pptm', 'pot', 'potx', 'odp', 'otp'], true)) return ['documentType' => 'slide', 'fileType' => $ext];
+        return null;
+    }
+
+    private function driveFileById(int $id): array
+    {
+        $stmt = $this->db->prepare('SELECT * FROM drive_files WHERE id = ? AND deleted = 0');
+        $stmt->execute([$id]);
+        $file = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$file) throw new RuntimeException('File not found');
+        return $file;
+    }
+
+    private function onlyOfficeSecret(): string
+    {
+        $secret = Config::onlyOfficeJwtSecret();
+        if ($secret === '') throw new RuntimeException('OnlyOffice JWT secret is required');
+        return $secret;
+    }
+
+    private function onlyOfficeSignedToken(array $payload): string
+    {
+        $body = $this->base64UrlEncode(json_encode($payload, JSON_UNESCAPED_SLASHES) ?: '{}');
+        $sig = $this->base64UrlEncode(hash_hmac('sha256', $body, $this->onlyOfficeSecret(), true));
+        return $body . '.' . $sig;
+    }
+
+    private function onlyOfficeTokenPayload(string $token, string $purpose): array
+    {
+        [$body, $sig] = array_pad(explode('.', $token, 2), 2, '');
+        if ($body === '' || $sig === '') throw new RuntimeException('Invalid OnlyOffice token');
+        $expected = $this->base64UrlEncode(hash_hmac('sha256', $body, $this->onlyOfficeSecret(), true));
+        if (!hash_equals($expected, $sig)) throw new RuntimeException('Invalid OnlyOffice token');
+        $payload = json_decode($this->base64UrlDecode($body), true);
+        if (!is_array($payload) || ($payload['purpose'] ?? '') !== $purpose || empty($payload['file_id'])) throw new RuntimeException('Invalid OnlyOffice token');
+        if ((int)($payload['exp'] ?? 0) < time()) throw new RuntimeException('OnlyOffice token expired');
+        return $payload;
+    }
+
+    private function onlyOfficeJwt(array $payload, string $secret): string
+    {
+        $header = $this->base64UrlEncode(json_encode(['alg' => 'HS256', 'typ' => 'JWT'], JSON_UNESCAPED_SLASHES) ?: '{}');
+        $body = $this->base64UrlEncode(json_encode($payload, JSON_UNESCAPED_SLASHES) ?: '{}');
+        $sig = $this->base64UrlEncode(hash_hmac('sha256', $header . '.' . $body, $secret, true));
+        return $header . '.' . $body . '.' . $sig;
+    }
+
+    private function onlyOfficeDocumentKey(array $file): string
+    {
+        return substr(preg_replace('/[^A-Za-z0-9_-]/', '', 'dv-' . (int)$file['id'] . '-' . hash('sha256', (string)$file['updated_at'] . ':' . (string)$file['size'])), 0, 64);
+    }
+
+    private function onlyOfficeStoreFromUrl(array $file, string $url): int
+    {
+        $parts = parse_url($url);
+        if (!is_array($parts) || !in_array(strtolower((string)($parts['scheme'] ?? '')), ['http', 'https'], true)) throw new RuntimeException('Invalid OnlyOffice save URL');
+        $source = @fopen($url, 'rb', false, stream_context_create(['http' => ['timeout' => 60, 'follow_location' => 0, 'ignore_errors' => false]]));
+        if (!$source) throw new RuntimeException('OnlyOffice saved file could not be downloaded');
+        $tmp = tempnam(Config::dir() . '/tmp', 'office-');
+        if (!$tmp) {
+            fclose($source);
+            throw new RuntimeException('Temporary storage unavailable');
+        }
+        $target = @fopen($tmp, 'wb');
+        if (!$target) {
+            fclose($source);
+            @unlink($tmp);
+            throw new RuntimeException('Temporary storage unavailable');
+        }
+        $size = 0;
+        $limit = Config::driveUploadMaxBytes();
+        while (!feof($source)) {
+            $chunk = fread($source, 1024 * 1024);
+            if ($chunk === false) break;
+            $size += strlen($chunk);
+            if ($size > $limit) {
+                fclose($source);
+                fclose($target);
+                @unlink($tmp);
+                throw new RuntimeException('Saved document exceeds Drive upload limit');
+            }
+            if ($chunk !== '' && fwrite($target, $chunk) === false) {
+                fclose($source);
+                fclose($target);
+                @unlink($tmp);
+                throw new RuntimeException('Saved document could not be written');
+            }
+        }
+        fclose($source);
+        fclose($target);
+        $path = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+        if (!is_file($path)) {
+            @unlink($tmp);
+            throw new RuntimeException('File not found');
+        }
+        if (!@rename($tmp, $path)) {
+            if (!@copy($tmp, $path)) {
+                @unlink($tmp);
+                throw new RuntimeException('Saved document could not be stored');
+            }
+            @unlink($tmp);
+        }
+        @chmod($path, 0600);
+        return $size;
     }
 
     private function driveEditableMime(string $name, string $fallback): string

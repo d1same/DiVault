@@ -183,9 +183,8 @@ Upload limit MB: 1024
 
 Office editing:
 
-- The first Drive release focuses on upload, preview, download, organization, sharing, privacy checks, backup inclusion, and built-in text-file editing.
-- Browser-based editing for binary Office-style documents is handled as an optional integration layer rather than a requirement for the main container.
-- OnlyOffice Document Server can run side-by-side with DiVault using `docker-compose.onlyoffice.yml`.
+- Drive includes built-in text-file editing and optional OnlyOffice editing for Word, Excel, and PowerPoint-style files.
+- OnlyOffice Document Server runs as a sidecar with `docker-compose.onlyoffice.yml`; the default DiVault container stays lightweight.
 - Leave OnlyOffice disabled if you want the smallest/default DiVault deployment.
 
 Optional OnlyOffice sidecar:
@@ -193,14 +192,18 @@ Optional OnlyOffice sidecar:
 ```bash
 ONLYOFFICE_JWT_SECRET='change-this-long-random-secret' \
 ONLYOFFICE_URL='http://onlyoffice' \
+ONLYOFFICE_PUBLIC_URL='http://127.0.0.1:8082' \
+ONLYOFFICE_CALLBACK_BASE_URL='http://notes:3443' \
 docker compose -f docker-compose.yml -f docker-compose.onlyoffice.yml up -d
 ```
 
-The sidecar compose file starts `onlyoffice/documentserver` as `divault-onlyoffice` and exposes it on host port `8082` by default. For production, put OnlyOffice behind HTTPS with the same reverse proxy as DiVault and set `ONLYOFFICE_URL` to the browser-reachable HTTPS URL if clients must load it directly.
+The sidecar compose file starts `onlyoffice/documentserver` as `divault-onlyoffice` and exposes it on host port `8082` by default. Local Docker uses `ONLYOFFICE_URL=http://onlyoffice` for DiVault-to-OnlyOffice traffic, `ONLYOFFICE_PUBLIC_URL=http://127.0.0.1:8082` so the browser can load the editor, and `ONLYOFFICE_CALLBACK_BASE_URL=http://notes:3443` so Document Server can fetch and save Drive files over the Docker network. For production, put both DiVault and OnlyOffice behind HTTPS and set the public/callback URLs to routable HTTPS origins.
 
 OnlyOffice configuration variables:
 
-- `ONLYOFFICE_URL` tells DiVault where the Document Server is. Use `http://onlyoffice` for internal Docker networking or a public HTTPS URL behind your proxy.
+- `ONLYOFFICE_URL` tells DiVault where the Document Server is from the app container. Use `http://onlyoffice` for local Docker networking.
+- `ONLYOFFICE_PUBLIC_URL` is the browser-reachable Document Server URL used to load `/web-apps/apps/api/documents/api.js`.
+- `ONLYOFFICE_CALLBACK_BASE_URL` is the DiVault URL reachable from the Document Server for signed download and save callbacks.
 - `ONLYOFFICE_JWT_SECRET` must match the sidecar `JWT_SECRET`.
 - `ONLYOFFICE_PORT` changes the host port for the sidecar. The default is `8082`.
 

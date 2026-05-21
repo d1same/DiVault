@@ -71,6 +71,16 @@ final class Config
         return rtrim(trim(getenv('ONLYOFFICE_URL') ?: ''), '/');
     }
 
+    public static function onlyOfficePublicUrl(): string
+    {
+        return rtrim(trim(getenv('ONLYOFFICE_PUBLIC_URL') ?: self::onlyOfficeUrl()), '/');
+    }
+
+    public static function onlyOfficeCallbackBaseUrl(): string
+    {
+        return rtrim(trim(getenv('ONLYOFFICE_CALLBACK_BASE_URL') ?: self::appUrl()), '/');
+    }
+
     public static function onlyOfficeJwtSecret(): string
     {
         return trim(getenv('ONLYOFFICE_JWT_SECRET') ?: '');
