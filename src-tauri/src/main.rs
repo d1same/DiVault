@@ -44,7 +44,7 @@ fn main() {
                 .title("DiVault")
                 .inner_size(1280.0, 820.0)
                 .min_inner_size(420.0, 620.0)
-                .drag_and_drop(false)
+                .disable_drag_drop_handler()
                 .build()?;
 
             Ok(())
