@@ -167,10 +167,16 @@ Backup model:
 
 Storage and upload limits:
 
-- `DRIVE_FILES_DIR` changes where Drive file contents are stored. Leave it unset for the default `/config/drive-files` path.
+- `DRIVE_FILES_DIR` changes the container path where Drive file contents are stored. Leave it unset for the default `/config/drive-files` path.
 - `DRIVE_UPLOAD_MAX_MB` controls the app-level Drive upload limit. The Docker default is `250` MB.
-- Admins can also set the Drive files path in Settings → Workspace → Drive storage. Use a container path such as `/media`, and mount a host folder there first.
+- Admins can also set the Drive files path in Settings → Workspace → Drive storage. Enter the container path DiVault can see, such as `/media`; Docker decides which host folder or disk is mounted there.
 - The Docker image PHP upload ceiling is higher (`upload_max_filesize=2G`, `post_max_size=2G`, `max_execution_time=600`, `max_input_time=600`, `memory_limit=512M`) so the app limit can be raised without rebuilding the image.
+
+Host path vs container path:
+
+- Host path is the real folder on the Docker host, NAS, or mounted disk, for example `/mnt/user/divault-drive-files`.
+- Container path is the path inside the DiVault container, for example `/media`.
+- The Compose volume line connects them as `host-path:container-path`; DiVault should be configured with the container path, not the host path.
 
 Example external Drive storage mount:
 
@@ -192,6 +198,8 @@ Then open Settings → Workspace → Drive storage and set:
 Drive files path: /media
 Upload limit MB: 1024
 ```
+
+To attach a different drive, change the host side of the volume, for example `DIVAULT_MEDIA_PATH=/mnt/disk2/divault-drive-files`, recreate the container, then keep the Drive files path set to `/media`. DiVault uses one active Drive storage path at a time. If you want multiple physical drives behind Drive, combine them on the host first with a NAS share, storage pool, merger/union filesystem, or mounted subfolders under one parent folder, then mount that combined location into the container.
 
 Office editing:
 

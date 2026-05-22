@@ -6002,12 +6002,16 @@ function renderDriveStorageSettings(settings) {
   if (!settings) return '<p class="small muted">Drive storage settings are unavailable.</p>';
   const dir = settings.drive_files_dir || '/config/drive-files';
   const uploadMax = settings.drive_upload_max_mb || 250;
-  return `<p class="muted small">Choose the container path for Drive file contents. To use a host disk, mount it into the container first, then set this to that container path, for example <code>/media</code>.</p>
-    <form id="driveStorageSettingsForm" class="stack"><label class="field"><span>Drive files path</span><input name="drive_files_dir" value="${esc(dir)}" placeholder="/media" autocomplete="off"></label><label class="field"><span>Upload limit MB</span><input name="drive_upload_max_mb" type="number" min="1" max="2048" value="${esc(uploadMax)}"></label><button class="btn primary">Save storage settings</button></form>
+  return `<p class="muted small">Drive uses one active storage folder. Set this to a path inside the container, then make Docker mount the host folder or disk there. A common setup is host <code>/mnt/user/divault-drive-files</code> mapped to container <code>/media</code>.</p>
+    <form id="driveStorageSettingsForm" class="stack"><label class="field"><span>Container path for Drive files</span><input name="drive_files_dir" value="${esc(dir)}" placeholder="/media" autocomplete="off"></label><label class="field"><span>Upload limit MB</span><input name="drive_upload_max_mb" type="number" min="1" max="2048" value="${esc(uploadMax)}"></label><button class="btn primary">Save storage settings</button></form>
     <div class="file-row"><span>Current path<br><span class="small muted">${esc(dir)}</span></span><span class="pill ${settings.writable ? '' : 'secret'}">${settings.writable ? 'writable' : 'not writable'}</span></div>
-    <pre class="settings-code-block">DIVAULT_MEDIA_PATH=/host/path/for/files
+    <pre class="settings-code-block"># Host path: where files live on the Docker host
+DIVAULT_MEDIA_PATH=/mnt/user/divault-drive-files
+
+# Container path: what DiVault sees inside the container
 Drive files path: /media</pre>
-    <p class="small muted">When you change this path, DiVault copies existing Drive files into the new path. The path is inside the container; Docker controls which host folder it maps to.</p>`;
+    <p class="small muted">Host path means the real folder or mounted disk on your server. Container path means the location available inside DiVault. To use a different drive, update the Docker host path, restart the container, then keep this field set to the matching container path.</p>
+    <p class="small muted">For multiple physical drives, combine them on the host first, for example with a NAS share, merger/union filesystem, storage pool, or one parent folder with mounted subfolders. DiVault stores files in one active container path at a time; switching this path migrates existing Drive files into the new location.</p>`;
 }
 
 function renderAiIntegrationSettings(status) {
