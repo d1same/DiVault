@@ -4,6 +4,9 @@ if (state.calendarView === 'agenda') state.calendarView = 'schedule';
 const app = document.querySelector('#app');
 let onlyOfficeScriptPromise = null;
 let activeContextMenuActions = [];
+let driveUploadDragDepth = 0;
+let driveUploadStatusTimer = null;
+const driveUploadStatus = { visible: false, active: false, fileName: '', total: 0, current: 0, percent: 0, message: '', error: false };
 
 const defaultFeatures = () => ({
   calendar: { enabled: true, settings: { home_enabled: true, reminders_enabled: true, default_reminder_minutes: 10, default_calendar_id: null } },
@@ -425,6 +428,8 @@ const icon = name => ({
   , list: '<svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>'
   , sort: '<svg viewBox="0 0 24 24"><path d="M7 4v14M7 18l-3-3M7 18l3-3M17 20V6M17 6l-3 3M17 6l3 3"/></svg>'
   , focus: '<svg viewBox="0 0 24 24"><path d="M8 4H4v4M16 4h4v4M8 20H4v-4M16 20h4v-4M9 9h6v6H9z"/></svg>'
+  , fullscreen: '<svg viewBox="0 0 24 24"><path d="M8 4H4v4M16 4h4v4M20 16v4h-4M4 16v4h4"/></svg>'
+  , restore: '<svg viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M20 15h-5v5M4 15h5v5"/></svg>'
   , logout: '<svg viewBox="0 0 24 24"><path d="M10 5H5v14h5M14 8l4 4-4 4M18 12H9"/></svg>'
   , bell: '<svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>'
   , print: '<svg viewBox="0 0 24 24"><path d="M7 8V3h10v5M7 17H5a2 2 0 0 1-2-2v-3a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v3a2 2 0 0 1-2 2h-2M7 14h10v7H7zM17 12h.01"/></svg>'
@@ -1220,6 +1225,7 @@ function renderApp() {
       ${renderTopbar(panelOpen)}
       ${renderFilterBar(panelOpen)}
       <section id="contentArea">${renderMainContent()}</section>
+      ${renderDriveUploadStatus()}
     </main>
   </div>`;
   bindApp();
@@ -2222,7 +2228,11 @@ function bindDriveActions() {
   }));
   document.querySelector('#newDriveFolderBtn')?.addEventListener('click', createDriveFolder);
   document.querySelector('#newDriveTextBtn')?.addEventListener('click', createDriveTextFile);
-  document.querySelector('#driveUploadInput')?.addEventListener('change', e => uploadDriveFiles([...e.target.files]));
+  document.querySelector('#driveUploadInput')?.addEventListener('change', e => {
+    uploadDriveFiles([...e.target.files]);
+    e.target.value = '';
+  });
+  bindDriveDropUpload();
   document.querySelector('#toggleDriveSelect')?.addEventListener('click', () => {
     state.driveSelectionMode = !state.driveSelectionMode;
     if (!state.driveSelectionMode) {
@@ -2275,6 +2285,36 @@ function bindDriveActions() {
   document.querySelectorAll('[data-zip-drive-folder]').forEach(btn => btn.addEventListener('click', () => zipDriveItem('folder', btn.dataset.zipDriveFolder, btn.dataset.name)));
   document.querySelectorAll('[data-zip-drive-file]').forEach(btn => btn.addEventListener('click', () => zipDriveItem('file', btn.dataset.zipDriveFile, btn.dataset.name)));
   document.querySelectorAll('[data-extract-drive-file]').forEach(btn => btn.addEventListener('click', () => extractDriveZip(btn.dataset.extractDriveFile, btn.dataset.name)));
+}
+
+function bindDriveDropUpload() {
+  const shell = document.querySelector('.drive-shell');
+  if (!shell) return;
+  const hasFiles = event => [...(event.dataTransfer?.types || [])].includes('Files');
+  const setActive = active => shell.classList.toggle('drive-drop-active', active);
+  shell.addEventListener('dragenter', event => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    driveUploadDragDepth += 1;
+    setActive(true);
+  });
+  shell.addEventListener('dragover', event => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  });
+  shell.addEventListener('dragleave', event => {
+    if (!hasFiles(event)) return;
+    driveUploadDragDepth = Math.max(0, driveUploadDragDepth - 1);
+    if (!driveUploadDragDepth) setActive(false);
+  });
+  shell.addEventListener('drop', event => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    driveUploadDragDepth = 0;
+    setActive(false);
+    uploadDriveFiles([...event.dataTransfer.files]);
+  });
 }
 
 async function navigateDriveFolder(folderId = '', { replace = false } = {}) {
@@ -2464,16 +2504,94 @@ async function uploadDriveFiles(files) {
   files = files.filter(Boolean);
   if (!files.length) return;
   await runUserAction(async () => {
-    for (const file of files) {
-      const data = new FormData();
-      data.append('file', file);
-      if (state.driveFolderId) data.append('folder_id', state.driveFolderId);
-      await api('/drive/files', { method: 'POST', body: data });
+    const totalBytes = files.reduce((sum, file) => sum + Number(file.size || 0), 0) || files.length;
+    let uploadedBytes = 0;
+    setDriveUploadStatus({ visible: true, active: true, error: false, total: files.length, current: 0, percent: 0, fileName: files[0]?.name || '', message: `Uploading ${files.length} file${files.length === 1 ? '' : 's'}...` });
+    try {
+      for (const [index, file] of files.entries()) {
+        const data = new FormData();
+        data.append('file', file);
+        if (state.driveFolderId) data.append('folder_id', state.driveFolderId);
+        await uploadDriveFile(data, progress => {
+          const fileProgress = file.size ? progress * Number(file.size || 0) : progress;
+          const percent = Math.min(99, Math.round(((uploadedBytes + fileProgress) / totalBytes) * 100));
+          setDriveUploadStatus({ visible: true, active: true, error: false, total: files.length, current: index + 1, percent, fileName: file.name || 'File', message: `Uploading ${index + 1} of ${files.length}` });
+        });
+        uploadedBytes += Number(file.size || 0) || 1;
+      }
+    } catch (err) {
+      setDriveUploadStatus({ visible: true, active: false, error: true, percent: 0, message: err.message || 'Upload failed' });
+      throw err;
     }
+    setDriveUploadStatus({ visible: true, active: false, error: false, total: files.length, current: files.length, percent: 100, fileName: '', message: `Uploaded ${files.length} file${files.length === 1 ? '' : 's'}` });
     toast(`Uploaded ${files.length} file${files.length === 1 ? '' : 's'}`);
     await loadDrive();
     renderApp();
+    scheduleDriveUploadStatusHide();
   }, 'Upload failed');
+}
+
+function uploadDriveFile(data, onProgress = () => {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/drive/files');
+    xhr.withCredentials = true;
+    const csrf = getCookie('divault_csrf') || getCookie('qv_csrf');
+    if (csrf) xhr.setRequestHeader('X-CSRF-Token', decodeURIComponent(csrf));
+    xhr.upload.addEventListener('progress', event => {
+      if (!event.lengthComputable) return;
+      onProgress(event.loaded / event.total);
+    });
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(xhr.responseText);
+        return;
+      }
+      let message = 'Upload failed';
+      try {
+        message = JSON.parse(xhr.responseText || '{}').error || message;
+      } catch (err) {
+        message = xhr.responseText || message;
+      }
+      reject(new Error(message));
+    });
+    xhr.addEventListener('error', () => reject(new Error('Upload failed')));
+    xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')));
+    xhr.send(data);
+  });
+}
+
+function setDriveUploadStatus(next) {
+  Object.assign(driveUploadStatus, next);
+  if (driveUploadStatusTimer) {
+    clearTimeout(driveUploadStatusTimer);
+    driveUploadStatusTimer = null;
+  }
+  updateDriveUploadStatusDom();
+}
+
+function scheduleDriveUploadStatusHide() {
+  if (driveUploadStatusTimer) clearTimeout(driveUploadStatusTimer);
+  driveUploadStatusTimer = setTimeout(() => {
+    driveUploadStatus.visible = false;
+    updateDriveUploadStatusDom();
+  }, 3600);
+}
+
+function updateDriveUploadStatusDom() {
+  const current = document.querySelector('#driveUploadStatus');
+  if (!current) return;
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = renderDriveUploadStatus();
+  current.replaceWith(wrapper.firstElementChild);
+}
+
+function renderDriveUploadStatus() {
+  const show = state.section === 'drive' && driveUploadStatus.visible;
+  const classes = ['drive-upload-status', show ? 'visible' : '', driveUploadStatus.active ? 'active' : '', driveUploadStatus.error ? 'error' : ''].filter(Boolean).join(' ');
+  const percent = Math.max(0, Math.min(100, Number(driveUploadStatus.percent || 0)));
+  const detail = driveUploadStatus.fileName ? `${driveUploadStatus.fileName}${driveUploadStatus.current && driveUploadStatus.total ? ` · ${driveUploadStatus.current}/${driveUploadStatus.total}` : ''}` : `${driveUploadStatus.current || driveUploadStatus.total || 0}/${driveUploadStatus.total || 0}`;
+  return `<div class="${classes}" id="driveUploadStatus" role="status" aria-live="polite" aria-hidden="${show ? 'false' : 'true'}"><div class="drive-upload-status-copy"><b>${esc(driveUploadStatus.message || 'Ready to upload')}</b><span>${esc(detail)}</span></div><div class="drive-upload-progress" aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}" role="progressbar"><span style="width:${percent}%"></span></div></div>`;
 }
 
 async function renameDriveItem(kind, id, currentName) {
@@ -4848,6 +4966,7 @@ function openFilePreview(src, name, mime = '', options = {}) {
   const editButton = options.editId ? `<button class="btn primary icon-only-btn" type="button" data-preview-edit-drive-file="${esc(options.editId)}" data-name="${esc(name || 'file')}" title="Edit" aria-label="Edit">${toolIcon('draw', 'Edit')}</button>` : '';
   const officeButton = options.officeId ? `<button class="btn primary icon-only-btn" type="button" data-preview-office-drive-file="${esc(options.officeId)}" data-name="${esc(name || 'file')}" title="Edit document" aria-label="Edit document">${toolIcon('documentEdit', 'Edit document')}</button>` : '';
   const extractButton = options.extractId ? `<button class="btn ghost icon-only-btn" type="button" data-preview-extract-drive-file="${esc(options.extractId)}" data-name="${esc(name || 'file')}" title="Extract" aria-label="Extract">${toolIcon('extract', 'Extract')}</button>` : '';
+  const fullscreenButton = `<button class="btn ghost icon-only-btn" type="button" data-preview-fullscreen aria-pressed="false" title="Enter fullscreen" aria-label="Enter fullscreen">${toolIcon('fullscreen', 'Enter fullscreen')}</button>`;
   const imageControls = image ? '<span class="image-preview-meta" data-image-preview-meta>Loading image...</span><button class="btn ghost icon-only-btn" type="button" data-image-zoom="out" title="Zoom out" aria-label="Zoom out">-</button><button class="btn ghost icon-only-btn" type="button" data-image-zoom="fit" title="Fit image" aria-label="Fit image">Fit</button><button class="btn ghost icon-only-btn" type="button" data-image-zoom="in" title="Zoom in" aria-label="Zoom in">+</button>' : '';
   const preview = image
     ? `<div class="file-preview-stage image-stage"><img class="image-preview-img" data-image-preview-img src="${esc(src)}" alt="${esc(name || 'Image preview')}"></div>`
@@ -4858,9 +4977,10 @@ function openFilePreview(src, name, mime = '', options = {}) {
       : text
         ? `<div class="file-preview-stage text-preview-stage" data-text-preview-stage><p class="muted">Loading text preview...</p></div>`
       : `<div class="file-preview-stage file-detail-stage" data-file-detail-stage><p class="muted">Loading file details...</p></div>`;
-  modal.innerHTML = `<section class="editor-panel image-lightbox-panel"><div class="topbar preview-topbar"><div><p class="terminal-path">divault ~/files</p><h2>${esc(name || 'File preview')}</h2></div><div class="btn-row preview-action-row">${imageControls}${editButton}${officeButton}${extractButton}<a class="btn ghost icon-only-btn" href="${esc(downloadUrl)}" title="Download" aria-label="Download">${toolIcon('download', 'Download')}</a><button class="btn ghost icon-only-btn" type="button" data-close title="Close" aria-label="Close">×</button></div></div>${preview}</section>`;
+  modal.innerHTML = `<section class="editor-panel image-lightbox-panel"><div class="topbar preview-topbar"><div><p class="terminal-path">divault ~/files</p><h2>${esc(name || 'File preview')}</h2></div><div class="btn-row preview-action-row">${imageControls}${editButton}${officeButton}${extractButton}${fullscreenButton}<a class="btn ghost icon-only-btn" href="${esc(downloadUrl)}" title="Download" aria-label="Download">${toolIcon('download', 'Download')}</a><button class="btn ghost icon-only-btn" type="button" data-close title="Close" aria-label="Close">×</button></div></div>${preview}</section>`;
   document.body.appendChild(modal);
   setupAccessibleModal(modal, '[data-close]');
+  bindFilePreviewFullscreen(modal);
   if (image) bindImagePreviewControls(modal);
   if (pdf) loadPdfFilePreview(modal, options.metadataId, src, name, mime);
   if (text) loadTextFilePreview(modal, downloadUrl, name, mime);
@@ -4878,6 +4998,25 @@ function openFilePreview(src, name, mime = '', options = {}) {
     modal.remove();
     await extractDriveZip(btn.currentTarget.dataset.previewExtractDriveFile, btn.currentTarget.dataset.name || name);
   });
+}
+
+function bindFilePreviewFullscreen(modal) {
+  const button = modal.querySelector('[data-preview-fullscreen]');
+  if (!button) return;
+  const render = () => {
+    const fullscreen = modal.classList.contains('preview-fullscreen');
+    const label = fullscreen ? 'Restore preview size' : 'Enter fullscreen';
+    button.classList.toggle('active', fullscreen);
+    button.setAttribute('aria-pressed', fullscreen ? 'true' : 'false');
+    button.setAttribute('aria-label', label);
+    button.setAttribute('title', label);
+    button.innerHTML = toolIcon(fullscreen ? 'restore' : 'fullscreen', label);
+  };
+  button.addEventListener('click', () => {
+    modal.classList.toggle('preview-fullscreen');
+    render();
+  });
+  render();
 }
 
 function bindImagePreviewControls(modal) {
