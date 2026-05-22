@@ -1,5 +1,6 @@
 const collapsedCategoryStorageKey = 'divault_collapsed_categories';
-const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), lastSelectedNoteId: null, noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), taskFilter: localStorage.getItem('divault_task_filter') || 'open', driveFolderId: localStorage.getItem('divault_drive_folder_id') || '', driveFolders: [], driveFiles: [], driveBreadcrumbs: [], driveLayout: localStorage.getItem('divault_drive_layout') || 'list', driveSelectionMode: false, selectedDriveItems: new Set(), lastSelectedDriveKey: '', collapsedCategories: readCollapsedCategoryIds(), theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
+const categoryListCollapsedStorageKey = 'divault_categories_collapsed';
+const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), lastSelectedNoteId: null, noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), taskFilter: localStorage.getItem('divault_task_filter') || 'open', driveFolderId: localStorage.getItem('divault_drive_folder_id') || '', driveFolders: [], driveFiles: [], driveBreadcrumbs: [], driveLayout: localStorage.getItem('divault_drive_layout') || 'list', driveSelectionMode: false, selectedDriveItems: new Set(), lastSelectedDriveKey: '', collapsedCategories: readCollapsedCategoryIds(), categoriesCollapsed: localStorage.getItem(categoryListCollapsedStorageKey) === '1', theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
 Object.assign(state, { features: null, calendars: [], calendarFeeds: [], events: [], tasks: [], calendarDate: new Date(), miniCalendarDate: new Date(), calendarView: localStorage.getItem('divault_calendar_view') || 'schedule', reminders: [], reminderTimer: null, linkableNotesLoaded: false, routeNoteId: null });
 if (state.calendarView === 'agenda') state.calendarView = 'schedule';
 const app = document.querySelector('#app');
@@ -73,6 +74,10 @@ function readCollapsedCategoryIds() {
 
 function saveCollapsedCategoryIds() {
   localStorage.setItem(collapsedCategoryStorageKey, JSON.stringify([...state.collapsedCategories]));
+}
+
+function saveCategoryListCollapsed() {
+  localStorage.setItem(categoryListCollapsedStorageKey, state.categoriesCollapsed ? '1' : '0');
 }
 
 const esc = value => String(value ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -1354,13 +1359,14 @@ function renderMainContent() {
 }
 
 function renderNavGroups() {
-  const utility = `<div class="nav-group"><div class="nav-heading">Workspace</div>${homeAvailable() ? renderNavButton('home', 'Home', 0) : ''}${featureOn('calendar') ? renderNavButton('calendar', 'Calendar', state.events.length || 0) : ''}${featureOn('tasks') ? renderNavButton('tasks', 'Tasks', state.tasks.filter(t => t.status !== 'done').length || 0) : ''}${featureOn('drive') ? renderNavButton('drive', 'Files', state.driveFiles.length || 0) : ''}</div>`;
+  const utility = `<div class="nav-group"><div class="nav-heading">Workspace</div>${homeAvailable() ? renderNavButton('home', 'Home', 0) : ''}${renderNavButton('notes:quick', 'Quick notes', state.counts['notes:quick'] ?? 0, '')}${featureOn('calendar') ? renderNavButton('calendar', 'Calendar', state.events.length || 0) : ''}${featureOn('tasks') ? renderNavButton('tasks', 'Tasks', state.tasks.filter(t => t.status !== 'done').length || 0) : ''}${featureOn('drive') ? renderNavButton('drive', 'Files', state.driveFiles.length || 0) : ''}</div>`;
   const notes = `<div class="nav-group"><div class="nav-heading">Notes</div>
     ${renderNavButton('notes:all', 'All', state.counts['notes:all'] ?? 0, '')}
-    ${renderNavButton('notes:quick', 'Quick notes', state.counts['notes:quick'] ?? 0, '')}
   </div>`;
-  const categories = `<div class="nav-group nav-category-group"><div class="nav-heading">Categories<button class="mini-add" id="addCategoryBtn" type="button" aria-label="Manage note categories">Manage</button></div>
-    ${renderCategoryTree(null, 'notes')}
+  const hasCategories = state.categories.length > 0;
+  const categoriesTitle = hasCategories ? `<button class="nav-heading-toggle" id="toggleCategoriesBtn" type="button" aria-expanded="${String(!state.categoriesCollapsed)}" aria-label="${state.categoriesCollapsed ? 'Expand' : 'Collapse'} note categories"><span>Categories</span><span class="nav-heading-chevron" aria-hidden="true">${state.categoriesCollapsed ? '+' : '-'}</span></button>` : '<span>Categories</span>';
+  const categories = `<div class="nav-group nav-category-group"><div class="nav-heading">${categoriesTitle}<button class="mini-add" id="addCategoryBtn" type="button" aria-label="Manage note categories">Manage</button></div>
+    ${state.categoriesCollapsed ? '<p class="empty-nav">Categories hidden.</p>' : renderCategoryTree(null, 'notes')}
   </div>`;
   const storage = `<div class="nav-group nav-storage-group"><div class="nav-heading">Storage</div>${renderNavButton('notes:archive', 'Archive', state.counts['notes:archive'] ?? 0)}${renderNavButton('notes:trash', 'Recycle bin', state.counts['notes:trash'] ?? 0)}</div>`;
   return utility + notes + categories + storage;
@@ -1949,6 +1955,15 @@ function bindApp() {
     renderApp();
     if (keepMobileMenuOpen) toggleMobileMenu(true);
   }));
+  document.querySelector('#toggleCategoriesBtn')?.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    state.categoriesCollapsed = !state.categoriesCollapsed;
+    saveCategoryListCollapsed();
+    const keepMobileMenuOpen = document.querySelector('.sidebar')?.classList.contains('open');
+    renderApp();
+    if (keepMobileMenuOpen) toggleMobileMenu(true);
+  });
   document.querySelectorAll('[data-section]').forEach(btn => btn.addEventListener('click', async () => {
     if (!await confirmDiscardUnsaved()) return;
     state.section = btn.dataset.section;
