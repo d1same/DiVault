@@ -765,6 +765,9 @@ body.sidebar-collapsed .sidebar-collapse { position: absolute; left: 10px; top: 
 body.sidebar-collapsed .nav { width: 36px; justify-self: center; margin: 52px auto 18px; padding-right: 0; scrollbar-gutter: auto; }
 body.sidebar-collapsed .nav button { justify-content: center; padding: 0; }
 body.sidebar-collapsed .nav-tree-item > button { padding-left: 0; }
+body.sidebar-collapsed .nav-tree-row { grid-template-columns: minmax(0, 1fr); padding-left: 0; }
+body.sidebar-collapsed .nav-tree-toggle,
+body.sidebar-collapsed .nav-tree-toggle-spacer { display: none; }
 body.sidebar-collapsed .nav-utility-group { padding-top: 14px; }
 body.sidebar-collapsed .empty-nav { display: none; }
 .nav { flex: 1 1 auto; min-height: 0; display: grid; align-content: start; gap: 10px; margin: 16px 0; overflow-y: auto; overflow-x: hidden; padding-right: 3px; scrollbar-gutter: stable; }
@@ -792,7 +795,12 @@ body.sidebar-collapsed .empty-nav { display: none; }
 .nav-label { min-width: 0; overflow: hidden; font-size: var(--text-ui-sm); line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .nav-count { margin-left: auto; color: var(--muted); font-size: var(--text-meta); font-weight: 750; }
 .nav-tree-item { display: grid; gap: 4px; }
-.nav-tree-item > button { padding-left: calc(18px + (var(--depth, 0) * 14px)); }
+.nav-tree-row { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 4px; align-items: center; padding-left: calc(8px + (var(--depth, 0) * 14px)); }
+.nav-tree-row > [data-section] { min-width: 0; width: 100%; padding-left: 8px; }
+.nav-tree-toggle,
+.nav-tree-toggle-spacer { width: 18px; min-width: 18px; }
+.nav .nav-tree-toggle { min-height: 28px; height: 28px; padding: 0; display: inline-grid; place-items: center; border: 1px solid var(--border-soft); border-radius: 999px; background: color-mix(in srgb, var(--surface) 78%, transparent); color: var(--muted); font-size: .78rem; font-weight: 900; line-height: 1; }
+.nav .nav-tree-toggle:hover { background: var(--surface-soft); color: var(--primary-dark); }
 .nav button.active, .nav button:hover, .nav button.drop-ready { background: var(--surface-soft); color: var(--primary-dark); }
 .nav button.active .nav-count, .nav button:hover .nav-count { color: var(--primary-dark); }
 .main { min-width: 0; padding: 24px; display: grid; gap: 18px; align-content: start; }
@@ -1613,6 +1621,9 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .nav-group { gap: 6px; margin-bottom: 8px; }
   .nav button { justify-content: center; min-height: 44px; padding: 0; }
   .nav-tree-item > button { padding-left: 0; }
+  .nav-tree-row { grid-template-columns: minmax(0, 1fr); padding-left: 0; }
+  .nav-tree-toggle,
+  .nav-tree-toggle-spacer { display: none; }
   .nav-utility-group { margin-top: 10px; padding-top: 10px; }
   .sidebar-footer { grid-template-columns: 1fr; gap: 8px; padding-top: 10px; }
   .sidebar-sync { width: 44px; min-width: 44px; height: 36px; padding: 0; font-size: 0; }
@@ -1736,11 +1747,19 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .sidebar.open .nav-utility-group { margin-top: 16px; padding-top: 14px; }
   .mini-add { min-width: 62px; height: 30px; margin-left: 4px; }
   .sidebar.open .nav button { min-height: 44px; white-space: normal; padding: 0 12px; gap: 8px; border: 0; background: transparent; }
+  .sidebar.open .nav-tree-row { grid-template-columns: 22px minmax(0, 1fr); padding-left: calc(4px + (var(--depth, 0) * 12px)); }
+  .sidebar.open .nav .nav-tree-toggle { min-height: 30px; height: 30px; padding: 0; border: 1px solid var(--border-soft); background: color-mix(in srgb, var(--surface) 78%, transparent); }
+  .sidebar.open .nav-tree-row > [data-section] { padding-left: 8px; }
   .sidebar.open .nav-label { font-size: .92rem; text-transform: none; }
   .sidebar.open .nav-count { margin-left: auto; }
-  .category-edit-row { grid-template-columns: 64px 1fr; }
+  .category-edit-row { grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 8px; }
+  .category-edit-row .category-icon-picker,
+  .category-edit-row input,
+  .category-edit-row select,
   .category-edit-row .small,
-  .category-edit-row .btn { grid-column: 2; }
+  .category-edit-row .btn { grid-column: 1; width: 100%; }
+  .category-icon-picker summary { justify-content: flex-start; }
+  .category-icon-menu { position: static; width: 100%; max-height: 240px; margin-top: 6px; grid-template-columns: minmax(0, 1fr); box-shadow: none; }
   .main { width: 100%; padding: 14px 14px calc(18px + max(12px, env(safe-area-inset-bottom), var(--android-system-bottom))); }
   .main,
   .topbar,

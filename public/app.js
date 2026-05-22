@@ -1,4 +1,5 @@
-const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), lastSelectedNoteId: null, noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), taskFilter: localStorage.getItem('divault_task_filter') || 'open', driveFolderId: localStorage.getItem('divault_drive_folder_id') || '', driveFolders: [], driveFiles: [], driveBreadcrumbs: [], driveLayout: localStorage.getItem('divault_drive_layout') || 'list', driveSelectionMode: false, selectedDriveItems: new Set(), lastSelectedDriveKey: '', theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
+const collapsedCategoryStorageKey = 'divault_collapsed_categories';
+const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), lastSelectedNoteId: null, noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), taskFilter: localStorage.getItem('divault_task_filter') || 'open', driveFolderId: localStorage.getItem('divault_drive_folder_id') || '', driveFolders: [], driveFiles: [], driveBreadcrumbs: [], driveLayout: localStorage.getItem('divault_drive_layout') || 'list', driveSelectionMode: false, selectedDriveItems: new Set(), lastSelectedDriveKey: '', collapsedCategories: readCollapsedCategoryIds(), theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
 Object.assign(state, { features: null, calendars: [], calendarFeeds: [], events: [], tasks: [], calendarDate: new Date(), miniCalendarDate: new Date(), calendarView: localStorage.getItem('divault_calendar_view') || 'schedule', reminders: [], reminderTimer: null, linkableNotesLoaded: false, routeNoteId: null });
 if (state.calendarView === 'agenda') state.calendarView = 'schedule';
 const app = document.querySelector('#app');
@@ -59,6 +60,19 @@ function getCookie(name) {
   const prefix = `${name}=`;
   const row = document.cookie.split(';').map(item => item.trim()).find(item => item.startsWith(prefix));
   return row ? row.slice(prefix.length) : '';
+}
+
+function readCollapsedCategoryIds() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(collapsedCategoryStorageKey) || '[]').map(String));
+  } catch (error) {
+    console.warn('Could not read collapsed category state', error);
+    return new Set();
+  }
+}
+
+function saveCollapsedCategoryIds() {
+  localStorage.setItem(collapsedCategoryStorageKey, JSON.stringify([...state.collapsedCategories]));
 }
 
 const esc = value => String(value ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -1370,7 +1384,11 @@ function renderCategoryTree(parentId = null, mode = 'notes', depth = 0) {
   return items.map(c => {
     const key = mode === 'notes' ? `notes:cat:${c.id}` : c.slug;
     const count = mode === 'notes' ? (state.counts[`notes:cat:${c.id}`] ?? 0) : (state.counts[c.slug] ?? 0);
-    return `<div class="nav-tree-item" style="--depth:${depth}">${renderNavButton(key, c.name, count, mode === 'notes' ? c.id : null)}${renderCategoryTree(c.id, mode, depth + 1)}</div>`;
+    const hasChildren = state.categories.some(child => String(child.parent_id || '') === String(c.id));
+    const collapsed = state.collapsedCategories.has(String(c.id));
+    const toggle = hasChildren ? `<button class="nav-tree-toggle" type="button" data-toggle-category="${esc(c.id)}" aria-label="${collapsed ? 'Expand' : 'Collapse'} ${esc(c.name)} subcategories" aria-expanded="${String(!collapsed)}">${collapsed ? '+' : '-'}</button>` : '<span class="nav-tree-toggle-spacer" aria-hidden="true"></span>';
+    const children = hasChildren && !collapsed ? renderCategoryTree(c.id, mode, depth + 1) : '';
+    return `<div class="nav-tree-item" style="--depth:${depth}"><div class="nav-tree-row">${toggle}${renderNavButton(key, c.name, count, mode === 'notes' ? c.id : null)}</div>${children}</div>`;
   }).join('');
 }
 
@@ -1919,6 +1937,18 @@ function bindApp() {
     document.querySelector('#notificationBellBtn').insertAdjacentHTML('afterend', renderNotificationDropdown());
     bindNotificationMenuActions();
   });
+  document.querySelectorAll('[data-toggle-category]').forEach(btn => btn.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    const id = String(btn.dataset.toggleCategory || '');
+    if (!id) return;
+    if (state.collapsedCategories.has(id)) state.collapsedCategories.delete(id);
+    else state.collapsedCategories.add(id);
+    saveCollapsedCategoryIds();
+    const keepMobileMenuOpen = document.querySelector('.sidebar')?.classList.contains('open');
+    renderApp();
+    if (keepMobileMenuOpen) toggleMobileMenu(true);
+  }));
   document.querySelectorAll('[data-section]').forEach(btn => btn.addEventListener('click', async () => {
     if (!await confirmDiscardUnsaved()) return;
     state.section = btn.dataset.section;
