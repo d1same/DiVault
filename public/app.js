@@ -1264,7 +1264,7 @@ function renderNotificationDropdown() {
   return `<div class="notification-menu" id="notificationMenu"><div class="section-title-row"><h3>Notifications</h3><span class="small muted">${items.length}</span></div><div class="notification-list">${items.length ? items.slice(0, 12).map(entry => {
     if (entry.kind === 'task') {
       const task = entry.item;
-      return `<div class="notification-row notification-link notification-task-row" data-open-task="${task.id}" role="button" tabindex="0"><span class="agenda-kind task-kind notification-kind">Task</span><span class="notification-copy"><b class="notification-title">${esc(task.title)}</b><span class="small muted notification-meta">Due ${formatScheduleDateTime(task.due_at)}</span></span><button class="task-complete-btn notification-complete-btn" data-task-complete="${task.id}" type="button" aria-label="Complete task" title="Complete task">${toolIcon('check', 'Complete task')}</button></div>`;
+      return `<div class="notification-row notification-link notification-task-row" data-open-task="${task.id}" role="button" tabindex="0"><span class="agenda-kind task-kind notification-kind">Task</span><span class="notification-copy"><b class="notification-title">${esc(task.title)}</b><span class="small muted notification-meta">Due ${formatScheduleDateTime(task.due_at)}</span></span><span class="notification-action"><button class="task-complete-btn notification-complete-btn" data-task-complete="${task.id}" type="button" aria-label="Complete task" title="Complete task">${toolIcon('check', 'Complete task')}</button></span></div>`;
     }
     const event = entry.item;
       return `<div class="notification-row notification-link" data-open-event="${event.series_id || event.id}" role="button" tabindex="0"><span class="agenda-kind event-kind notification-kind">Event</span><span class="notification-copy"><b class="notification-title">${esc(event.title)}</b><span class="small muted notification-meta">${formatScheduleDateTime(event.starts_at)}</span></span></div>`;
@@ -2706,9 +2706,29 @@ function renderOnlyOfficeLoadError(frame, error) {
   frame.innerHTML = `<div class="onlyoffice-error"><span class="drive-file-mark drive-file-document">${icon('documentEdit')}</span><div><h3>OnlyOffice could not load</h3><p class="muted">${esc(error?.message || 'Check the OnlyOffice public URL, browser access, and Content Security Policy settings.')}</p><p class="muted small">The document is still safe in Drive. Close this window, verify the OnlyOffice Docker URL settings, then try again.</p></div></div>`;
 }
 
+function validateOnlyOfficeApiUrl(src) {
+  let url;
+  try {
+    url = new URL(String(src || '').trim(), window.location.href);
+  } catch (error) {
+    throw new Error('OnlyOffice public URL is invalid.');
+  }
+  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('OnlyOffice public URL must use HTTP or HTTPS.');
+  if (window.location.protocol === 'https:' && url.protocol === 'http:') {
+    throw new Error('OnlyOffice public URL must use HTTPS when DiVault is loaded over HTTPS.');
+  }
+  return url.href;
+}
+
 function loadOnlyOfficeApi(src) {
   if (window.DocsAPI?.DocEditor) return Promise.resolve();
-  if (!src) return Promise.reject(new Error('OnlyOffice public URL is not configured'));
+  if (!String(src || '').trim()) return Promise.reject(new Error('OnlyOffice public URL is not configured'));
+  let safeSrc;
+  try {
+    safeSrc = validateOnlyOfficeApiUrl(src);
+  } catch (error) {
+    return Promise.reject(error);
+  }
   if (!onlyOfficeScriptPromise) {
     onlyOfficeScriptPromise = new Promise((resolve, reject) => {
       let settled = false;
@@ -2728,7 +2748,7 @@ function loadOnlyOfficeApi(src) {
         callback();
       };
       const script = document.createElement('script');
-      script.src = src;
+      script.src = safeSrc;
       script.async = true;
       script.onload = () => finish(() => window.DocsAPI?.DocEditor ? resolve() : fail('OnlyOffice script loaded, but DocsAPI was not available.'));
       script.onerror = () => finish(() => fail('OnlyOffice script could not be loaded. Check ONLYOFFICE_PUBLIC_URL and CSP settings.'));
