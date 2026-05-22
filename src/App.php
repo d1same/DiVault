@@ -78,6 +78,7 @@ final class App
         if ($method === 'POST' && $path === '/drive/storage-settings') $this->saveDriveStorageSettings($user);
         if (str_starts_with($path, '/drive')) $this->requireFeatureEnabled($user, 'drive', 'Files are disabled');
         if ($method === 'GET' && in_array($path, ['/drive', '/drive/folders', '/drive/files'], true)) $this->driveList($user);
+        if ($method === 'GET' && $path === '/drive/folders/tree') $this->driveFolderTree($user);
         if ($method === 'POST' && $path === '/drive/zip') $this->driveZipSelection($user);
         if ($method === 'POST' && $path === '/drive/folders') $this->driveCreateFolder($user);
         if ($method === 'POST' && preg_match('#^/drive/folders/(\d+)/zip$#', $path, $m)) $this->driveZipFolder($user, (int)$m[1]);
@@ -2033,6 +2034,30 @@ final class App
         $files = $this->db->prepare($fileSql . ' ORDER BY f.original_name COLLATE NOCASE');
         $files->execute($fileArgs);
         $this->json(['folders' => $folders->fetchAll(PDO::FETCH_ASSOC), 'files' => $files->fetchAll(PDO::FETCH_ASSOC), 'breadcrumbs' => $this->driveBreadcrumbs($user, $parentId)]);
+    }
+
+    private function driveFolderTree(array $user): void
+    {
+        $this->requireEditor($user);
+        $stmt = $this->db->query('SELECT id FROM drive_folders WHERE deleted = 0 ORDER BY name COLLATE NOCASE');
+        $folders = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $folderId) {
+            try {
+                $folder = $this->driveFolderAccess($user, (int)$folderId, 'edit');
+            } catch (RuntimeException $e) {
+                continue;
+            }
+            $breadcrumbs = $this->driveBreadcrumbs($user, (int)$folder['id']);
+            $path = implode(' / ', array_map(fn($crumb) => (string)($crumb['name'] ?? 'Folder'), $breadcrumbs));
+            $folders[] = [
+                'id' => (int)$folder['id'],
+                'parent_id' => $folder['parent_id'] === null ? null : (int)$folder['parent_id'],
+                'name' => (string)$folder['name'],
+                'path' => $path ?: (string)$folder['name'],
+                'permission' => (string)($folder['permission'] ?? ''),
+            ];
+        }
+        $this->json(['folders' => $folders]);
     }
 
     private function driveStorageSettings(array $user): void
