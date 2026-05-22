@@ -1124,11 +1124,6 @@ body.resizing-note-pane { cursor: col-resize; user-select: none; }
 .drive-shell { position: relative; display: grid; gap: 8px; }
 .drive-shell::after { content: 'Drop files to upload here'; position: absolute; inset: 0; z-index: 30; display: grid; place-items: center; border: 2px dashed color-mix(in srgb, var(--primary) 62%, var(--border)); border-radius: var(--radius-xl); background: color-mix(in srgb, var(--surface-card) 84%, var(--primary)); color: var(--primary-dark); font-size: .92rem; font-weight: 900; letter-spacing: .02em; opacity: 0; pointer-events: none; transform: scale(.99); transition: opacity .14s ease, transform .14s ease; }
 .drive-shell.drive-drop-active::after { opacity: .96; transform: scale(1); }
-.drive-upload-target { width: 100%; display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 8px; align-items: center; justify-content: start; border: 1px dashed color-mix(in srgb, var(--primary) 28%, var(--border-soft)); border-radius: var(--radius-lg); padding: 9px 12px; background: color-mix(in srgb, var(--surface-card) 82%, var(--surface-soft)); color: var(--text); text-align: left; cursor: pointer; transition: border-color .14s ease, background .14s ease, transform .14s ease; }
-.drive-upload-target > span { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 999px; background: color-mix(in srgb, var(--primary) 12%, var(--surface)); color: var(--primary-dark); }
-.drive-upload-target b { font-size: .84rem; font-weight: 900; }
-.drive-upload-target small { min-width: 0; overflow: hidden; color: var(--muted); font-size: .76rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
-.drive-upload-target:hover, .drive-upload-target:focus-visible { border-color: color-mix(in srgb, var(--primary) 58%, var(--border-soft)); background: color-mix(in srgb, var(--surface-card) 78%, var(--primary)); outline: none; transform: translateY(-1px); }
 .drive-upload-status { position: fixed; left: 50%; bottom: calc(14px + var(--android-system-bottom)); z-index: 1250; width: min(520px, calc(100vw - 24px)); display: grid; gap: 8px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--primary) 26%, var(--border-soft)); border-radius: var(--radius-xl); background: color-mix(in srgb, var(--surface) 94%, var(--surface-soft)); color: var(--text); box-shadow: 0 18px 44px color-mix(in srgb, var(--text) 18%, transparent); opacity: 0; pointer-events: none; transform: translate(-50%, 14px); transition: opacity .16s ease, transform .16s ease; }
 .drive-upload-status.visible { opacity: 1; transform: translate(-50%, 0); }
 .drive-upload-status.error { border-color: color-mix(in srgb, var(--danger) 45%, var(--border-soft)); }
@@ -1899,8 +1894,6 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .drive-stats .pill { padding: 2px 6px; font-size: .64rem; }
   .drive-stats .pill:nth-of-type(n+4) { display: none; }
   .drive-shell::after { font-size: .82rem; text-align: center; }
-  .drive-upload-target { grid-template-columns: auto minmax(0, 1fr); padding: 10px; }
-  .drive-upload-target small { grid-column: 1 / -1; white-space: normal; }
   .drive-upload-status { bottom: calc(10px + var(--android-system-bottom)); padding: 10px 12px; }
   .drive-upload-status-copy { display: grid; gap: 2px; }
   .drive-bulk-actions { gap: 6px; padding: 7px; }
