@@ -1814,8 +1814,9 @@ function renderBulkNoteActions() {
 function renderNotesWorkspace() {
   const editorOpen = Boolean(state.active);
   const listView = currentNoteLayout() === 'list';
+  const quickNotes = state.section === 'notes:quick';
   const paneWidth = Math.min(520, Math.max(220, Number(state.notePaneWidth) || 300));
-  return `<div class="notes-workspace ${editorOpen ? 'editor-open' : ''} ${listView ? 'list-view' : ''} ${editorOpen && state.noteFocus ? 'focus-mode' : ''}" style="--note-pane-width: ${paneWidth}px;">
+  return `<div class="notes-workspace ${quickNotes ? 'quick-notes' : ''} ${editorOpen ? 'editor-open' : ''} ${listView ? 'list-view' : ''} ${editorOpen && state.noteFocus ? 'focus-mode' : ''}" style="--note-pane-width: ${paneWidth}px;">
     <div class="notes-list-pane">
       ${renderBulkNoteActions()}
       <div class="grid notes-grid" id="notesGrid">${renderNotes()}</div>
