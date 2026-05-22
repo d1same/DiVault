@@ -652,19 +652,25 @@ input:focus, textarea:focus, select:focus { border-color: var(--primary); box-sh
 .icon-action { min-width: 36px; justify-content: center; padding: 6px 8px; font-size: .94rem; }
 .btn {
   min-height: 36px;
-  border: 0;
-  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--border-soft) 82%, transparent);
+  border-radius: var(--radius-md);
   padding: 6px 10px;
-  background: var(--button-bg);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--button-bg) 96%, white), var(--button-bg));
   color: var(--button-text);
   font-size: .84rem;
-  font-weight: 700;
+  font-weight: 800;
+  box-shadow: 0 1px 0 color-mix(in srgb, white 62%, transparent) inset, 0 7px 16px color-mix(in srgb, var(--text) 7%, transparent);
+  transition: transform .14s ease, box-shadow .14s ease, border-color .14s ease, background .14s ease, color .14s ease;
 }
-.btn.primary { background: var(--primary); color: white; }
-.btn.primary:hover { background: var(--primary-dark); }
-.btn.ghost { background: transparent; color: var(--muted); }
-.btn.ghost.active { background: var(--surface-soft); color: var(--primary-dark); }
-.btn.danger { background: var(--danger-bg); color: var(--danger); }
+.btn:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--primary) 22%, var(--border-soft)); box-shadow: 0 1px 0 color-mix(in srgb, white 70%, transparent) inset, 0 10px 22px color-mix(in srgb, var(--text) 10%, transparent); }
+.btn:active { transform: translateY(0); box-shadow: 0 1px 0 color-mix(in srgb, white 52%, transparent) inset, 0 4px 10px color-mix(in srgb, var(--text) 8%, transparent); }
+.btn:focus-visible { outline: 3px solid var(--input-focus); outline-offset: 2px; }
+.btn.primary { border-color: color-mix(in srgb, var(--primary-dark) 28%, var(--primary)); background: linear-gradient(135deg, var(--primary), var(--primary-dark)); color: white; box-shadow: 0 1px 0 color-mix(in srgb, white 35%, transparent) inset, 0 10px 24px color-mix(in srgb, var(--primary) 24%, transparent); }
+.btn.primary:hover { background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 88%, white), var(--primary-dark)); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--muted); box-shadow: none; }
+.btn.ghost:hover, .btn.ghost:focus-visible { border-color: color-mix(in srgb, var(--primary) 18%, var(--border-soft)); background: color-mix(in srgb, var(--surface-soft) 88%, transparent); color: var(--primary-dark); }
+.btn.ghost.active { border-color: color-mix(in srgb, var(--primary) 28%, var(--border-soft)); background: var(--surface-soft); color: var(--primary-dark); }
+.btn.danger { border-color: color-mix(in srgb, var(--danger) 22%, var(--border-soft)); background: linear-gradient(180deg, color-mix(in srgb, var(--danger-bg) 92%, white), var(--danger-bg)); color: var(--danger); }
 .auth-actions { position: absolute; top: 14px; right: 14px; }
 .theme-button {
   min-height: 36px;
@@ -1112,13 +1118,17 @@ body.resizing-note-pane { cursor: col-resize; user-select: none; }
 .drive-tool-btn .tool-icon,
 .drive-tool-btn .tool-icon svg { width: 16px; height: 16px; color: currentColor; stroke: currentColor; }
 .drive-tool-btn .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.drive-upload-label { position: relative; overflow: hidden; cursor: pointer; }
-.drive-upload-label .tool-icon { pointer-events: none; }
-.drive-upload-label input { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
-.drive-upload-label:focus-within { outline: 2px solid color-mix(in srgb, var(--primary) 56%, transparent); outline-offset: 2px; }
+.drive-upload-button { display: inline-flex; gap: 7px; min-width: 0; }
+.drive-upload-button span:last-child { font-size: .78rem; font-weight: 900; }
+.drive-upload-input { position: fixed; left: -100vw; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .drive-shell { position: relative; display: grid; gap: 8px; }
 .drive-shell::after { content: 'Drop files to upload here'; position: absolute; inset: 0; z-index: 30; display: grid; place-items: center; border: 2px dashed color-mix(in srgb, var(--primary) 62%, var(--border)); border-radius: var(--radius-xl); background: color-mix(in srgb, var(--surface-card) 84%, var(--primary)); color: var(--primary-dark); font-size: .92rem; font-weight: 900; letter-spacing: .02em; opacity: 0; pointer-events: none; transform: scale(.99); transition: opacity .14s ease, transform .14s ease; }
 .drive-shell.drive-drop-active::after { opacity: .96; transform: scale(1); }
+.drive-upload-target { width: 100%; display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 8px; align-items: center; justify-content: start; border: 1px dashed color-mix(in srgb, var(--primary) 28%, var(--border-soft)); border-radius: var(--radius-lg); padding: 9px 12px; background: color-mix(in srgb, var(--surface-card) 82%, var(--surface-soft)); color: var(--text); text-align: left; cursor: pointer; transition: border-color .14s ease, background .14s ease, transform .14s ease; }
+.drive-upload-target > span { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 999px; background: color-mix(in srgb, var(--primary) 12%, var(--surface)); color: var(--primary-dark); }
+.drive-upload-target b { font-size: .84rem; font-weight: 900; }
+.drive-upload-target small { min-width: 0; overflow: hidden; color: var(--muted); font-size: .76rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.drive-upload-target:hover, .drive-upload-target:focus-visible { border-color: color-mix(in srgb, var(--primary) 58%, var(--border-soft)); background: color-mix(in srgb, var(--surface-card) 78%, var(--primary)); outline: none; transform: translateY(-1px); }
 .drive-upload-status { position: fixed; left: 50%; bottom: calc(14px + var(--android-system-bottom)); z-index: 1250; width: min(520px, calc(100vw - 24px)); display: grid; gap: 8px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--primary) 26%, var(--border-soft)); border-radius: var(--radius-xl); background: color-mix(in srgb, var(--surface) 94%, var(--surface-soft)); color: var(--text); box-shadow: 0 18px 44px color-mix(in srgb, var(--text) 18%, transparent); opacity: 0; pointer-events: none; transform: translate(-50%, 14px); transition: opacity .16s ease, transform .16s ease; }
 .drive-upload-status.visible { opacity: 1; transform: translate(-50%, 0); }
 .drive-upload-status.error { border-color: color-mix(in srgb, var(--danger) 45%, var(--border-soft)); }
@@ -1176,6 +1186,10 @@ body.resizing-note-pane { cursor: col-resize; user-select: none; }
 .drive-sort-head span { color: var(--primary); font-size: .85rem; }
 .drive-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
 .drive-list-card .drive-items { padding: 10px; }
+.drive-gallery-note { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: center; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border-soft)); border-radius: var(--radius-lg); padding: 10px 12px; background: linear-gradient(135deg, color-mix(in srgb, var(--surface-card) 88%, var(--accent)), color-mix(in srgb, var(--surface-card) 94%, var(--primary))); }
+.drive-gallery-note > span { width: 34px; height: 34px; display: grid; place-items: center; border-radius: var(--radius-md); background: color-mix(in srgb, var(--surface) 78%, var(--accent)); color: var(--primary-dark); }
+.drive-gallery-note b { display: block; font-size: .86rem; font-weight: 900; }
+.drive-gallery-note small { display: block; margin-top: 2px; color: var(--muted); font-size: .76rem; font-weight: 750; }
 .drive-item { position: relative; min-width: 0; min-height: 88px; display: grid; grid-template-columns: minmax(0, 1fr) 40px; gap: 8px; align-items: start; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); padding: 12px; background: color-mix(in srgb, var(--surface-card) 96%, var(--surface)); box-shadow: none; transition: border-color .14s ease, background .14s ease, transform .14s ease; }
 .drive-item:hover { border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); background: color-mix(in srgb, var(--surface-card) 93%, var(--primary)); transform: translateY(-1px); }
 .drive-item.selected { border-color: var(--primary); background: color-mix(in srgb, var(--surface-card) 88%, var(--primary)); }
@@ -1210,6 +1224,14 @@ body.resizing-note-pane { cursor: col-resize; user-select: none; }
 .drive-thumb-wrap { display: block; background: var(--field-bg); }
 .drive-thumb { display: block; object-fit: cover; border: 1px solid var(--border); background: var(--field-bg); }
 .drive-thumb-wrap .drive-thumb { width: 100%; height: 100%; border: 0; border-radius: inherit; }
+.drive-shell.grid-view .drive-image-item { min-height: 230px; grid-template-rows: minmax(0, 1fr) auto; align-items: stretch; padding: 0; overflow: hidden; }
+.drive-shell.grid-view .drive-image-item .drive-main { min-height: 100%; grid-template-columns: 1fr; grid-template-rows: minmax(142px, 1fr) auto; gap: 0; border-radius: 0; }
+.drive-shell.grid-view .drive-image-item .drive-thumb-wrap { width: 100%; height: 100%; min-height: 150px; border-width: 0 0 1px; border-radius: 0; }
+.drive-shell.grid-view .drive-image-item .drive-name-stack { padding: 11px 12px 12px; }
+.drive-shell.grid-view .drive-image-item .drive-main small { display: block; }
+.drive-shell.grid-view .drive-image-item .drive-actions { position: absolute; right: 10px; bottom: 10px; }
+.drive-shell.grid-view.photo-folder .drive-items { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.drive-shell.grid-view.photo-folder .folder-item { min-height: 230px; }
 .drive-size, .drive-kind, .drive-modified { display: none; min-width: 0; color: var(--muted); font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .drive-kind { font-weight: 900; color: var(--primary-dark); }
 .drive-actions { position: relative; z-index: 2; display: flex; justify-content: flex-end; align-items: center; padding-top: 0; border-top: 0; }
@@ -1352,6 +1374,8 @@ body.resizing-note-pane { cursor: col-resize; user-select: none; }
 .onlyoffice-editor { padding: 10px; }
 .onlyoffice-editor-panel { width: min(1400px, calc(100vw - 20px)); height: calc(100vh - 20px); max-height: calc(100vh - 20px); padding: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
 .onlyoffice-editor-panel > .topbar { margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--border-soft); }
+.onlyoffice-editor.preview-fullscreen { place-items: stretch; padding: 0; overflow: hidden; }
+.onlyoffice-editor.preview-fullscreen .onlyoffice-editor-panel { width: 100%; height: 100%; max-width: 100%; max-height: 100%; border-radius: 0; }
 .onlyoffice-frame { min-height: 0; background: var(--surface-soft); }
 .onlyoffice-frame iframe { width: 100%; height: 100%; border: 0; }
 .onlyoffice-error { min-height: 100%; display: grid; grid-template-columns: auto minmax(0, 520px); gap: 14px; place-content: center; align-items: center; padding: 24px; text-align: left; }
@@ -1875,6 +1899,8 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .drive-stats .pill { padding: 2px 6px; font-size: .64rem; }
   .drive-stats .pill:nth-of-type(n+4) { display: none; }
   .drive-shell::after { font-size: .82rem; text-align: center; }
+  .drive-upload-target { grid-template-columns: auto minmax(0, 1fr); padding: 10px; }
+  .drive-upload-target small { grid-column: 1 / -1; white-space: normal; }
   .drive-upload-status { bottom: calc(10px + var(--android-system-bottom)); padding: 10px 12px; }
   .drive-upload-status-copy { display: grid; gap: 2px; }
   .drive-bulk-actions { gap: 6px; padding: 7px; }
@@ -1887,6 +1913,10 @@ input[type="file"] { max-width: 100%; min-width: 0; overflow: hidden; text-overf
   .drive-shell.list-view .drive-list-head { display: none; }
   .drive-item,
   .drive-shell.list-view .drive-item { min-height: 0; grid-template-columns: minmax(0, 1fr) 44px; gap: 8px; align-items: center; padding: 10px 12px; }
+  .drive-shell.grid-view .drive-image-item { min-height: 210px; grid-template-columns: minmax(0, 1fr) 44px; grid-template-rows: auto; align-items: stretch; padding: 0; }
+  .drive-shell.grid-view .drive-image-item .drive-main { grid-template-rows: 132px auto; }
+  .drive-shell.grid-view .drive-image-item .drive-actions { right: 10px; bottom: 10px; }
+  .drive-shell.grid-view.photo-folder .drive-items { grid-template-columns: minmax(0, 1fr); }
   .drive-main { grid-template-columns: 40px minmax(0, 1fr); }
   .drive-shell.list-view .drive-size, .drive-shell.list-view .drive-kind, .drive-shell.list-view .drive-modified { display: none; }
   .drive-actions,

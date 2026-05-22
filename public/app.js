@@ -1246,7 +1246,7 @@ function renderFilterBar(panelOpen) {
 function renderDriveFilterBar() {
   const selectLabel = state.driveSelectionMode ? 'Cancel selection' : 'Select files';
   const selectIcon = state.driveSelectionMode ? 'selectNone' : 'selectAll';
-  return `<div class="filterbar drive-filter"><label class="drive-search-field"><span class="sr-only">Search Drive</span><input class="search" id="search" type="search" aria-label="Search files" placeholder="Search files and folders...  Q" value="${esc(state.q)}"></label><div class="filter-actions drive-commandbar"><div class="drive-tool-group" aria-label="Drive actions"><button class="btn drive-tool-btn icon-only-btn ${state.driveSelectionMode ? 'active' : ''}" id="toggleDriveSelect" type="button" aria-label="${esc(selectLabel)}" title="${esc(selectLabel)}">${toolIcon(selectIcon, selectLabel)}</button><label class="btn primary drive-upload-label drive-tool-btn icon-only-btn" title="Upload" aria-label="Upload">${toolIcon('upload', 'Upload')}<input id="driveUploadInput" type="file" multiple></label><button class="btn drive-tool-btn icon-only-btn" id="newDriveFolderBtn" type="button" aria-label="New folder" title="New folder">${toolIcon('folderPlus', 'New folder')}</button><button class="btn drive-tool-btn icon-only-btn" id="newDriveTextBtn" type="button" aria-label="Text file" title="Text file">${toolIcon('textFile', 'Text file')}</button></div><div class="note-layout-toggle drive-layout-toggle" role="group" aria-label="Drive layout"><button class="btn ghost icon-only-btn ${state.driveLayout === 'grid' ? 'active' : ''}" data-drive-layout="grid" type="button" aria-label="Grid view" title="Grid view">${toolIcon('cards', 'Grid view')}</button><button class="btn ghost icon-only-btn ${state.driveLayout === 'list' ? 'active' : ''}" data-drive-layout="list" type="button" aria-label="List view" title="List view">${toolIcon('list', 'List view')}</button></div></div></div>`;
+  return `<div class="filterbar drive-filter"><label class="drive-search-field"><span class="sr-only">Search Drive</span><input class="search" id="search" type="search" aria-label="Search files" placeholder="Search files and folders...  Q" value="${esc(state.q)}"></label><div class="filter-actions drive-commandbar"><div class="drive-tool-group" aria-label="Drive actions"><button class="btn drive-tool-btn icon-only-btn ${state.driveSelectionMode ? 'active' : ''}" id="toggleDriveSelect" type="button" aria-label="${esc(selectLabel)}" title="${esc(selectLabel)}">${toolIcon(selectIcon, selectLabel)}</button><button class="btn primary drive-upload-button drive-tool-btn" id="driveUploadButton" type="button" aria-label="Upload files" title="Upload files">${toolIcon('upload', 'Upload')}<span>Upload</span></button><input id="driveUploadInput" class="drive-upload-input" type="file" multiple aria-hidden="true" tabindex="-1"><button class="btn drive-tool-btn icon-only-btn" id="newDriveFolderBtn" type="button" aria-label="New folder" title="New folder">${toolIcon('folderPlus', 'New folder')}</button><button class="btn drive-tool-btn icon-only-btn" id="newDriveTextBtn" type="button" aria-label="Text file" title="Text file">${toolIcon('textFile', 'Text file')}</button></div><div class="note-layout-toggle drive-layout-toggle" role="group" aria-label="Drive layout"><button class="btn ghost icon-only-btn ${state.driveLayout === 'grid' ? 'active' : ''}" data-drive-layout="grid" type="button" aria-label="Grid view" title="Grid view">${toolIcon('cards', 'Grid view')}</button><button class="btn ghost icon-only-btn ${state.driveLayout === 'list' ? 'active' : ''}" data-drive-layout="list" type="button" aria-label="List view" title="List view">${toolIcon('list', 'List view')}</button></div></div></div>`;
 }
 
 function notificationItems() {
@@ -2228,6 +2228,7 @@ function bindDriveActions() {
   }));
   document.querySelector('#newDriveFolderBtn')?.addEventListener('click', createDriveFolder);
   document.querySelector('#newDriveTextBtn')?.addEventListener('click', createDriveTextFile);
+  document.querySelector('#driveUploadButton')?.addEventListener('click', openDriveUploadPicker);
   document.querySelector('#driveUploadInput')?.addEventListener('change', e => {
     uploadDriveFiles([...e.target.files]);
     e.target.value = '';
@@ -2290,6 +2291,7 @@ function bindDriveActions() {
 function bindDriveDropUpload() {
   const shell = document.querySelector('.drive-shell');
   if (!shell) return;
+  shell.querySelectorAll('[data-drive-upload-pick]').forEach(btn => btn.addEventListener('click', openDriveUploadPicker));
   const hasFiles = event => [...(event.dataTransfer?.types || [])].includes('Files');
   const setActive = active => shell.classList.toggle('drive-drop-active', active);
   shell.addEventListener('dragenter', event => {
@@ -2315,6 +2317,13 @@ function bindDriveDropUpload() {
     setActive(false);
     uploadDriveFiles([...event.dataTransfer.files]);
   });
+}
+
+function openDriveUploadPicker() {
+  const input = document.querySelector('#driveUploadInput');
+  if (!input) return;
+  input.value = '';
+  input.click();
 }
 
 async function navigateDriveFolder(folderId = '', { replace = false } = {}) {
@@ -2800,9 +2809,10 @@ async function openDriveOfficeEditor(id, name) {
   const modal = document.createElement('div');
   const editorId = `onlyoffice-editor-${Date.now()}`;
   modal.className = 'editor onlyoffice-editor';
-  modal.innerHTML = `<section class="editor-panel onlyoffice-editor-panel"><div class="topbar"><div><p class="terminal-path">divault ~/drive/office</p><h2>${esc(name || 'Document')}</h2><p class="muted small">Edits save back to Drive after OnlyOffice finishes processing the document.</p></div><button class="btn ghost" type="button" data-close>Close</button></div><div class="onlyoffice-frame" id="${editorId}"><p class="muted">Loading OnlyOffice...</p></div></section>`;
+  modal.innerHTML = `<section class="editor-panel onlyoffice-editor-panel"><div class="topbar preview-topbar"><div><p class="terminal-path">divault ~/drive/office</p><h2>${esc(name || 'Document')}</h2><p class="muted small">Edits save back to Drive after OnlyOffice finishes processing the document.</p></div><div class="btn-row preview-action-row"><button class="btn ghost icon-only-btn" type="button" data-preview-fullscreen aria-pressed="false" title="Enter fullscreen" aria-label="Enter fullscreen">${toolIcon('fullscreen', 'Enter fullscreen')}</button><button class="btn ghost" type="button" data-close>Close</button></div></div><div class="onlyoffice-frame" id="${editorId}"><p class="muted">Loading OnlyOffice...</p></div></section>`;
   document.body.appendChild(modal);
   setupAccessibleModal(modal, '[data-close]');
+  bindFilePreviewFullscreen(modal);
   let editor = null;
   modal.querySelector('[data-close]')?.addEventListener('click', async () => {
     if (editor && typeof editor.destroyEditor === 'function') editor.destroyEditor();
@@ -3620,12 +3630,17 @@ function renderDrive() {
   const parentFolderId = driveParentFolderId();
   const itemSummary = `${totalItems} item${totalItems === 1 ? '' : 's'}`;
   const statPills = [`${folders.length} folder${folders.length === 1 ? '' : 's'}`, `${files.length} file${files.length === 1 ? '' : 's'}`];
+  const photoCount = files.filter(file => isDriveImageFile(file.original_name || file.name || file.filename || '', file.mime || file.mime_type || file.type || '')).length;
+  const photoFolder = state.driveLayout === 'grid' && photoCount >= 3;
   if (totalBytes) statPills.push(formatDriveSize(totalBytes));
+  if (photoCount) statPills.push(`${photoCount} photo${photoCount === 1 ? '' : 's'}`);
   if (latest) statPills.push(`Updated ${formatDateTime(latest)}`);
   const upLabel = state.driveFolderId ? `Up from ${currentName}` : 'Already at Drive root';
   const upButton = state.driveFolderId ? `<button class="drive-up-btn" data-drive-folder="${esc(parentFolderId)}" type="button" aria-label="${esc(upLabel)}" title="${esc(upLabel)}"><span aria-hidden="true">‹</span></button>` : `<button class="drive-up-btn" type="button" aria-label="${esc(upLabel)}" title="${esc(upLabel)}" disabled><span aria-hidden="true">‹</span></button>`;
-  return `<section class="drive-shell ${state.driveLayout === 'list' ? 'list-view' : 'grid-view'} ${state.driveSelectionMode ? 'selecting' : ''}" aria-label="Drive file browser">
+  return `<section class="drive-shell ${state.driveLayout === 'list' ? 'list-view' : 'grid-view'} ${photoFolder ? 'photo-folder' : ''} ${state.driveSelectionMode ? 'selecting' : ''}" aria-label="Drive file browser">
     ${bulkActions}<div class="drive-header card"><div class="drive-path-controls">${upButton}<span class="drive-root-mark compact" aria-hidden="true">${icon('folder')}</span></div><div class="drive-path-line"><span class="drive-path-label">Drive</span>${crumbs}</div><div class="drive-stats" aria-label="Folder summary"><span class="drive-summary" title="/${esc(pathText)}">${esc(itemSummary)}</span>${statPills.map(stat => `<span class="pill">${esc(stat)}</span>`).join('')}</div></div>
+    <button class="drive-upload-target" type="button" data-drive-upload-pick><span>${toolIcon('upload', 'Upload')}</span><b>Upload files here</b><small>Drop files on this folder, or tap to choose files on desktop and Android.</small></button>
+    ${photoFolder ? `<div class="drive-gallery-note"><span>${toolIcon('cards', 'Photo gallery')}</span><div><b>Photo gallery view</b><small>${photoCount} images are shown with larger previews. Switch to list view for compact file details.</small></div></div>` : ''}
     ${empty ? renderDriveEmptyState() : `<div class="drive-list-card" role="region" aria-label="${esc(currentName)} contents"><div class="drive-list-head">${renderDriveSortHeader('name', 'Name')}${renderDriveSortHeader('size', 'Size')}${renderDriveSortHeader('type', 'Type')}${renderDriveSortHeader('date', 'Modified')}<span>Actions</span></div><div class="drive-items">${folders.map(renderDriveFolder).join('')}${files.map(renderDriveFile).join('')}</div></div>`}
   </section>`;
 }
@@ -3726,6 +3741,7 @@ function renderDriveFile(file) {
   const selected = state.selectedDriveItems.has(selectionKey);
   const selector = state.driveSelectionMode ? `<label class="drive-select"><input type="checkbox" data-select-drive="${esc(selectionKey)}" ${selected ? 'checked' : ''} aria-label="Select ${esc(name)}"><span class="sr-only">Select ${esc(name)}</span></label>` : '';
   const thumb = renderDriveFileThumb(name, mime, previewUrl);
+  const visualType = driveFileVisualType(name, mime);
   const canManage = driveCanManage(file);
   const updated = file.updated_at || file.created_at || '';
   const typeLabel = driveFileTypeLabel(name, mime);
@@ -3733,7 +3749,7 @@ function renderDriveFile(file) {
   const meta = [typeLabel, size, modified].filter(Boolean).join(' · ');
   const previewAttrs = `data-preview-file="${previewUrl}" data-file-name="${esc(name)}" data-file-mime="${esc(mime)}" data-download-file="${downloadUrl}" data-drive-preview-id="${esc(id)}"${editable ? ` data-drive-preview-edit="${esc(id)}"` : ''}${officeEditable ? ` data-drive-preview-office="${esc(id)}"` : ''}${zip ? ` data-drive-preview-extract="${esc(id)}"` : ''}`;
   const actions = `${driveActionLink('Download', 'download', downloadUrl)}${editable ? driveActionButton('Edit text', 'draw', `data-edit-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${officeEditable ? driveActionButton('Edit document', 'documentEdit', `data-office-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${zip ? driveActionButton('Extract', 'extract', `data-extract-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${driveActionButton('Compress', 'box', `data-zip-drive-file="${esc(id)}" data-name="${esc(name)}"`)}${driveActionButton('Rename', 'rename', `data-rename-drive-file="${esc(id)}" data-name="${esc(name)}"`)}${canManage ? driveActionButton('Share', 'share', `data-share-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${driveActionButton('Delete', 'trash', `data-delete-drive-file="${esc(id)}" data-name="${esc(name)}"`, 'danger-link')}`;
-  return `<article class="drive-item file-item ${selected ? 'selected' : ''}" data-drive-key="${esc(selectionKey)}">${selector}<button class="drive-main" ${previewAttrs} type="button">${thumb}<span class="drive-name-stack"><b>${esc(name)}</b><small>${esc(meta)}</small><span class="drive-meta-row"><span>${esc(typeLabel)}</span><span>${esc(size)}</span>${modified ? `<span>${esc(modified)}</span>` : ''}</span></span></button><span class="drive-size">${esc(size)}</span><span class="drive-kind">${esc(driveFileExtension(name))}</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
+  return `<article class="drive-item file-item drive-${visualType}-item ${selected ? 'selected' : ''}" data-drive-key="${esc(selectionKey)}">${selector}<button class="drive-main" ${previewAttrs} type="button">${thumb}<span class="drive-name-stack"><b>${esc(name)}</b><small>${esc(meta)}</small><span class="drive-meta-row"><span>${esc(typeLabel)}</span><span>${esc(size)}</span>${modified ? `<span>${esc(modified)}</span>` : ''}</span></span></button><span class="drive-size">${esc(size)}</span><span class="drive-kind">${esc(driveFileExtension(name))}</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
 }
 
 function driveFolderContentsLabel(folder) {
@@ -3752,8 +3768,12 @@ function driveFileTypeLabel(name, mime) {
 function renderDriveFileThumb(name, mime, previewUrl) {
   const type = driveFileVisualType(name, mime);
   const ext = driveFileExtension(name);
-  if (isImage(mime)) return `<span class="drive-thumb-wrap drive-file-${type}"><img class="drive-thumb" src="${previewUrl}" alt="${esc(name)}"><span class="drive-file-badge">${esc(ext)}</span></span>`;
+  if (type === 'image') return `<span class="drive-thumb-wrap drive-file-${type}"><img class="drive-thumb" src="${previewUrl}" alt="${esc(name)}" loading="lazy"><span class="drive-file-badge">${esc(ext)}</span></span>`;
   return `<span class="drive-file-mark drive-file-${type}" aria-hidden="true"><span class="drive-file-glyph">${icon(driveFileVisualIcon(type))}</span><span class="drive-file-badge">${esc(ext)}</span></span>`;
+}
+
+function isDriveImageFile(name, mime) {
+  return driveFileVisualType(name, mime) === 'image';
 }
 
 function driveFileVisualType(name, mime) {
