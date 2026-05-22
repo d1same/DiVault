@@ -2291,7 +2291,6 @@ function bindDriveActions() {
 function bindDriveDropUpload() {
   const shell = document.querySelector('.drive-shell');
   if (!shell) return;
-  shell.querySelectorAll('[data-drive-upload-pick]').forEach(btn => btn.addEventListener('click', openDriveUploadPicker));
   const hasFiles = event => [...(event.dataTransfer?.types || [])].includes('Files');
   const setActive = active => shell.classList.toggle('drive-drop-active', active);
   shell.addEventListener('dragenter', event => {
@@ -3639,7 +3638,6 @@ function renderDrive() {
   const upButton = state.driveFolderId ? `<button class="drive-up-btn" data-drive-folder="${esc(parentFolderId)}" type="button" aria-label="${esc(upLabel)}" title="${esc(upLabel)}"><span aria-hidden="true">‹</span></button>` : `<button class="drive-up-btn" type="button" aria-label="${esc(upLabel)}" title="${esc(upLabel)}" disabled><span aria-hidden="true">‹</span></button>`;
   return `<section class="drive-shell ${state.driveLayout === 'list' ? 'list-view' : 'grid-view'} ${photoFolder ? 'photo-folder' : ''} ${state.driveSelectionMode ? 'selecting' : ''}" aria-label="Drive file browser">
     ${bulkActions}<div class="drive-header card"><div class="drive-path-controls">${upButton}<span class="drive-root-mark compact" aria-hidden="true">${icon('folder')}</span></div><div class="drive-path-line"><span class="drive-path-label">Drive</span>${crumbs}</div><div class="drive-stats" aria-label="Folder summary"><span class="drive-summary" title="/${esc(pathText)}">${esc(itemSummary)}</span>${statPills.map(stat => `<span class="pill">${esc(stat)}</span>`).join('')}</div></div>
-    <button class="drive-upload-target" type="button" data-drive-upload-pick><span>${toolIcon('upload', 'Upload')}</span><b>Upload files here</b><small>Drop files on this folder, or tap to choose files on desktop and Android.</small></button>
     ${photoFolder ? `<div class="drive-gallery-note"><span>${toolIcon('cards', 'Photo gallery')}</span><div><b>Photo gallery view</b><small>${photoCount} images are shown with larger previews. Switch to list view for compact file details.</small></div></div>` : ''}
     ${empty ? renderDriveEmptyState() : `<div class="drive-list-card" role="region" aria-label="${esc(currentName)} contents"><div class="drive-list-head">${renderDriveSortHeader('name', 'Name')}${renderDriveSortHeader('size', 'Size')}${renderDriveSortHeader('type', 'Type')}${renderDriveSortHeader('date', 'Modified')}<span>Actions</span></div><div class="drive-items">${folders.map(renderDriveFolder).join('')}${files.map(renderDriveFile).join('')}</div></div>`}
   </section>`;
@@ -5402,6 +5400,26 @@ function defaultAssetType(section) {
   return map[section] || sectionLabel(section).replace(/s$/, '');
 }
 
+function renderDesktopParityCard(desktopServer = {}) {
+  const hasTauriBridge = Boolean(window.__TAURI__?.core?.invoke);
+  const localHost = ['127.0.0.1', 'localhost', '::1'].includes(location.hostname);
+  const standalone = !desktopServer.server_url;
+  const checks = [
+    ['Standalone local vault', standalone, standalone ? 'Default mode is the bundled local vault on this computer.' : 'Server mode is configured. Use standalone below to return to the local vault.'],
+    ['Upload button', 'File' in window && 'FormData' in window, 'Uses the same browser file picker and upload pipeline as the web app.'],
+    ['Main-section drag and drop', 'DataTransfer' in window && 'File' in window, 'Windows desktop passes file drops through to the Drive surface.'],
+    ['External links', hasTauriBridge, 'HTTP and HTTPS links open through the desktop shell bridge.'],
+    ['Notifications', hasTauriBridge || 'Notification' in window, 'Reminders can use the desktop notifier, then browser notifications as fallback.'],
+    ['Clipboard', Boolean(navigator.clipboard), 'Copy actions use the standard browser clipboard API.'],
+    ['Local secure context', window.isSecureContext || localHost, 'Standalone desktop runs on loopback so browser security APIs stay available.']
+  ];
+  return `<div class="card stack"><h3>Windows desktop browser parity</h3><p class="muted small">DiVault keeps standalone mode as the default. This desktop build uses the browser APIs where possible and only adds desktop bridges for features browsers cannot handle directly.</p>${checks.map(([label, ready, detail]) => renderDesktopParityRow(label, ready, detail)).join('')}</div>`;
+}
+
+function renderDesktopParityRow(label, ready, detail) {
+  return `<div class="file-row"><span><b>${esc(label)}</b><br><span class="small muted">${esc(detail)}</span></span><span class="pill ${ready ? 'file' : 'danger'}">${ready ? 'Ready' : 'Check'}</span></div>`;
+}
+
 async function openSettings(options = {}) {
   state.panel = 'settings';
   state.active = null;
@@ -5439,12 +5457,13 @@ async function openSettings(options = {}) {
   const avatarPreview = state.user.avatar_data ? `<img class="profile-avatar" src="${esc(state.user.avatar_data)}" alt="Current avatar">` : `<img class="profile-avatar" src="/assets/divault-logo.svg" alt="DiVault">`;
   const removeAvatarButton = state.user.avatar_data ? '<button class="btn ghost" id="removeAvatarBtn" type="button">Remove avatar</button>' : '';
   const desktopServerCard = state.desktop && isAdmin ? `<div class="card stack"><h3>Desktop mode</h3><p class="muted small">Choose whether this desktop app starts its standalone local vault or opens a hosted DiVault server on launch.</p><div class="inline-note-blocks"><div class="inline-note ${desktopServer.server_url ? '' : 'active'}"><b>Standalone vault</b><span>Private local vault on this computer.</span></div><div class="inline-note ${desktopServer.server_url ? 'active' : ''}"><b>Connect to server</b><span>${desktopServer.server_url ? esc(desktopServer.server_url) : 'Use one shared server for desktop, Android, and browser sync.'}</span></div></div><form id="desktopServerSettingsForm" class="stack"><label class="field"><span>Server URL</span><input name="server_url" type="url" value="${esc(desktopServer.server_url || '')}" placeholder="https://notes.example.com" autocomplete="url" required></label><div class="btn-row"><button class="btn primary">Use server on next launch</button>${desktopServer.server_url ? '<button class="btn ghost" id="desktopStandaloneBtn" type="button">Use standalone on next launch</button>' : ''}</div></form>${desktopServer.config_dir ? `<div class="file-row"><span>Local data folder<br><span class="small muted">${esc(desktopServer.config_dir)}</span></span><button class="btn ghost" id="copyDesktopDataFolderBtn" type="button">Copy path</button></div>` : ''}<p class="small muted">Restart DiVault after changing desktop mode. Server mode opens that URL directly; standalone mode starts the bundled local vault.</p></div>` : '';
+  const desktopParityCard = state.desktop && isAdmin ? renderDesktopParityCard(desktopServer) : '';
   const androidClientCard = window.DiVaultAndroid ? `<div class="card stack"><h3>Android app</h3><p class="muted small">Change the saved Android server URL without waiting for the offline screen.</p><div class="file-row"><span>Current server<br><span class="small muted">${esc(location.origin)}</span></span><button class="btn" id="androidChangeServerBtn" type="button">Change server</button></div></div>` : '';
   const retention = retentionSettings?.settings || { version_limit: 3, trash_days: 30 };
   const retentionCard = isAdmin ? `<div class="card stack"><h3>Recycle bin and version policy</h3><form id="retentionSettingsForm" class="stack"><div class="file-row"><span>File version policy<br><span class="small muted">Keep only the most recent note versions.</span></span><span class="settings-inline-input">Keep only <input name="version_limit" type="number" min="0" max="100" step="1" value="${esc(retention.version_limit ?? 3)}" inputmode="numeric"> most recent versions</span></div><div class="file-row"><span>Empty recycle bin contents older than<br><span class="small muted">Uses the date a note was moved to the recycle bin.</span></span><span class="settings-inline-input"><input name="trash_days" type="number" min="1" max="3650" step="1" value="${esc(retention.trash_days ?? 30)}" inputmode="numeric"> days</span></div><button class="btn primary">Save policy</button></form></div>` : '';
   const passkeyRows = (passkeys.credentials || []).map(key => `<div class="file-row"><span>${esc(key.label)}<br><span class="small muted">Added ${esc(key.created_at || '')}${key.last_used_at ? ` · Last used ${esc(key.last_used_at)}` : ''}</span></span><button class="btn danger" type="button" data-passkey-delete="${key.id}">Remove</button></div>`).join('') || '<p class="small muted">No passkeys enrolled yet.</p>';
   const passkeyCard = `<div class="card stack"><h3>Passkeys / biometrics</h3><p class="muted small">Use a passkey with Windows Hello, Touch ID, Face ID, or your device screen lock. Works best on HTTPS or localhost.</p><div class="btn-row"><button class="btn" id="startPasskey" type="button" ${webauthnSupported() ? '' : 'disabled'}>Add passkey</button></div>${passkeyRows}</div>`;
-  const deviceCards = `${desktopServerCard}${androidClientCard}`;
+  const deviceCards = `${desktopServerCard}${desktopParityCard}${androidClientCard}`;
   const settingsTabs = [
     ['account', 'Account'],
     ['workspace', 'Workspace'],
