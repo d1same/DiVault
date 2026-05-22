@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-mkdir -p /config/files /config/backups /config/exports /config/imports /config/keys /config/logs /config/tmp
+mkdir -p /config/files /config/backups /config/exports /config/imports /config/keys /config/logs /config/tmp /media
 if [ -f /config/restore-pending.zip ]; then
   restore_ts="$(date -u +%Y%m%d-%H%M%S)"
   restore_stage="/config/tmp/restore-$restore_ts"
@@ -114,7 +114,7 @@ PHP
 fi
 
 if [ "${SKIP_CONFIG_CHOWN:-false}" != "true" ]; then
-  for path in /config /config/app.sqlite /config/files /config/backups /config/exports /config/imports /config/keys /config/logs /config/tmp; do
+  for path in /config /config/app.sqlite /config/files /config/backups /config/exports /config/imports /config/keys /config/logs /config/tmp /media; do
     if [ -e "$path" ]; then
       chown -R www-data:www-data "$path"
     fi
