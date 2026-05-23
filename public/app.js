@@ -8,6 +8,7 @@ let onlyOfficeScriptPromise = null;
 let activeContextMenuActions = [];
 let driveUploadDragDepth = 0;
 let driveUploadStatusTimer = null;
+let driveMoveDragPayload = null;
 const driveUploadStatus = { visible: false, active: false, fileName: '', total: 0, current: 0, percent: 0, message: '', error: false };
 
 const defaultFeatures = () => ({
@@ -2283,6 +2284,7 @@ function bindDriveActions() {
     e.target.value = '';
   });
   bindDriveDropUpload();
+  bindDriveItemDragging();
   document.querySelector('#toggleDriveSelect')?.addEventListener('click', () => {
     state.driveSelectionMode = !state.driveSelectionMode;
     if (!state.driveSelectionMode) {
@@ -2367,6 +2369,96 @@ function bindDriveDropUpload() {
     setActive(false);
     uploadDriveFiles([...event.dataTransfer.files]);
   });
+}
+function bindDriveItemDragging() {
+  document.querySelectorAll('[data-drive-key]').forEach(item => {
+    item.addEventListener('dragstart', event => {
+      const interactive = event.target.closest?.('.drive-actions, .drive-select, input, select, textarea');
+      if (interactive) {
+        event.preventDefault();
+        return;
+      }
+      const key = item.dataset.driveKey || '';
+      driveMoveDragPayload = driveMovePayloadFromDraggedKey(key);
+      if (!driveMoveDragPayload.keys.length) {
+        event.preventDefault();
+        return;
+      }
+      item.classList.add('drive-item-dragging');
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('application/x-divault-drive-items', JSON.stringify(driveMoveDragPayload));
+      event.dataTransfer.setData('text/plain', `${driveMoveDragPayload.keys.length} Drive item${driveMoveDragPayload.keys.length === 1 ? '' : 's'}`);
+    });
+    item.addEventListener('dragend', () => {
+      driveMoveDragPayload = null;
+      clearDriveFolderDropState();
+    });
+  });
+  document.querySelectorAll('[data-drive-folder-drop]').forEach(folder => {
+    const setHover = event => {
+      if (!driveDragHasDriveItems(event) || !driveCanDropOnFolder(folder)) return false;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      folder.classList.add('drive-folder-drop-hover');
+      return true;
+    };
+    folder.addEventListener('dragenter', setHover);
+    folder.addEventListener('dragover', setHover);
+    folder.addEventListener('dragleave', event => {
+      if (!folder.contains(event.relatedTarget)) folder.classList.remove('drive-folder-drop-hover');
+    });
+    folder.addEventListener('drop', async event => {
+      if (!driveDragHasDriveItems(event) || !driveCanDropOnFolder(folder)) return;
+      event.preventDefault();
+      const payload = readDriveMovePayload(event);
+      const folderId = folder.dataset.driveFolderDrop || '';
+      driveMoveDragPayload = null;
+      clearDriveFolderDropState();
+      await moveDrivePayloadToFolder(payload, folderId);
+    });
+  });
+}
+
+function driveMovePayloadFromDraggedKey(key) {
+  const visible = new Set(driveVisibleSelectionKeys());
+  const selected = selectedVisibleDriveKeys();
+  const keys = state.selectedDriveItems.has(key) && selected.length ? selected : [key].filter(item => visible.has(item));
+  return drivePayloadFromKeys(keys);
+}
+
+function drivePayloadFromKeys(keys) {
+  return {
+    keys,
+    folder_ids: keys.filter(key => key.startsWith('folder:')).map(key => Number(key.slice(7))).filter(Boolean),
+    file_ids: keys.filter(key => key.startsWith('file:')).map(key => Number(key.slice(5))).filter(Boolean),
+  };
+}
+
+function driveDragHasDriveItems(event) {
+  const types = [...(event.dataTransfer?.types || [])];
+  return types.includes('application/x-divault-drive-items') || Boolean(driveMoveDragPayload?.keys?.length);
+}
+
+function readDriveMovePayload(event) {
+  const raw = event.dataTransfer?.getData('application/x-divault-drive-items') || '';
+  if (raw) {
+    try {
+      const payload = JSON.parse(raw);
+      if (Array.isArray(payload.keys)) return drivePayloadFromKeys(payload.keys);
+    } catch (error) {
+      console.warn('Could not read Drive drag payload', error);
+    }
+  }
+  return driveMoveDragPayload || drivePayloadFromKeys([]);
+}
+
+function driveCanDropOnFolder(folder) {
+  const targetKey = `folder:${folder.dataset.driveFolderDrop || ''}`;
+  return Boolean(driveMoveDragPayload?.keys?.length) && !driveMoveDragPayload.keys.includes(targetKey);
+}
+
+function clearDriveFolderDropState() {
+  document.querySelectorAll('.drive-item-dragging, .drive-folder-drop-hover').forEach(item => item.classList.remove('drive-item-dragging', 'drive-folder-drop-hover'));
 }
 
 function openDriveUploadPicker() {
@@ -2777,12 +2869,20 @@ function selectedVisibleDriveKeys() {
 }
 
 function selectedDrivePayload() {
-  const keys = selectedVisibleDriveKeys();
-  return {
-    keys,
-    folder_ids: keys.filter(key => key.startsWith('folder:')).map(key => Number(key.slice(7))).filter(Boolean),
-    file_ids: keys.filter(key => key.startsWith('file:')).map(key => Number(key.slice(5))).filter(Boolean),
-  };
+  return drivePayloadFromKeys(selectedVisibleDriveKeys());
+}
+
+async function moveDrivePayloadToFolder(selection, folderId) {
+  if (!selection.keys.length) return;
+  await runUserAction(async () => {
+    for (const id of selection.folder_ids) await api(`/drive/folders/${encodeURIComponent(id)}`, { method: 'PATCH', body: { parent_id: folderId } });
+    for (const id of selection.file_ids) await api(`/drive/files/${encodeURIComponent(id)}`, { method: 'PATCH', body: { folder_id: folderId } });
+    state.selectedDriveItems.clear();
+    state.driveSelectionMode = false;
+    toast(`Moved ${selection.keys.length} item${selection.keys.length === 1 ? '' : 's'}`);
+    await loadDrive();
+    renderApp();
+  }, 'Move selected failed');
 }
 
 async function compressSelectedDriveItems() {
@@ -3812,7 +3912,7 @@ function renderDriveFolder(folder) {
   const selected = state.selectedDriveItems.has(selectionKey);
   const selector = state.driveSelectionMode ? `<label class="drive-select"><input type="checkbox" data-select-drive="${esc(selectionKey)}" ${selected ? 'checked' : ''} aria-label="Select ${esc(name)}"><span class="sr-only">Select ${esc(name)}</span></label>` : '';
   const actions = `${driveActionButton('Compress', 'box', `data-zip-drive-folder="${esc(folder.id)}" data-name="${esc(name)}"`)}${driveActionButton('Rename', 'rename', `data-rename-drive-folder="${esc(folder.id)}" data-name="${esc(name)}"`)}${driveActionButton('Move', 'move', `data-move-drive-folder="${esc(folder.id)}" data-name="${esc(name)}"`)}${canManage ? driveActionButton('Share', 'share', `data-share-drive-folder="${esc(folder.id)}" data-name="${esc(name)}"`) : ''}${driveActionButton('Delete', 'trash', `data-delete-drive-folder="${esc(folder.id)}" data-name="${esc(name)}"`, 'danger-link')}`;
-  return `<article class="drive-item folder-item ${selected ? 'selected' : ''}" data-drive-folder-card="${esc(folder.id)}" data-drive-key="${esc(selectionKey)}">${selector}<button class="drive-main" data-drive-folder="${esc(folder.id)}" type="button"><span class="drive-icon">${icon('folder')}</span><span class="drive-name-stack"><b>${esc(name)}</b><small>${esc(meta)}</small><span class="drive-meta-row"><span>${esc(contents)}</span>${modified ? `<span>${esc(modified)}</span>` : ''}</span></span></button><span class="drive-size">-</span><span class="drive-kind">Folder</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
+  return `<article class="drive-item folder-item ${selected ? 'selected' : ''}" draggable="true" data-drive-folder-card="${esc(folder.id)}" data-drive-folder-drop="${esc(folder.id)}" data-drive-key="${esc(selectionKey)}">${selector}<button class="drive-main" data-drive-folder="${esc(folder.id)}" type="button"><span class="drive-icon">${icon('folder')}</span><span class="drive-name-stack"><b>${esc(name)}</b><small>${esc(meta)}</small><span class="drive-meta-row"><span>${esc(contents)}</span>${modified ? `<span>${esc(modified)}</span>` : ''}</span></span></button><span class="drive-size">-</span><span class="drive-kind">Folder</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
 }
 
 function renderDriveFile(file) {
@@ -3837,7 +3937,7 @@ function renderDriveFile(file) {
   const meta = [typeLabel, size, modified].filter(Boolean).join(' · ');
   const previewAttrs = `data-preview-file="${previewUrl}" data-file-name="${esc(name)}" data-file-mime="${esc(mime)}" data-download-file="${downloadUrl}" data-drive-preview-id="${esc(id)}"${editable ? ` data-drive-preview-edit="${esc(id)}"` : ''}${officeEditable ? ` data-drive-preview-office="${esc(id)}"` : ''}${zip ? ` data-drive-preview-extract="${esc(id)}"` : ''}`;
   const actions = `${driveActionLink('Download', 'download', downloadUrl)}${editable ? driveActionButton('Edit text', 'draw', `data-edit-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${officeEditable ? driveActionButton('Edit document', 'documentEdit', `data-office-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${zip ? driveActionButton('Extract', 'extract', `data-extract-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${driveActionButton('Compress', 'box', `data-zip-drive-file="${esc(id)}" data-name="${esc(name)}"`)}${driveActionButton('Rename', 'rename', `data-rename-drive-file="${esc(id)}" data-name="${esc(name)}"`)}${driveActionButton('Move', 'move', `data-move-drive-file="${esc(id)}" data-name="${esc(name)}"`)}${canManage ? driveActionButton('Share', 'share', `data-share-drive-file="${esc(id)}" data-name="${esc(name)}"`) : ''}${driveActionButton('Delete', 'trash', `data-delete-drive-file="${esc(id)}" data-name="${esc(name)}"`, 'danger-link')}`;
-  return `<article class="drive-item file-item drive-${visualType}-item ${selected ? 'selected' : ''}" data-drive-key="${esc(selectionKey)}">${selector}<button class="drive-main" ${previewAttrs} type="button">${thumb}<span class="drive-name-stack"><b>${esc(name)}</b><small>${esc(meta)}</small><span class="drive-meta-row"><span>${esc(typeLabel)}</span><span>${esc(size)}</span>${modified ? `<span>${esc(modified)}</span>` : ''}</span></span></button><span class="drive-size">${esc(size)}</span><span class="drive-kind">${esc(driveFileExtension(name))}</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
+  return `<article class="drive-item file-item drive-${visualType}-item ${selected ? 'selected' : ''}" draggable="true" data-drive-key="${esc(selectionKey)}">${selector}<button class="drive-main" ${previewAttrs} type="button">${thumb}<span class="drive-name-stack"><b>${esc(name)}</b><small>${esc(meta)}</small><span class="drive-meta-row"><span>${esc(typeLabel)}</span><span>${esc(size)}</span>${modified ? `<span>${esc(modified)}</span>` : ''}</span></span></button><span class="drive-size">${esc(size)}</span><span class="drive-kind">${esc(driveFileExtension(name))}</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
 }
 
 function driveFolderContentsLabel(folder) {

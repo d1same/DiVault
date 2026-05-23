@@ -1213,9 +1213,14 @@ body.resizing-note-pane { cursor: col-resize; user-select: none; }
 .drive-gallery-note > span { width: 34px; height: 34px; display: grid; place-items: center; border-radius: var(--radius-md); background: color-mix(in srgb, var(--surface) 78%, var(--accent)); color: var(--primary-dark); }
 .drive-gallery-note b { display: block; font-size: .86rem; font-weight: var(--weight-strong); }
 .drive-gallery-note small { display: block; margin-top: 2px; color: var(--muted); font-size: var(--text-label); font-weight: var(--weight-ui); }
-.drive-item { position: relative; min-width: 0; max-width: 100%; min-height: 88px; display: grid; grid-template-columns: minmax(0, 1fr) 40px; gap: 8px; align-items: start; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); padding: 12px; background: color-mix(in srgb, var(--surface-card) 96%, var(--surface)); box-shadow: none; transition: border-color .14s ease, background .14s ease, transform .14s ease; }
+.drive-item { position: relative; min-width: 0; max-width: 100%; min-height: 88px; display: grid; grid-template-columns: minmax(0, 1fr) 40px; gap: 8px; align-items: start; border: 1px solid var(--border-soft); border-radius: var(--radius-lg); padding: 12px; background: color-mix(in srgb, var(--surface-card) 96%, var(--surface)); box-shadow: none; transition: border-color .14s ease, background .14s ease, box-shadow .14s ease, opacity .14s ease, transform .14s ease; }
 .drive-item:hover { border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); background: color-mix(in srgb, var(--surface-card) 93%, var(--primary)); transform: translateY(-1px); }
 .drive-item.selected { border-color: var(--primary); background: color-mix(in srgb, var(--surface-card) 88%, var(--primary)); }
+.drive-item[draggable="true"] { cursor: grab; }
+.drive-item[draggable="true"]:active { cursor: grabbing; }
+.drive-item.drive-item-dragging { opacity: .48; transform: scale(.985); }
+.folder-item.drive-folder-drop-hover { border-color: color-mix(in srgb, var(--primary) 72%, var(--border)); background: color-mix(in srgb, var(--surface-card) 80%, var(--primary)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 16%, transparent); transform: translateY(-2px); }
+.folder-item.drive-folder-drop-hover .drive-icon { border-color: color-mix(in srgb, var(--primary) 42%, var(--border)); color: var(--primary-dark); }
 .drive-select { position: absolute; top: 8px; left: 8px; z-index: 2; display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); box-shadow: var(--shadow-soft); cursor: pointer; }
 .drive-select input { position: absolute; left: 50%; top: 50%; width: 16px; min-width: 16px; height: 16px; min-height: 16px; margin: 0; accent-color: var(--primary); transform: translate(-50%, -50%); cursor: pointer; }
 .drive-shell.selecting .drive-main { padding-left: 30px; }
