@@ -8,6 +8,7 @@ final class App
 
     private PDO $db;
     private Crypto $crypto;
+    private ?array $inputOverride = null;
 
     public function __construct()
     {
@@ -51,6 +52,7 @@ final class App
         if ($method === 'POST' && $path === '/webauthn/login') $this->webauthnLogin();
         if ($method === 'POST' && $path === '/logout') $this->logout();
         if ($method === 'POST' && in_array($path, ['/integrations/ai/review-notes', '/integrations/ai/review-notes/'], true)) $this->createAiReviewNote();
+        if ($path === '/integrations/assistant' || str_starts_with($path, '/integrations/assistant/')) $this->routeAssistantApi($method, $path);
         if ($method === 'GET' && preg_match('#^/integrations/onlyoffice/download/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$#', $path, $m)) $this->onlyOfficeDownloadSigned($m[1]);
         if ($method === 'POST' && preg_match('#^/integrations/onlyoffice/callback/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$#', $path, $m)) $this->onlyOfficeCallback($m[1]);
 
@@ -176,6 +178,141 @@ final class App
         if ($method === 'POST' && $path === '/restore') $this->restore($user);
         if ($method === 'POST' && $path === '/restore/upload') $this->restoreUpload($user);
         throw new RuntimeException('Not found');
+    }
+
+    private function routeAssistantApi(string $method, string $path): void
+    {
+        $assistantPath = substr($path, strlen('/integrations/assistant')) ?: '/';
+        $assistantPath = rtrim($assistantPath, '/') ?: '/';
+        $user = $this->requireAssistantUser();
+
+        if ($method === 'GET' && in_array($assistantPath, ['/', '/status'], true)) $this->assistantStatus($user);
+        if ($method === 'GET' && $assistantPath === '/me') $this->json(['user' => $this->publicUser($user)]);
+        if ($method === 'GET' && $assistantPath === '/daily') $this->assistantDailySummary($user);
+
+        if ($method === 'GET' && $assistantPath === '/notes') $this->listNotes($user);
+        if ($method === 'POST' && $assistantPath === '/notes') $this->saveNote($user);
+        if ($method === 'GET' && preg_match('#^/notes/(\d+)$#', $assistantPath, $m)) $this->getNote($user, (int)$m[1]);
+        if ($method === 'PUT' && preg_match('#^/notes/(\d+)$#', $assistantPath, $m)) $this->saveNote($user, (int)$m[1]);
+        if ($method === 'PATCH' && preg_match('#^/notes/(\d+)$#', $assistantPath, $m)) $this->patchAssistantNote($user, (int)$m[1]);
+        if ($method === 'DELETE' && preg_match('#^/notes/(\d+)$#', $assistantPath, $m)) $this->deleteNote($user, (int)$m[1]);
+
+        if ($method === 'GET' && $assistantPath === '/calendars') $this->listCalendars($user);
+        if ($method === 'POST' && $assistantPath === '/calendars') $this->saveCalendar($user);
+        if ($method === 'PUT' && preg_match('#^/calendars/(\d+)$#', $assistantPath, $m)) $this->saveCalendar($user, (int)$m[1]);
+        if ($method === 'PATCH' && preg_match('#^/calendars/(\d+)$#', $assistantPath, $m)) $this->patchAssistantCalendar($user, (int)$m[1]);
+        if ($method === 'DELETE' && preg_match('#^/calendars/(\d+)$#', $assistantPath, $m)) $this->deleteCalendar($user, (int)$m[1]);
+
+        if ($method === 'GET' && $assistantPath === '/events') $this->listEvents($user);
+        if ($method === 'POST' && $assistantPath === '/events') $this->saveEvent($user);
+        if ($method === 'GET' && preg_match('#^/events/(\d+)$#', $assistantPath, $m)) $this->getEvent($user, (int)$m[1]);
+        if ($method === 'PUT' && preg_match('#^/events/(\d+)$#', $assistantPath, $m)) $this->saveEvent($user, (int)$m[1]);
+        if ($method === 'PATCH' && preg_match('#^/events/(\d+)$#', $assistantPath, $m)) $this->patchAssistantEvent($user, (int)$m[1]);
+        if ($method === 'DELETE' && preg_match('#^/events/(\d+)$#', $assistantPath, $m)) $this->deleteEvent($user, (int)$m[1]);
+
+        if ($method === 'GET' && $assistantPath === '/tasks') $this->listTasks($user);
+        if ($method === 'POST' && $assistantPath === '/tasks') $this->saveTask($user);
+        if ($method === 'GET' && preg_match('#^/tasks/(\d+)$#', $assistantPath, $m)) $this->getTask($user, (int)$m[1]);
+        if ($method === 'PUT' && preg_match('#^/tasks/(\d+)$#', $assistantPath, $m)) $this->saveTask($user, (int)$m[1]);
+        if ($method === 'PATCH' && preg_match('#^/tasks/(\d+)$#', $assistantPath, $m)) $this->patchAssistantTask($user, (int)$m[1]);
+        if ($method === 'DELETE' && preg_match('#^/tasks/(\d+)$#', $assistantPath, $m)) $this->deleteTask($user, (int)$m[1]);
+
+        throw new RuntimeException('Assistant API route not found');
+    }
+
+    private function assistantStatus(array $user): void
+    {
+        $this->json([
+            'ok' => true,
+            'user' => $this->publicUser($user),
+            'endpoints' => [
+                '/integrations/assistant/daily',
+                '/integrations/assistant/notes',
+                '/integrations/assistant/calendars',
+                '/integrations/assistant/events',
+                '/integrations/assistant/tasks',
+            ],
+        ]);
+    }
+
+    private function patchAssistantNote(array $user, int $id): void
+    {
+        $current = $this->note($id, $user);
+        $data = $this->input();
+        $merged = array_merge([
+            'client_id' => $current['client_id'] ?? null,
+            'body' => $current['body'] ?? '',
+            'title' => $current['title'] ?? 'Quick note',
+            'type' => $current['type'] ?? 'text',
+            'section' => $current['section'] ?? 'All',
+            'category_id' => $current['category_id'] ?? null,
+            'category' => $current['category'] ?? null,
+            'tags' => $current['tags'] ?? null,
+            'pinned' => (int)($current['pinned'] ?? 0),
+            'archived' => (int)($current['archived'] ?? 0),
+        ], $data);
+        $this->withInput($merged, fn() => $this->saveNote($user, $id));
+    }
+
+    private function patchAssistantCalendar(array $user, int $id): void
+    {
+        $current = $this->calendarAccess($user, $id, 'admin');
+        $data = $this->input();
+        $merged = array_merge([
+            'name' => $current['name'] ?? 'Calendar',
+            'color' => $current['color'] ?? '#635bff',
+            'description' => $current['description'] ?? null,
+        ], $data);
+        $this->withInput($merged, fn() => $this->saveCalendar($user, $id));
+    }
+
+    private function patchAssistantEvent(array $user, int $id): void
+    {
+        $current = $this->eventAccess($user, $id, 'edit');
+        $data = $this->input();
+        $merged = array_merge([
+            'calendar_id' => $current['calendar_id'] ?? null,
+            'title' => $current['title'] ?? 'Untitled event',
+            'starts_at' => $current['starts_at'] ?? gmdate('Y-m-d H:i:s'),
+            'ends_at' => $current['ends_at'] ?? ($current['starts_at'] ?? gmdate('Y-m-d H:i:s')),
+            'all_day' => (int)($current['all_day'] ?? 0),
+            'description' => $current['description'] ?? '',
+            'location' => $current['location'] ?? '',
+            'recurrence_rule' => $current['recurrence_rule'] ?? null,
+            'reminder_minutes' => $this->eventReminderMinutes($user, $id) ?? -1,
+            'note_ids' => array_map(fn($note) => (int)$note['id'], $this->linkedNotes('event', $id, $user)),
+        ], $data);
+        $this->withInput($merged, fn() => $this->saveEvent($user, $id));
+    }
+
+    private function patchAssistantTask(array $user, int $id): void
+    {
+        $current = $this->taskAccess($user, $id, 'edit');
+        $data = $this->input();
+        $merged = array_merge([
+            'calendar_id' => $current['calendar_id'] ?? null,
+            'shared' => empty($current['private']),
+            'title' => $current['title'] ?? 'Untitled task',
+            'description' => $current['description'] ?? '',
+            'location' => $current['location'] ?? '',
+            'status' => $current['status'] ?? 'open',
+            'priority' => (int)($current['priority'] ?? 0),
+            'due_at' => $current['due_at'] ?? null,
+            'reminder_minutes' => $this->taskReminderMinutes($user, $id) ?? -1,
+            'note_ids' => array_map(fn($note) => (int)$note['id'], $this->linkedNotes('task', $id, $user)),
+        ], $data);
+        $this->withInput($merged, fn() => $this->saveTask($user, $id));
+    }
+
+    private function withInput(array $data, callable $callback): void
+    {
+        $previous = $this->inputOverride;
+        $this->inputOverride = $data;
+        try {
+            $callback();
+        } finally {
+            $this->inputOverride = $previous;
+        }
     }
 
     private function bootstrap(): void
@@ -846,11 +983,11 @@ final class App
         $this->json(['note' => $note, 'files' => $files->fetchAll(PDO::FETCH_ASSOC), 'secrets' => $secrets->fetchAll(PDO::FETCH_ASSOC), 'versions' => $versions->fetchAll(PDO::FETCH_ASSOC)]);
     }
 
-    private function saveNote(array $user): void
+    private function saveNote(array $user, int $id = 0): void
     {
         $this->requireEditor($user);
         $data = $this->input();
-        $id = isset($data['id']) ? (int)$data['id'] : 0;
+        $id = $id > 0 ? $id : (isset($data['id']) ? (int)$data['id'] : 0);
         $parsed = $this->extractSecrets($data['body'] ?? '', $id);
         $clientId = !empty($data['client_id']) ? (int)$data['client_id'] : null;
         $title = trim($data['title'] ?? '') ?: 'Quick note';
@@ -1307,6 +1444,41 @@ final class App
         $taskStmt = $this->db->prepare("SELECT r.id, 'task' AS kind, r.remind_at, t.title, t.due_at FROM task_reminders r JOIN tasks t ON t.id = r.task_id LEFT JOIN calendars c ON c.id = t.calendar_id LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE r.user_id = ? AND (t.user_id = ? OR (t.private = 0 AND c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?))) AND r.dismissed_at IS NULL AND r.sent_at IS NULL AND r.remind_at <= CURRENT_TIMESTAMP ORDER BY r.remind_at LIMIT 25");
         $taskStmt->execute([$userId, $userId, $userId, $userId, $userId]);
         $this->json(['reminders' => array_merge($eventStmt->fetchAll(PDO::FETCH_ASSOC), $taskStmt->fetchAll(PDO::FETCH_ASSOC))]);
+    }
+
+    private function assistantDailySummary(array $user): void
+    {
+        $this->ensureDefaultCalendar($user);
+        $this->syncDueCalendarFeeds($user);
+        $userId = (int)$user['id'];
+        $start = $this->cleanDateTime($_GET['start'] ?? '') ?: gmdate('Y-m-d 00:00:00');
+        $end = $this->cleanDateTime($_GET['end'] ?? '') ?: gmdate('Y-m-d 23:59:59');
+
+        $calendarStmt = $this->db->prepare("SELECT c.id, c.name, c.color, c.description, CASE WHEN c.owner_user_id = ? THEN 'owner' ELSE s.permission END AS permission, u.name AS owner_name FROM calendars c JOIN users u ON u.id = c.owner_user_id LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?) ORDER BY c.owner_user_id = ? DESC, c.name COLLATE NOCASE");
+        $calendarStmt->execute([$userId, $userId, $userId, $userId, $userId]);
+
+        $noteStmt = $this->db->prepare('SELECT n.id, n.title, n.type, n.section, n.category, n.tags, n.pinned, n.archived, n.created_at, n.updated_at, c.name AS category_name, cl.name AS client_name FROM notes n LEFT JOIN asset_categories c ON c.id = n.category_id LEFT JOIN clients cl ON cl.id = n.client_id WHERE n.user_id = ? AND n.deleted = 0 ORDER BY n.pinned DESC, n.updated_at DESC LIMIT 15');
+        $noteStmt->execute([$userId]);
+
+        $eventStmt = $this->db->prepare("SELECT e.*, c.name AS calendar_name, c.color AS calendar_color FROM calendar_events e JOIN calendars c ON c.id = e.calendar_id LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?) AND ((e.recurrence_rule IS NULL AND e.starts_at <= ? AND COALESCE(e.ends_at, e.starts_at) >= ?) OR (e.recurrence_rule IS NOT NULL AND e.starts_at <= ?)) ORDER BY e.starts_at ASC");
+        $eventStmt->execute([$userId, $userId, $userId, $end, $start, $end]);
+
+        $taskStmt = $this->db->prepare("SELECT t.*, c.name AS calendar_name, c.color AS calendar_color FROM tasks t LEFT JOIN calendars c ON c.id = t.calendar_id WHERE t.status != 'done' AND (t.user_id = ? OR (t.private = 0 AND t.calendar_id IN (SELECT c2.id FROM calendars c2 LEFT JOIN calendar_shares s ON s.calendar_id = c2.id AND s.user_id = ? WHERE c2.archived = 0 AND (c2.owner_user_id = ? OR s.user_id = ?)))) ORDER BY t.due_at IS NULL, t.due_at ASC, t.priority DESC, t.id DESC LIMIT 25");
+        $taskStmt->execute([$userId, $userId, $userId, $userId]);
+
+        $eventReminderStmt = $this->db->prepare("SELECT r.id, 'event' AS kind, r.remind_at, e.title, e.starts_at AS due_at FROM calendar_event_reminders r JOIN calendar_events e ON e.id = r.event_id JOIN calendars c ON c.id = e.calendar_id LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE r.user_id = ? AND c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?) AND r.dismissed_at IS NULL AND r.sent_at IS NULL AND r.remind_at <= CURRENT_TIMESTAMP ORDER BY r.remind_at LIMIT 25");
+        $eventReminderStmt->execute([$userId, $userId, $userId, $userId]);
+        $taskReminderStmt = $this->db->prepare("SELECT r.id, 'task' AS kind, r.remind_at, t.title, t.due_at FROM task_reminders r JOIN tasks t ON t.id = r.task_id LEFT JOIN calendars c ON c.id = t.calendar_id LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE r.user_id = ? AND (t.user_id = ? OR (t.private = 0 AND c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?))) AND r.dismissed_at IS NULL AND r.sent_at IS NULL AND r.remind_at <= CURRENT_TIMESTAMP ORDER BY r.remind_at LIMIT 25");
+        $taskReminderStmt->execute([$userId, $userId, $userId, $userId, $userId]);
+
+        $this->json([
+            'range' => ['start' => $start, 'end' => $end],
+            'calendars' => $calendarStmt->fetchAll(PDO::FETCH_ASSOC),
+            'events' => $this->expandRecurringEvents($eventStmt->fetchAll(PDO::FETCH_ASSOC), $start, $end),
+            'tasks' => $taskStmt->fetchAll(PDO::FETCH_ASSOC),
+            'recent_notes' => $noteStmt->fetchAll(PDO::FETCH_ASSOC),
+            'reminders' => array_merge($eventReminderStmt->fetchAll(PDO::FETCH_ASSOC), $taskReminderStmt->fetchAll(PDO::FETCH_ASSOC)),
+        ]);
     }
 
     private function updateReminder(array $user, string $kind, int $id, string $action): void
@@ -3503,6 +3675,31 @@ final class App
         return $user;
     }
 
+    private function requireAssistantUser(): array
+    {
+        $configuredToken = Config::assistantApiToken();
+        if ($configuredToken === '') throw new RuntimeException('Assistant API is not configured');
+        $provided = $this->apiTokenFromRequest();
+        if ($provided === '' || !hash_equals($configuredToken, $provided)) throw new RuntimeException('Assistant API token required');
+
+        $email = Config::assistantUserEmail();
+        if ($email === '') throw new RuntimeException('Assistant user email is not configured');
+        $stmt = $this->db->prepare('SELECT * FROM users WHERE email = ? AND disabled = 0');
+        $stmt->execute([$email]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$user) throw new RuntimeException('Assistant user not found');
+        return $user;
+    }
+
+    private function apiTokenFromRequest(): string
+    {
+        $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+        if (preg_match('/^Bearer\s+(.+)$/i', $header, $m)) return trim($m[1]);
+        $provided = trim($_SERVER['HTTP_X_DIVAULT_AI_TOKEN'] ?? '');
+        if ($provided !== '') return $provided;
+        return trim($_SERVER['HTTP_X_API_KEY'] ?? '');
+    }
+
     private function configuredAiReviewToken(): string
     {
         $envToken = Config::aiReviewApiToken();
@@ -3753,6 +3950,7 @@ final class App
 
     private function input(): array
     {
+        if ($this->inputOverride !== null) return $this->inputOverride;
         $raw = file_get_contents('php://input');
         return $raw ? (json_decode($raw, true) ?: []) : $_POST;
     }

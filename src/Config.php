@@ -66,6 +66,16 @@ final class Config
         return strtolower(trim(getenv('AI_REVIEW_USER_EMAIL') ?: ''));
     }
 
+    public static function assistantApiToken(): string
+    {
+        return trim(getenv('ASSISTANT_API_TOKEN') ?: '');
+    }
+
+    public static function assistantUserEmail(): string
+    {
+        return strtolower(trim(getenv('ASSISTANT_USER_EMAIL') ?: ''));
+    }
+
     public static function onlyOfficeUrl(): string
     {
         return rtrim(trim(getenv('ONLYOFFICE_URL') ?: ''), '/');
