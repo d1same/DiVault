@@ -448,6 +448,69 @@ curl -X POST "https://notes.example.com/api/integrations/ai/review-notes" \
 
 `X-API-Key: ...` and `Authorization: Bearer ...` are also accepted. `X-DiVault-AI-Token` is the most explicit option for DiVault, while `X-API-Key` is useful for agents that only expose a generic API key header.
 
+## Assistant API
+
+Trusted assistants can use a dedicated Assistant API token to read and write daily DiVault data without browser cookies or CSRF tokens. Send the token as `X-API-Key`, `X-DiVault-AI-Token`, or `Authorization: Bearer ...`.
+
+Server environment variables:
+
+```text
+ASSISTANT_API_TOKEN=use-a-different-long-random-token
+ASSISTANT_USER_EMAIL=owner@example.com
+```
+
+Base URL:
+
+```text
+https://notes.example.com/api/integrations/assistant
+```
+
+Available endpoints:
+
+```text
+GET    /status
+GET    /me
+GET    /daily?start=2026-05-25T00:00&end=2026-05-25T23:59
+GET    /notes?q=search&view=all
+POST   /notes
+GET    /notes/{id}
+PATCH  /notes/{id}
+DELETE /notes/{id}
+GET    /calendars
+POST   /calendars
+PATCH  /calendars/{id}
+DELETE /calendars/{id}
+GET    /events?start=2026-05-25T00:00&end=2026-05-26T00:00
+POST   /events
+GET    /events/{id}
+PATCH  /events/{id}
+DELETE /events/{id}
+GET    /tasks?view=open
+POST   /tasks
+GET    /tasks/{id}
+PATCH  /tasks/{id}
+DELETE /tasks/{id}
+```
+
+Example task request:
+
+```bash
+curl -X POST "https://notes.example.com/api/integrations/assistant/tasks" \
+  -H "X-API-Key: $ASSISTANT_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Follow up with Hermes",
+    "description": "Created through the Assistant API.",
+    "due_at": "2026-05-25 17:00:00",
+    "priority": 3,
+    "shared": false
+  }'
+```
+
+The Assistant API is intentionally limited to notes, calendars, events, tasks, and daily summaries. Admin/user management, backups, exports, Drive files, and secret reveal endpoints still require a normal logged-in browser session.
+
+Use a separate Assistant API token from the AI review-note token. Existing `AI_REVIEW_API_TOKEN` values remain scoped to the review-note endpoint and do not grant Assistant API access.
+
 ## Smoke Testing
 
 After starting a local container on port `3443`, run:
