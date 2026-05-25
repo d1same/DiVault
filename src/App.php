@@ -50,7 +50,7 @@ final class App
         if ($method === 'POST' && $path === '/webauthn/login/options') $this->webauthnLoginOptions();
         if ($method === 'POST' && $path === '/webauthn/login') $this->webauthnLogin();
         if ($method === 'POST' && $path === '/logout') $this->logout();
-        if ($method === 'POST' && $path === '/integrations/ai/review-notes') $this->createAiReviewNote();
+        if ($method === 'POST' && in_array($path, ['/integrations/ai/review-notes', '/integrations/ai/review-notes/'], true)) $this->createAiReviewNote();
         if ($method === 'GET' && preg_match('#^/integrations/onlyoffice/download/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$#', $path, $m)) $this->onlyOfficeDownloadSigned($m[1]);
         if ($method === 'POST' && preg_match('#^/integrations/onlyoffice/callback/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$#', $path, $m)) $this->onlyOfficeCallback($m[1]);
 
@@ -3488,6 +3488,7 @@ final class App
         $provided = '';
         if (preg_match('/^Bearer\s+(.+)$/i', $header, $m)) $provided = trim($m[1]);
         if ($provided === '') $provided = trim($_SERVER['HTTP_X_DIVAULT_AI_TOKEN'] ?? '');
+        if ($provided === '') $provided = trim($_SERVER['HTTP_X_API_KEY'] ?? '');
         if ($provided === '' || !hash_equals($configuredToken, $provided)) throw new RuntimeException('AI review API token required');
 
         $email = Config::aiReviewUserEmail();

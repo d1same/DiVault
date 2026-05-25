@@ -446,7 +446,7 @@ curl -X POST "https://notes.example.com/api/integrations/ai/review-notes" \
   }'
 ```
 
-`Authorization: Bearer ...` is also accepted when your reverse proxy forwards that header, but `X-DiVault-AI-Token` is the most reliable option through Apache and common proxy setups.
+`X-API-Key: ...` and `Authorization: Bearer ...` are also accepted. `X-DiVault-AI-Token` is the most explicit option for DiVault, while `X-API-Key` is useful for agents that only expose a generic API key header.
 
 ## Smoke Testing
 
