@@ -9,6 +9,7 @@ let activeContextMenuActions = [];
 let driveUploadDragDepth = 0;
 let driveUploadStatusTimer = null;
 let driveMoveDragPayload = null;
+const driveAutoImageThumbLimit = 48;
 const driveUploadStatus = { visible: false, active: false, fileName: '', total: 0, current: 0, percent: 0, message: '', error: false };
 
 const defaultFeatures = () => ({
@@ -1080,13 +1081,10 @@ async function loadDrive() {
   if (state.driveFolderId) params.set('folder_id', state.driveFolderId);
   if (state.q) params.set('q', state.q);
   const suffix = params.toString() ? `?${params}` : '';
-  const [foldersRes, filesRes] = await Promise.all([
-    api('/drive/folders' + suffix).catch(err => ({ error: err.message, folders: [] })),
-    api('/drive/files' + suffix).catch(err => ({ error: err.message, files: [] }))
-  ]);
-  state.driveFolders = normalizeDriveCollection(foldersRes, 'folders');
-  state.driveFiles = normalizeDriveCollection(filesRes, 'files');
-  state.driveBreadcrumbs = foldersRes.breadcrumbs || foldersRes.path || filesRes.breadcrumbs || filesRes.path || [];
+  const res = await api(`/drive${suffix}`).catch(err => ({ error: err.message, folders: [], files: [] }));
+  state.driveFolders = normalizeDriveCollection(res, 'folders');
+  state.driveFiles = normalizeDriveCollection(res, 'files');
+  state.driveBreadcrumbs = res.breadcrumbs || res.path || [];
 }
 
 function normalizeDriveCollection(res, key) {
@@ -3821,6 +3819,8 @@ function renderDrive() {
   const statPills = [`${folders.length} folder${folders.length === 1 ? '' : 's'}`, `${files.length} file${files.length === 1 ? '' : 's'}`];
   const photoCount = files.filter(file => isDriveImageFile(file.original_name || file.name || file.filename || '', file.mime || file.mime_type || file.type || '')).length;
   const photoFolder = state.driveLayout === 'grid' && photoCount >= 3;
+  const autoImageThumbs = state.driveLayout === 'grid' && photoCount <= driveAutoImageThumbLimit;
+  const photoNote = autoImageThumbs ? `${photoCount} images are shown with larger previews. Switch to list view for compact file details.` : `${photoCount} images are indexed. Automatic thumbnails are paused in large folders, so open a file to preview it.`;
   if (totalBytes) statPills.push(formatDriveSize(totalBytes));
   if (photoCount) statPills.push(`${photoCount} photo${photoCount === 1 ? '' : 's'}`);
   if (latest) statPills.push(`Updated ${formatDateTime(latest)}`);
@@ -3828,8 +3828,8 @@ function renderDrive() {
   const upButton = state.driveFolderId ? `<button class="drive-up-btn" data-drive-folder="${esc(parentFolderId)}" type="button" aria-label="${esc(upLabel)}" title="${esc(upLabel)}"><span aria-hidden="true">‹</span></button>` : `<button class="drive-up-btn" type="button" aria-label="${esc(upLabel)}" title="${esc(upLabel)}" disabled><span aria-hidden="true">‹</span></button>`;
   return `<section class="drive-shell ${state.driveLayout === 'list' ? 'list-view' : 'grid-view'} ${photoFolder ? 'photo-folder' : ''} ${state.driveSelectionMode ? 'selecting' : ''}" aria-label="Drive file browser">
     ${bulkActions}<div class="drive-header card"><div class="drive-path-controls">${upButton}<span class="drive-root-mark compact" aria-hidden="true">${icon('folder')}</span></div><div class="drive-path-line"><span class="drive-path-label">Drive</span>${crumbs}</div><div class="drive-stats" aria-label="Folder summary"><span class="drive-summary" title="/${esc(pathText)}">${esc(itemSummary)}</span>${statPills.map(stat => `<span class="pill">${esc(stat)}</span>`).join('')}</div></div>
-    ${photoFolder ? `<div class="drive-gallery-note"><span>${toolIcon('cards', 'Photo gallery')}</span><div><b>Photo gallery view</b><small>${photoCount} images are shown with larger previews. Switch to list view for compact file details.</small></div></div>` : ''}
-    ${empty ? renderDriveEmptyState() : `<div class="drive-list-card" role="region" aria-label="${esc(currentName)} contents"><div class="drive-list-head">${renderDriveSortHeader('name', 'Name')}${renderDriveSortHeader('size', 'Size')}${renderDriveSortHeader('type', 'Type')}${renderDriveSortHeader('date', 'Modified')}<span>Actions</span></div><div class="drive-items">${folders.map(renderDriveFolder).join('')}${files.map(renderDriveFile).join('')}</div></div>`}
+    ${photoFolder ? `<div class="drive-gallery-note"><span>${toolIcon('cards', 'Photo gallery')}</span><div><b>${autoImageThumbs ? 'Photo gallery view' : 'Large photo folder'}</b><small>${esc(photoNote)}</small></div></div>` : ''}
+    ${empty ? renderDriveEmptyState() : `<div class="drive-list-card" role="region" aria-label="${esc(currentName)} contents"><div class="drive-list-head">${renderDriveSortHeader('name', 'Name')}${renderDriveSortHeader('size', 'Size')}${renderDriveSortHeader('type', 'Type')}${renderDriveSortHeader('date', 'Modified')}<span>Actions</span></div><div class="drive-items">${folders.map(renderDriveFolder).join('')}${files.map(file => renderDriveFile(file, autoImageThumbs)).join('')}</div></div>`}
   </section>`;
 }
 
@@ -3915,7 +3915,7 @@ function renderDriveFolder(folder) {
   return `<article class="drive-item folder-item ${selected ? 'selected' : ''}" draggable="true" data-drive-folder-card="${esc(folder.id)}" data-drive-folder-drop="${esc(folder.id)}" data-drive-key="${esc(selectionKey)}">${selector}<button class="drive-main" data-drive-folder="${esc(folder.id)}" type="button"><span class="drive-icon">${icon('folder')}</span><span class="drive-name-stack"><b>${esc(name)}</b><small>${esc(meta)}</small><span class="drive-meta-row"><span>${esc(contents)}</span>${modified ? `<span>${esc(modified)}</span>` : ''}</span></span></button><span class="drive-size">-</span><span class="drive-kind">Folder</span><span class="drive-modified">${updated ? esc(formatDateTime(updated)) : '-'}</span>${renderDriveActionMenu(actions)}</article>`;
 }
 
-function renderDriveFile(file) {
+function renderDriveFile(file, allowImagePreview = false) {
   const name = file.original_name || file.name || file.filename || 'Untitled file';
   const mime = file.mime || file.mime_type || file.type || '';
   const size = formatDriveSize(file.size || file.bytes || 0) || '0 B';
@@ -3928,7 +3928,7 @@ function renderDriveFile(file) {
   const selectionKey = `file:${id}`;
   const selected = state.selectedDriveItems.has(selectionKey);
   const selector = state.driveSelectionMode ? `<label class="drive-select"><input type="checkbox" data-select-drive="${esc(selectionKey)}" ${selected ? 'checked' : ''} aria-label="Select ${esc(name)}"><span class="sr-only">Select ${esc(name)}</span></label>` : '';
-  const thumb = renderDriveFileThumb(name, mime, previewUrl);
+  const thumb = renderDriveFileThumb(name, mime, previewUrl, allowImagePreview);
   const visualType = driveFileVisualType(name, mime);
   const canManage = driveCanManage(file);
   const updated = file.updated_at || file.created_at || '';
@@ -3953,10 +3953,10 @@ function driveFileTypeLabel(name, mime) {
   return ext === 'FILE' ? 'File' : `${ext} file`;
 }
 
-function renderDriveFileThumb(name, mime, previewUrl) {
+function renderDriveFileThumb(name, mime, previewUrl, allowImagePreview = false) {
   const type = driveFileVisualType(name, mime);
   const ext = driveFileExtension(name);
-  if (type === 'image') return `<span class="drive-thumb-wrap drive-file-${type}"><img class="drive-thumb" src="${previewUrl}" alt="${esc(name)}" loading="lazy"><span class="drive-file-badge">${esc(ext)}</span></span>`;
+  if (type === 'image' && allowImagePreview) return `<span class="drive-thumb-wrap drive-file-${type}"><img class="drive-thumb" src="${previewUrl}" alt="${esc(name)}" loading="lazy" decoding="async" fetchpriority="low"><span class="drive-file-badge">${esc(ext)}</span></span>`;
   return `<span class="drive-file-mark drive-file-${type}" aria-hidden="true"><span class="drive-file-glyph">${icon(driveFileVisualIcon(type))}</span><span class="drive-file-badge">${esc(ext)}</span></span>`;
 }
 
@@ -5800,6 +5800,17 @@ async function openSettings(options = {}) {
       openSettings();
     }, 'Drive storage update failed');
   });
+  modal.querySelector('#scanDriveSourcesBtn')?.addEventListener('click', async () => {
+    if (!await confirmDialog({ title: 'Scan mounted Drive files?', message: 'DiVault will walk the configured Drive storage path once and update file/folder metadata. Large /media mounts can take a while.', confirmText: 'Scan now' })) return;
+    await runUserAction(async () => {
+      const result = await api('/drive/source-sync', { method: 'POST', body: {} });
+      const files = Number(result.synced?.files || 0);
+      const folders = Number(result.synced?.folders || 0);
+      toast(`Mounted files scanned: ${files} files, ${folders} folders`);
+      if (state.section === 'drive') await loadDrive();
+      openSettings();
+    }, 'Mounted file scan failed');
+  });
   modal.querySelector('#calendarFeedForm')?.addEventListener('submit', async e => {
     e.preventDefault();
     await runUserAction(async () => {
@@ -6147,16 +6158,26 @@ function renderDriveStorageSettings(settings) {
   if (!settings) return '<p class="small muted">Drive storage settings are unavailable.</p>';
   const dir = settings.drive_files_dir || '/config/drive-files';
   const uploadMax = settings.drive_upload_max_mb || 250;
+  const hasStorageStats = Number.isFinite(Number(settings.storage_total_bytes)) && Number(settings.storage_total_bytes) > 0;
+  const used = Number(settings.storage_used_bytes || 0);
+  const free = Number(settings.storage_free_bytes || 0);
+  const total = Number(settings.storage_total_bytes || 0);
+  const storageLabel = hasStorageStats ? `${formatDriveSize(used)} used · ${formatDriveSize(free)} free · ${formatDriveSize(total)} total` : 'Storage size unavailable';
+  const indexedFiles = Number(settings.source_file_count || 0);
+  const indexedFolders = Number(settings.source_folder_count || 0);
+  const lastScan = settings.last_source_sync_at ? settings.last_source_sync_at : 'Never scanned';
   return `<p class="muted small">Drive uses one active storage folder. Set this to a path inside the container, then make Docker mount the host folder or disk there. A common setup is host <code>/mnt/user/divault-drive-files</code> mapped to container <code>/media</code>.</p>
     <form id="driveStorageSettingsForm" class="stack"><label class="field"><span>Container path for Drive files</span><input name="drive_files_dir" value="${esc(dir)}" placeholder="/media" autocomplete="off"></label><label class="field"><span>Upload limit MB</span><input name="drive_upload_max_mb" type="number" min="1" max="2048" value="${esc(uploadMax)}"></label><button class="btn primary">Save storage settings</button></form>
     <div class="file-row"><span>Current path<br><span class="small muted">${esc(dir)}</span></span><span class="pill ${settings.writable ? '' : 'secret'}">${settings.writable ? 'writable' : 'not writable'}</span></div>
+    <div class="file-row"><span>Storage size<br><span class="small muted">${esc(storageLabel)}</span></span><span class="pill ${settings.exists ? '' : 'secret'}">${settings.exists ? 'mounted' : 'missing'}</span></div>
+    <div class="file-row"><span>Mounted file index<br><span class="small muted">${indexedFiles} files · ${indexedFolders} folders · ${esc(lastScan)}</span></span><button class="btn ghost" type="button" id="scanDriveSourcesBtn">Scan mounted files</button></div>
     <pre class="settings-code-block"># Host path: where files live on the Docker host
 DIVAULT_MEDIA_PATH=/mnt/user/divault-drive-files
 
 # Container path: what DiVault sees inside the container
 Drive files path: /media</pre>
     <p class="small muted">Host path means the real folder or mounted disk on your server. Container path means the location available inside DiVault. To use a different drive, update the Docker host path, restart the container, then keep this field set to the matching container path.</p>
-    <p class="small muted">For multiple physical drives, combine them on the host first, for example with a NAS share, merger/union filesystem, storage pool, or one parent folder with mounted subfolders. DiVault stores files in one active container path at a time; switching this path migrates existing Drive files into the new location.</p>`;
+    <p class="small muted">DiVault does not copy mounted media into SQLite. The scan button only walks the mounted folder once and stores lightweight metadata rows so files can appear in Drive. For multiple physical drives, combine them on the host first, for example with a NAS share, merger/union filesystem, storage pool, or one parent folder with mounted subfolders.</p>`;
 }
 
 function renderAiIntegrationSettings(status) {

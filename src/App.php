@@ -90,6 +90,7 @@ final class App
         if ($method === 'GET' && $path === '/drive/storage-settings') $this->driveStorageSettings($user);
         if ($method === 'POST' && $path === '/drive/storage-settings') $this->saveDriveStorageSettings($user);
         if (str_starts_with($path, '/drive')) $this->requireFeatureEnabled($user, 'drive', 'Files are disabled');
+        if ($method === 'POST' && $path === '/drive/source-sync') $this->driveSyncSources($user);
         if ($method === 'GET' && in_array($path, ['/drive', '/drive/folders', '/drive/files'], true)) $this->driveList($user);
         if ($method === 'GET' && $path === '/drive/folders/tree') $this->driveFolderTree($user);
         if ($method === 'POST' && $path === '/drive/zip') $this->driveZipSelection($user);
@@ -2191,7 +2192,6 @@ final class App
 
     private function driveList(array $user): void
     {
-        $this->syncDriveSourceFiles($user);
         $parentId = isset($_GET['parent_id']) && $_GET['parent_id'] !== '' ? (int)$_GET['parent_id'] : (isset($_GET['folder_id']) && $_GET['folder_id'] !== '' ? (int)$_GET['folder_id'] : null);
         $q = trim((string)($_GET['q'] ?? ''));
         $userId = (int)$user['id'];
@@ -2249,6 +2249,8 @@ final class App
         $this->requireAdmin($user);
         $settings = Config::driveStorageSettings();
         $dir = Config::driveFilesDir();
+        $storageStats = $this->driveStorageStats($dir);
+        $sourceCounts = $this->driveSourceCounts((int)$user['id']);
         $this->json([
             'drive_files_dir' => $dir,
             'drive_upload_max_mb' => (int)round(Config::driveUploadMaxBytes() / 1024 / 1024),
@@ -2256,8 +2258,34 @@ final class App
             'configured_drive_upload_max_mb' => (int)($settings['drive_upload_max_mb'] ?? 0),
             'writable' => is_dir($dir) && is_writable($dir),
             'exists' => is_dir($dir),
+            'storage_total_bytes' => $storageStats['total'],
+            'storage_free_bytes' => $storageStats['free'],
+            'storage_used_bytes' => $storageStats['used'],
+            'source_file_count' => $sourceCounts['files'],
+            'source_folder_count' => $sourceCounts['folders'],
+            'last_source_sync_at' => (string)($settings['last_source_sync_at'] ?? ''),
             'recommended_mount' => '/media',
         ]);
+    }
+
+    private function driveStorageStats(string $dir): array
+    {
+        if (!is_dir($dir)) return ['total' => null, 'free' => null, 'used' => null];
+        $total = @disk_total_space($dir);
+        $free = @disk_free_space($dir);
+        if ($total === false || $free === false) return ['total' => null, 'free' => null, 'used' => null];
+        $totalBytes = max(0, (int)$total);
+        $freeBytes = max(0, (int)$free);
+        return ['total' => $totalBytes, 'free' => $freeBytes, 'used' => max(0, $totalBytes - $freeBytes)];
+    }
+
+    private function driveSourceCounts(int $userId): array
+    {
+        $folders = $this->db->prepare('SELECT COUNT(*) FROM drive_folders WHERE owner_user_id = ? AND source_path IS NOT NULL AND deleted = 0');
+        $folders->execute([$userId]);
+        $files = $this->db->prepare('SELECT COUNT(*) FROM drive_files WHERE owner_user_id = ? AND source_path IS NOT NULL AND deleted = 0');
+        $files->execute([$userId]);
+        return ['folders' => (int)$folders->fetchColumn(), 'files' => (int)$files->fetchColumn()];
     }
 
     private function saveDriveStorageSettings(array $user): void
@@ -2274,14 +2302,29 @@ final class App
 
         if ($dir !== $currentDir) $this->migrateDriveFiles($currentDir, $dir);
 
-        Config::saveDriveStorageSettings([
+        $settings = Config::driveStorageSettings();
+        Config::saveDriveStorageSettings(array_merge($settings, [
             'drive_files_dir' => $dir,
             'drive_upload_max_mb' => $uploadMaxMb,
+            'last_source_sync_at' => $dir === $currentDir ? (string)($settings['last_source_sync_at'] ?? '') : '',
+            'last_source_sync_by' => $dir === $currentDir ? (int)($settings['last_source_sync_by'] ?? 0) : 0,
             'updated_at' => gmdate('c'),
             'updated_by' => (int)$user['id'],
-        ]);
+        ]));
         $this->audit((int)$user['id'], 'settings.drive_storage_updated', 'settings', null);
         $this->driveStorageSettings($user);
+    }
+
+    private function driveSyncSources(array $user): void
+    {
+        $this->requireAdmin($user);
+        $result = $this->syncDriveSourceFiles($user);
+        Config::saveDriveStorageSettings(array_merge(Config::driveStorageSettings(), [
+            'last_source_sync_at' => gmdate('c'),
+            'last_source_sync_by' => (int)$user['id'],
+        ]));
+        $this->audit((int)$user['id'], 'drive_source.synced', 'drive', null);
+        $this->json(['ok' => true, 'synced' => $result]);
     }
 
     private function driveCreateFolder(array $user): void
@@ -2679,24 +2722,24 @@ final class App
         return $this->driveFileAccess($user, $id, 'view');
     }
 
-    private function syncDriveSourceFiles(array $user): void
+    private function syncDriveSourceFiles(array $user): array
     {
-        if (!in_array((string)($user['role'] ?? ''), ['owner', 'admin', 'editor'], true)) return;
+        if (!in_array((string)($user['role'] ?? ''), ['owner', 'admin'], true)) return ['folders' => 0, 'files' => 0];
         $root = rtrim(Config::driveFilesDir(), '/');
-        if ($root === '' || !is_dir($root) || !is_readable($root)) return;
+        if ($root === '' || !is_dir($root) || !is_readable($root)) return ['folders' => 0, 'files' => 0];
         $userId = (int)$user['id'];
         $seenFolders = [];
         $seenFiles = [];
-        $opaqueStoredNames = $this->driveOpaqueStoredNames($userId);
+        $opaqueStoredNames = $this->driveOpaqueStoredNames();
         $this->syncDriveDirectory($userId, $root, '', null, $seenFolders, $seenFiles, $opaqueStoredNames);
         $this->softDeleteMissingDriveSources('drive_files', $userId, $seenFiles);
         $this->softDeleteMissingDriveSources('drive_folders', $userId, $seenFolders);
+        return ['folders' => count($seenFolders), 'files' => count($seenFiles)];
     }
 
-    private function driveOpaqueStoredNames(int $userId): array
+    private function driveOpaqueStoredNames(): array
     {
-        $stmt = $this->db->prepare("SELECT stored_name FROM drive_files WHERE owner_user_id = ? AND (source_path IS NULL OR source_path = '')");
-        $stmt->execute([$userId]);
+        $stmt = $this->db->query("SELECT stored_name FROM drive_files WHERE deleted = 0 AND (source_path IS NULL OR source_path = '')");
         $names = [];
         foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $name) {
             $base = basename((string)$name);

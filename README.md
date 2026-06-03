@@ -222,7 +222,7 @@ Drive files path: /media
 Upload limit MB: 1024
 ```
 
-When the configured Drive files path points at an existing mounted folder, DiVault indexes regular files and folders in place the next time an owner, admin, or editor opens Drive. Imported mounted files remain at their relative paths under the mount, dotfiles and symlinks are ignored, and the imported metadata belongs only to the user whose Drive listing performed the sync. Editing a text-like imported file updates the mounted file in place; rename, move, share, and delete actions affect DiVault metadata, not the host-side filename or folder layout.
+When the configured Drive files path points at an existing mounted folder, DiVault can index regular files and folders in place from Settings -> Workspace -> Drive storage -> Scan mounted files. Imported mounted files remain at their relative paths under the mount, dotfiles and symlinks are ignored, and the imported metadata belongs only to the user who runs the scan. DiVault stores lightweight file/folder metadata in SQLite, not the file contents. Editing a text-like imported file updates the mounted file in place; rename, move, share, and delete actions affect DiVault metadata, not the host-side filename or folder layout.
 
 To attach a different drive, change the host side of the volume, for example `DIVAULT_MEDIA_PATH=/mnt/disk2/divault-drive-files`, recreate the container, then keep the Drive files path set to `/media`. DiVault uses one active Drive storage path at a time. If you want multiple physical drives behind Drive, combine them on the host first with a NAS share, storage pool, merger/union filesystem, or mounted subfolders under one parent folder, then mount that combined location into the container.
 
