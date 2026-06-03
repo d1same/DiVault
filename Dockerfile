@@ -12,7 +12,11 @@ ENV APP_CONFIG_DIR=/config \
     DRIVE_UPLOAD_MAX_MB=250 \
     TRUST_PROXY=false \
     SECURE_COOKIES=false \
-    SKIP_CONFIG_CHOWN=false
+    SKIP_CONFIG_CHOWN=false \
+    PUID= \
+    PGID= \
+    DIVAULT_CHOWN_MEDIA=false \
+    DIVAULT_LOG_LEVEL=info
 
 COPY public/ /var/www/html/
 COPY src/ /var/www/src/
@@ -20,6 +24,14 @@ COPY docker-entrypoint.sh /usr/local/bin/divault-entrypoint
 
 RUN sed -i 's/Listen 80/Listen 3443/' /etc/apache2/ports.conf \
     && sed -i 's/:80/:3443/g' /etc/apache2/sites-available/000-default.conf \
+    && echo 'ServerName localhost' > /etc/apache2/conf-available/divault-servername.conf \
+    && { \
+        echo 'SetEnvIf Request_URI "^/api/integrations/onlyoffice/(download|callback)/" divault_sensitive_path'; \
+        echo 'LogFormat "%h %l %u %t \"%m /api/integrations/onlyoffice/[redacted] %H\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\"" divault_redacted'; \
+    } > /etc/apache2/conf-available/divault-logs.conf \
+    && a2enconf divault-servername \
+    && a2enconf divault-logs \
+    && sed -i 's#^[[:space:]]*CustomLog ${APACHE_LOG_DIR}/access.log combined#\tCustomLog /proc/self/fd/1 combined env=!divault_sensitive_path\n\tCustomLog /proc/self/fd/1 divault_redacted env=divault_sensitive_path#' /etc/apache2/sites-available/000-default.conf \
     && { \
         echo 'upload_max_filesize=2G'; \
         echo 'post_max_size=2G'; \

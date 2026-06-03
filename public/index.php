@@ -18,6 +18,13 @@ require __DIR__ . '/../src/App.php';
 try {
     (new App())->handle();
 } catch (Throwable $e) {
+    $method = $_SERVER['REQUEST_METHOD'] ?? 'unknown';
+    $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+    $path = preg_replace('#^/api/integrations/onlyoffice/(download|callback)/[^/]+$#', '/api/integrations/onlyoffice/$1/[redacted]', $path) ?? $path;
+    error_log(sprintf('[DiVault] Unhandled request error method=%s path=%s class=%s message=%s', $method, $path, get_class($e), $e->getMessage()));
+    if (strtolower((string)(getenv('DIVAULT_LOG_LEVEL') ?: 'info')) === 'debug') {
+        error_log($e->getTraceAsString());
+    }
     if (!headers_sent()) {
         http_response_code(500);
         header('Content-Type: application/json');
