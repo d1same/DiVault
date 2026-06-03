@@ -59,6 +59,11 @@ services:
       ONLYOFFICE_JWT_SECRET: ""
       TRUST_PROXY: "true"
       SECURE_COOKIES: "true"
+      PUID: "99"
+      PGID: "100"
+      SKIP_CONFIG_CHOWN: "false"
+      DIVAULT_CHOWN_MEDIA: "false"
+      DIVAULT_LOG_LEVEL: "info"
       TZ: "America/New_York"
     restart: unless-stopped
 ```
@@ -70,6 +75,24 @@ SECURE_COOKIES: "false"
 ```
 
 Keep `SECURE_COOKIES=true` in production.
+
+### Unraid Ownership And Logs
+
+On Unraid, set `PUID=99` and `PGID=100` so DiVault-created files are owned by the host's `nobody:users` mapping instead of the container default `www-data` id. Without these values, host tools may display DiVault files as another account such as `sshd` because Unraid labels files by numeric UID/GID.
+
+Recommended Unraid environment values:
+
+```text
+PUID=99
+PGID=100
+SKIP_CONFIG_CHOWN=false
+DIVAULT_CHOWN_MEDIA=false
+DIVAULT_LOG_LEVEL=info
+```
+
+The container repairs `/config` ownership at startup unless `SKIP_CONFIG_CHOWN=true`. It does not recursively chown `/media` by default because Unraid media shares can be large; set `DIVAULT_CHOWN_MEDIA=true` only when the mounted Drive media share also needs ownership repair.
+
+Unraid's Docker log view now shows DiVault startup diagnostics, selected UID/GID, ownership repair decisions, restore milestones, Apache startup, and PHP request errors. Set `DIVAULT_LOG_LEVEL=debug` only while troubleshooting because server-side stack traces will be written to container logs.
 
 ## Reverse Proxy
 
@@ -199,6 +222,8 @@ Drive files path: /media
 Upload limit MB: 1024
 ```
 
+When the configured Drive files path points at an existing mounted folder, DiVault indexes regular files and folders in place the next time an owner, admin, or editor opens Drive. Imported mounted files remain at their relative paths under the mount, dotfiles and symlinks are ignored, and the imported metadata belongs only to the user whose Drive listing performed the sync. Editing a text-like imported file updates the mounted file in place; rename, move, share, and delete actions affect DiVault metadata, not the host-side filename or folder layout.
+
 To attach a different drive, change the host side of the volume, for example `DIVAULT_MEDIA_PATH=/mnt/disk2/divault-drive-files`, recreate the container, then keep the Drive files path set to `/media`. DiVault uses one active Drive storage path at a time. If you want multiple physical drives behind Drive, combine them on the host first with a NAS share, storage pool, merger/union filesystem, or mounted subfolders under one parent folder, then mount that combined location into the container.
 
 Office editing:
@@ -210,7 +235,7 @@ Office editing:
 Optional OnlyOffice sidecar:
 
 ```bash
-ONLYOFFICE_JWT_SECRET='<generate-a-long-random-secret>' \
+ONLYOFFICE_JWT_SECRET=<generate-a-long-random-secret> \
 ONLYOFFICE_URL='http://onlyoffice' \
 ONLYOFFICE_PUBLIC_URL='http://127.0.0.1:8082' \
 ONLYOFFICE_CALLBACK_BASE_URL='http://notes:3443' \
@@ -361,7 +386,7 @@ Full backup ZIPs include:
 - `/config/app.sqlite`
 - `/config/keys/master.key`
 - Uploaded note files from `/config/files/`
-- Drive files from `/config/drive-files/`
+- Drive files from the configured Drive files path, stored in the backup as `drive-files/` with nested folder paths preserved
 
 The database includes notes, Drive metadata, users, settings, categories, assets, calendars, calendar shares, events, tasks, reminders, and audit records.
 
