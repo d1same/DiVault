@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS drive_folders (
     owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     parent_id INTEGER REFERENCES drive_folders(id) ON DELETE SET NULL,
     name TEXT NOT NULL,
+    source_path TEXT,
     deleted INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -154,6 +155,8 @@ CREATE TABLE IF NOT EXISTS drive_files (
     folder_id INTEGER REFERENCES drive_folders(id) ON DELETE SET NULL,
     original_name TEXT NOT NULL,
     stored_name TEXT NOT NULL,
+    source_path TEXT,
+    source_mtime INTEGER,
     mime TEXT,
     size INTEGER NOT NULL,
     deleted INTEGER NOT NULL DEFAULT 0,
@@ -348,6 +351,9 @@ SQL);
         $this->addColumnIfMissing('tasks', 'location', 'TEXT');
         $this->addColumnIfMissing('calendar_feeds', 'color', 'TEXT');
         $this->addColumnIfMissing('calendar_feeds', 'enabled', 'INTEGER NOT NULL DEFAULT 1');
+        $this->addColumnIfMissing('drive_folders', 'source_path', 'TEXT');
+        $this->addColumnIfMissing('drive_files', 'source_path', 'TEXT');
+        $this->addColumnIfMissing('drive_files', 'source_mtime', 'INTEGER');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_notes_category_id ON notes(category_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_notes_user_state_updated ON notes(user_id, deleted, archived, category_id, pinned, updated_at, id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_notes_deleted_updated ON notes(deleted, updated_at)');
@@ -380,6 +386,8 @@ SQL);
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_task_notes_note ON task_notes(note_id)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_drive_folders_owner_parent ON drive_folders(owner_user_id, parent_id, deleted)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_drive_files_owner_folder ON drive_files(owner_user_id, folder_id, deleted)');
+        $this->pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_drive_folders_owner_source ON drive_folders(owner_user_id, source_path) WHERE source_path IS NOT NULL');
+        $this->pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_drive_files_owner_source ON drive_files(owner_user_id, source_path) WHERE source_path IS NOT NULL');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_drive_shares_user ON drive_shares(user_id, item_type, permission)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_drive_shares_item ON drive_shares(item_type, item_id)');
     }

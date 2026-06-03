@@ -34,9 +34,20 @@ final class App
             $this->route($_SERVER['REQUEST_METHOD'], substr($path, 4) ?: '/');
         } catch (Throwable $e) {
             $clientError = $e instanceof RuntimeException && !$e instanceof PDOException;
-            http_response_code($clientError ? 400 : 500);
+            $status = $clientError ? 400 : 500;
+            $method = $_SERVER['REQUEST_METHOD'] ?? 'unknown';
+            error_log(sprintf('[DiVault] API error method=%s path=%s status=%d class=%s message=%s', $method, $this->logSafePath($path), $status, get_class($e), $e->getMessage()));
+            if (!$clientError && strtolower((string)(getenv('DIVAULT_LOG_LEVEL') ?: 'info')) === 'debug') {
+                error_log($e->getTraceAsString());
+            }
+            http_response_code($status);
             echo json_encode(['error' => $clientError ? $e->getMessage() : 'Unexpected server error']);
         }
+    }
+
+    private function logSafePath(string $path): string
+    {
+        return preg_replace('#^/api/integrations/onlyoffice/(download|callback)/[^/]+$#', '/api/integrations/onlyoffice/$1/[redacted]', $path) ?? $path;
     }
 
     private function route(string $method, string $path): void
@@ -2180,6 +2191,7 @@ final class App
 
     private function driveList(array $user): void
     {
+        $this->syncDriveSourceFiles($user);
         $parentId = isset($_GET['parent_id']) && $_GET['parent_id'] !== '' ? (int)$_GET['parent_id'] : (isset($_GET['folder_id']) && $_GET['folder_id'] !== '' ? (int)$_GET['folder_id'] : null);
         $q = trim((string)($_GET['q'] ?? ''));
         $userId = (int)$user['id'];
@@ -2388,7 +2400,7 @@ final class App
         }
         foreach ($fileIds as $fileId) {
             $file = $this->driveFileAccess($user, $fileId, 'edit');
-            $source = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+            $source = $this->driveFilePath($file);
             if (!is_file($source)) continue;
             if (!$zip->addFile($source, $this->driveZipEntryName((string)$file['original_name']))) {
                 $zip->close();
@@ -2438,7 +2450,7 @@ final class App
         $folderId = $file['folder_id'] !== null ? (int)$file['folder_id'] : null;
         if ($folderId) $this->driveFolderAccess($user, $folderId, 'edit');
         if (!class_exists('ZipArchive')) throw new RuntimeException('ZIP support unavailable');
-        $source = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+        $source = $this->driveFilePath($file);
         if (!is_file($source)) throw new RuntimeException('File not found');
         $dir = Config::driveFilesDir();
         $zipName = $this->driveZipName((string)$file['original_name']);
@@ -2466,7 +2478,7 @@ final class App
     {
         $this->requireEditor($user);
         $file = $this->driveFileAccess($user, $id, 'edit');
-        $path = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+        $path = $this->driveFilePath($file);
         if (!is_file($path)) throw new RuntimeException('File not found');
         if (!$this->driveZipPreview($file, $path)) throw new RuntimeException('Only ZIP files can be extracted');
         $parentId = $file['folder_id'] !== null ? (int)$file['folder_id'] : null;
@@ -2513,13 +2525,13 @@ final class App
         $data = $this->input();
         $content = (string)($data['content'] ?? '');
         if (strlen($content) > 2 * 1024 * 1024) throw new RuntimeException('Editable files must be 2 MB or smaller');
-        $path = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+        $path = $this->driveFilePath($file);
         if (!is_file($path)) throw new RuntimeException('File not found');
         if (file_put_contents($path, $content, LOCK_EX) === false) throw new RuntimeException('File update failed');
         @chmod($path, 0600);
         $mime = $this->driveEditableMime((string)$file['original_name'], (string)($file['mime'] ?? ''));
         $size = filesize($path) ?: strlen($content);
-        $this->db->prepare('UPDATE drive_files SET mime = ?, size = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$mime, $size, $id]);
+        $this->updateDriveFileDiskMetadata($id, $path, $mime, $size);
         $this->audit((int)$user['id'], 'drive_file.content_updated', 'drive_file', $id);
         $this->json(['file' => $this->driveFileAccess($user, $id, 'view')]);
     }
@@ -2527,7 +2539,7 @@ final class App
     private function driveDownloadFile(array $user, int $id, bool $inline = false): void
     {
         $file = $this->driveFileAccess($user, $id, 'view');
-        $path = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+        $path = $this->driveFilePath($file);
         if (!is_file($path)) throw new RuntimeException('File not found');
         $this->audit((int)$user['id'], $inline ? 'drive_file.previewed' : 'drive_file.downloaded', 'drive_file', $id);
         header_remove('Content-Type');
@@ -2543,7 +2555,7 @@ final class App
     private function driveFileMetadata(array $user, int $id): void
     {
         $file = $this->driveFileAccess($user, $id, 'view');
-        $path = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+        $path = $this->driveFilePath($file);
         if (!is_file($path)) throw new RuntimeException('File not found');
         unset($file['stored_name']);
         $file['size'] = filesize($path) ?: (int)($file['size'] ?? 0);
@@ -2592,7 +2604,7 @@ final class App
     {
         $payload = $this->onlyOfficeTokenPayload($token, 'download');
         $file = $this->driveFileById((int)$payload['file_id']);
-        $path = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+        $path = $this->driveFilePath($file);
         if (!is_file($path)) throw new RuntimeException('File not found');
         $this->audit((int)($payload['user_id'] ?? 0), 'drive_file.office_downloaded', 'drive_file', (int)$file['id']);
         header_remove('Content-Type');
@@ -2615,9 +2627,9 @@ final class App
         $file = $this->driveFileById((int)$payload['file_id']);
         if (!$this->driveOfficeType($file)) throw new RuntimeException('This file type cannot be saved by OnlyOffice');
         $size = $this->onlyOfficeStoreFromUrl($file, $url);
-        $path = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+        $path = $this->driveFilePath($file);
         $mime = (new finfo(FILEINFO_MIME_TYPE))->file($path) ?: (string)($file['mime'] ?: 'application/octet-stream');
-        $this->db->prepare('UPDATE drive_files SET mime = ?, size = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$mime, $size, (int)$file['id']]);
+        $this->updateDriveFileDiskMetadata((int)$file['id'], $path, $mime, $size);
         $this->audit((int)($payload['user_id'] ?? 0), 'drive_file.office_saved', 'drive_file', (int)$file['id']);
         $this->json(['error' => 0]);
     }
@@ -2667,9 +2679,153 @@ final class App
         return $this->driveFileAccess($user, $id, 'view');
     }
 
+    private function syncDriveSourceFiles(array $user): void
+    {
+        if (!in_array((string)($user['role'] ?? ''), ['owner', 'admin', 'editor'], true)) return;
+        $root = rtrim(Config::driveFilesDir(), '/');
+        if ($root === '' || !is_dir($root) || !is_readable($root)) return;
+        $userId = (int)$user['id'];
+        $seenFolders = [];
+        $seenFiles = [];
+        $opaqueStoredNames = $this->driveOpaqueStoredNames($userId);
+        $this->syncDriveDirectory($userId, $root, '', null, $seenFolders, $seenFiles, $opaqueStoredNames);
+        $this->softDeleteMissingDriveSources('drive_files', $userId, $seenFiles);
+        $this->softDeleteMissingDriveSources('drive_folders', $userId, $seenFolders);
+    }
+
+    private function driveOpaqueStoredNames(int $userId): array
+    {
+        $stmt = $this->db->prepare("SELECT stored_name FROM drive_files WHERE owner_user_id = ? AND (source_path IS NULL OR source_path = '')");
+        $stmt->execute([$userId]);
+        $names = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $name) {
+            $base = basename((string)$name);
+            if ($base !== '') $names[$base] = true;
+        }
+        return $names;
+    }
+
+    private function syncDriveDirectory(int $userId, string $root, string $relativeDir, ?int $parentId, array &$seenFolders, array &$seenFiles, array $opaqueStoredNames): void
+    {
+        $dir = $relativeDir === '' ? $root : $this->driveSourcePath($relativeDir);
+        $items = @scandir($dir);
+        if ($items === false) return;
+        natcasesort($items);
+        foreach ($items as $name) {
+            if ($name === '.' || $name === '..') continue;
+            $relativePath = $relativeDir === '' ? $name : $relativeDir . '/' . $name;
+            if (!$this->isSafeDriveSourcePath($relativePath)) continue;
+            $path = $dir . '/' . $name;
+            if (is_link($path)) continue;
+            if (is_dir($path)) {
+                $folderId = $this->upsertDriveSourceFolder($userId, $parentId, $name, $relativePath);
+                $seenFolders[$relativePath] = true;
+                $this->syncDriveDirectory($userId, $root, $relativePath, $folderId, $seenFolders, $seenFiles, $opaqueStoredNames);
+                continue;
+            }
+            if (!is_file($path) || !is_readable($path)) continue;
+            if ($relativeDir === '' && isset($opaqueStoredNames[$name])) continue;
+            $this->upsertDriveSourceFile($userId, $parentId, $name, $relativePath, $path);
+            $seenFiles[$relativePath] = true;
+        }
+    }
+
+    private function upsertDriveSourceFolder(int $userId, ?int $parentId, string $name, string $sourcePath): int
+    {
+        $safeName = $this->driveName($name);
+        $stmt = $this->db->prepare('SELECT id, parent_id, name, deleted FROM drive_folders WHERE owner_user_id = ? AND source_path = ?');
+        $stmt->execute([$userId, $sourcePath]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row) {
+            if ((int)$row['deleted'] !== 0 || (string)$row['name'] !== $safeName || (string)($row['parent_id'] ?? '') !== (string)($parentId ?? '')) {
+                $this->db->prepare('UPDATE drive_folders SET parent_id = ?, name = ?, deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$parentId, $safeName, (int)$row['id']]);
+            }
+            return (int)$row['id'];
+        }
+        $stmt = $this->db->prepare('INSERT INTO drive_folders (owner_user_id, parent_id, name, source_path) VALUES (?, ?, ?, ?)');
+        $stmt->execute([$userId, $parentId, $safeName, $sourcePath]);
+        return (int)$this->db->lastInsertId();
+    }
+
+    private function upsertDriveSourceFile(int $userId, ?int $folderId, string $name, string $sourcePath, string $path): void
+    {
+        $safeName = $this->driveName($name);
+        $size = filesize($path) ?: 0;
+        $mtime = filemtime($path) ?: 0;
+        $mime = (new finfo(FILEINFO_MIME_TYPE))->file($path) ?: 'application/octet-stream';
+        $stmt = $this->db->prepare('SELECT id, folder_id, original_name, size, source_mtime, mime, deleted FROM drive_files WHERE owner_user_id = ? AND source_path = ?');
+        $stmt->execute([$userId, $sourcePath]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row) {
+            if ((int)$row['deleted'] !== 0 || (string)$row['original_name'] !== $safeName || (string)($row['folder_id'] ?? '') !== (string)($folderId ?? '') || (int)$row['size'] !== (int)$size || (int)($row['source_mtime'] ?? 0) !== (int)$mtime || (string)($row['mime'] ?? '') !== $mime) {
+                $this->db->prepare('UPDATE drive_files SET folder_id = ?, original_name = ?, stored_name = ?, mime = ?, size = ?, source_mtime = ?, deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$folderId, $safeName, $sourcePath, $mime, (int)$size, (int)$mtime, (int)$row['id']]);
+            }
+            return;
+        }
+        $stmt = $this->db->prepare('INSERT INTO drive_files (owner_user_id, folder_id, original_name, stored_name, source_path, source_mtime, mime, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+        $stmt->execute([$userId, $folderId, $safeName, $sourcePath, $sourcePath, (int)$mtime, $mime, (int)$size]);
+    }
+
+    private function softDeleteMissingDriveSources(string $table, int $userId, array $seen): void
+    {
+        if (!in_array($table, ['drive_files', 'drive_folders'], true)) throw new RuntimeException('Invalid Drive source table');
+        $stmt = $this->db->prepare("SELECT id, source_path FROM $table WHERE owner_user_id = ? AND source_path IS NOT NULL AND deleted = 0");
+        $stmt->execute([$userId]);
+        $delete = $this->db->prepare("UPDATE $table SET deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            if (!isset($seen[(string)$row['source_path']])) $delete->execute([(int)$row['id']]);
+        }
+    }
+
+    private function driveFilePath(array $file): string
+    {
+        $sourcePath = (string)($file['source_path'] ?? '');
+        if ($sourcePath !== '') return $this->driveSourcePath($sourcePath);
+        $stored = basename((string)($file['stored_name'] ?? ''));
+        if ($stored === '') throw new RuntimeException('File not found');
+        return rtrim(Config::driveFilesDir(), '/') . '/' . $stored;
+    }
+
+    private function driveSourcePath(string $relativePath): string
+    {
+        $relativePath = str_replace('\\', '/', trim($relativePath));
+        if (!$this->isSafeDriveSourcePath($relativePath)) throw new RuntimeException('Unsafe Drive path');
+        $root = rtrim(Config::driveFilesDir(), '/');
+        $path = $root . '/' . $relativePath;
+        $rootReal = realpath($root);
+        $pathReal = realpath($path);
+        if ($rootReal !== false && $pathReal !== false) {
+            $rootPrefix = rtrim(str_replace('\\', '/', $rootReal), '/') . '/';
+            $normalizedPath = str_replace('\\', '/', $pathReal);
+            if (!str_starts_with($normalizedPath, $rootPrefix)) throw new RuntimeException('Unsafe Drive path');
+        }
+        $current = $root;
+        foreach (explode('/', $relativePath) as $part) {
+            $current .= '/' . $part;
+            if (is_link($current)) throw new RuntimeException('Unsafe Drive path');
+        }
+        return $path;
+    }
+
+    private function isSafeDriveSourcePath(string $path): bool
+    {
+        $path = str_replace('\\', '/', trim($path));
+        if ($path === '' || str_starts_with($path, '/') || preg_match('/^[a-zA-Z]:\//', $path)) return false;
+        foreach (explode('/', $path) as $part) {
+            if ($part === '' || $part === '.' || $part === '..' || str_starts_with($part, '.')) return false;
+        }
+        return true;
+    }
+
+    private function updateDriveFileDiskMetadata(int $id, string $path, string $mime, int $size): void
+    {
+        $mtime = filemtime($path) ?: null;
+        $this->db->prepare('UPDATE drive_files SET mime = ?, size = ?, source_mtime = COALESCE(?, source_mtime), updated_at = CURRENT_TIMESTAMP WHERE id = ?')->execute([$mime, $size, $mtime, $id]);
+    }
+
     private function migrateDriveFiles(string $fromDir, string $toDir): void
     {
-        $stmt = $this->db->query('SELECT stored_name FROM drive_files WHERE deleted = 0');
+        $stmt = $this->db->query("SELECT stored_name FROM drive_files WHERE deleted = 0 AND (source_path IS NULL OR source_path = '')");
         foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $storedName) {
             $name = basename((string)$storedName);
             if ($name === '') continue;
@@ -2690,10 +2846,10 @@ final class App
         foreach ($folderStmt->fetchAll(PDO::FETCH_ASSOC) as $folder) {
             $this->driveAddFolderToZip($zip, (int)$folder['id'], $entryPath . '/' . (string)$folder['name']);
         }
-        $fileStmt = $this->db->prepare('SELECT original_name, stored_name FROM drive_files WHERE deleted = 0 AND folder_id = ? ORDER BY original_name COLLATE NOCASE');
+        $fileStmt = $this->db->prepare('SELECT * FROM drive_files WHERE deleted = 0 AND folder_id = ? ORDER BY original_name COLLATE NOCASE');
         $fileStmt->execute([$folderId]);
         foreach ($fileStmt->fetchAll(PDO::FETCH_ASSOC) as $file) {
-            $path = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+            $path = $this->driveFilePath($file);
             if (!is_file($path)) continue;
             $entry = trim($entryPath . '/' . $this->driveZipEntryName((string)$file['original_name']), '/');
             if (!$zip->addFile($path, $entry)) throw new RuntimeException('File could not be added to ZIP');
@@ -2988,7 +3144,7 @@ final class App
         }
         fclose($source);
         fclose($target);
-        $path = Config::driveFilesDir() . '/' . basename((string)$file['stored_name']);
+        $path = $this->driveFilePath($file);
         if (!is_file($path)) {
             @unlink($tmp);
             throw new RuntimeException('File not found');
@@ -3360,7 +3516,7 @@ final class App
             throw new RuntimeException('Backup encryption failed');
         }
         try {
-            foreach (['app.sqlite', 'keys/master.key'] as $file) {
+            foreach (['app.sqlite', 'drive-storage.json', 'keys/master.key'] as $file) {
                 $path = Config::dir() . '/' . $file;
                 if (file_exists($path)) $this->addBackupFile($zip, $path, $file, $encrypt);
             }
@@ -3369,9 +3525,7 @@ final class App
                 if (is_file($file)) $this->addBackupFile($zip, $file, 'files/' . basename($file), $encrypt);
             }
             $driveFilesDir = Config::driveFilesDir();
-            foreach (glob($driveFilesDir . '/*') ?: [] as $file) {
-                if (is_file($file)) $this->addBackupFile($zip, $file, 'drive-files/' . basename($file), $encrypt);
-            }
+            $this->addBackupDirectoryFiles($zip, $driveFilesDir, 'drive-files', $encrypt);
         } catch (Throwable $e) {
             $zip->close();
             @unlink($zipPath);
@@ -3442,6 +3596,33 @@ final class App
         }
     }
 
+    private function addBackupDirectoryFiles(ZipArchive $zip, string $root, string $entryRoot, bool $encrypt): void
+    {
+        if (!is_dir($root)) return;
+        $root = rtrim($root, '/');
+        $items = @scandir($root);
+        if ($items === false) return;
+        $stack = [''];
+        while ($stack) {
+            $relativeDir = array_pop($stack);
+            $dir = $relativeDir === '' ? $root : $root . '/' . $relativeDir;
+            $items = @scandir($dir);
+            if ($items === false) continue;
+            foreach ($items as $name) {
+                if ($name === '.' || $name === '..') continue;
+                $relativePath = $relativeDir === '' ? $name : $relativeDir . '/' . $name;
+                if (!$this->isSafeDriveSourcePath($relativePath)) continue;
+                $path = $dir . '/' . $name;
+                if (is_link($path)) continue;
+                if (is_dir($path)) {
+                    $stack[] = $relativePath;
+                    continue;
+                }
+                if (is_file($path)) $this->addBackupFile($zip, $path, $entryRoot . '/' . $relativePath, $encrypt);
+            }
+        }
+    }
+
     private function validateBackupZip(string $path, string $passphrase = ''): void
     {
         $zip = new ZipArchive();
@@ -3454,7 +3635,7 @@ final class App
         $dbIndex = false;
         for ($i = 0; $i < $zip->numFiles; $i++) {
             $entry = $zip->getNameIndex($i);
-            if ($entry === false || str_contains($entry, '\\') || str_contains($entry, '..')) {
+            if ($entry === false || str_contains($entry, '\\') || str_starts_with($entry, '/')) {
                 $zip->close();
                 throw new RuntimeException('Backup ZIP contains invalid entries');
             }
@@ -3471,8 +3652,12 @@ final class App
                 continue;
             }
             if ($entry === 'keys/master.key') continue;
+            if ($entry === 'drive-storage.json') {
+                $this->validateDriveStorageBackupSettings((string)($zip->getFromIndex($i) ?: ''));
+                continue;
+            }
             if (preg_match('#^files/[^/]+$#', $entry)) continue;
-            if (preg_match('#^drive-files/[^/]+$#', $entry)) continue;
+            if (preg_match('#^drive-files/(.+)$#', $entry, $m) && $this->isSafeDriveSourcePath((string)$m[1])) continue;
             $zip->close();
             throw new RuntimeException('Backup ZIP contains unexpected entries');
         }
@@ -3485,6 +3670,18 @@ final class App
             throw new RuntimeException($passphrase !== '' ? 'Invalid backup passphrase' : 'Backup ZIP is encrypted; passphrase required');
         }
         $zip->close();
+    }
+
+    private function validateDriveStorageBackupSettings(string $content): void
+    {
+        $settings = json_decode($content, true);
+        if (!is_array($settings)) throw new RuntimeException('Backup ZIP contains invalid Drive storage settings');
+        $dir = trim((string)($settings['drive_files_dir'] ?? ''));
+        if ($dir === '') return;
+        $dir = rtrim($dir, '/');
+        if (!str_starts_with($dir, '/') || in_array($dir, ['/', '/proc', '/sys', '/dev'], true)) {
+            throw new RuntimeException('Backup ZIP contains unsafe Drive storage settings');
+        }
     }
 
     private function writeRestorePassphrase(string $passphrase): void
@@ -3525,6 +3722,19 @@ final class App
             throw new RuntimeException('Unable to restore database');
         }
         @chmod($configDir . '/app.sqlite', 0600);
+        $driveStorage = $zip->getFromName('drive-storage.json');
+        if ($driveStorage !== false) {
+            if (file_put_contents($configDir . '/drive-storage.json', $driveStorage) === false) {
+                $zip->close();
+                throw new RuntimeException('Unable to restore Drive storage settings');
+            }
+            @chmod($configDir . '/drive-storage.json', 0600);
+            $driveFilesDir = Config::driveFilesDir();
+            if (!is_dir($driveFilesDir) && !mkdir($driveFilesDir, 0775, true)) {
+                $zip->close();
+                throw new RuntimeException('Unable to prepare restore directory');
+            }
+        }
         $key = $zip->getFromName('keys/master.key');
         if ($key !== false) {
             if (file_put_contents($configDir . '/keys/master.key', $key) === false) {
@@ -3536,18 +3746,28 @@ final class App
         foreach (glob($configDir . '/files/*') ?: [] as $oldFile) {
             if (is_file($oldFile)) @unlink($oldFile);
         }
-        foreach (glob($driveFilesDir . '/*') ?: [] as $oldFile) {
-            if (is_file($oldFile)) @unlink($oldFile);
-        }
+        $this->removeDirectoryFiles($driveFilesDir);
         for ($i = 0; $i < $zip->numFiles; $i++) {
             $entry = $zip->getNameIndex($i);
-            if (!is_string($entry) || (!preg_match('#^files/[^/]+$#', $entry) && !preg_match('#^drive-files/[^/]+$#', $entry))) continue;
+            $driveMatch = [];
+            if (!is_string($entry) || (!preg_match('#^files/[^/]+$#', $entry) && !preg_match('#^drive-files/(.+)$#', $entry, $driveMatch))) continue;
             $content = $zip->getFromIndex($i);
             if ($content === false) {
                 $zip->close();
                 throw new RuntimeException('Unable to restore file attachment');
             }
-            $target = preg_match('#^drive-files/[^/]+$#', $entry) ? $driveFilesDir . '/' . basename($entry) : $configDir . '/' . $entry;
+            if (!empty($driveMatch)) {
+                $relativePath = (string)$driveMatch[1];
+                if (!$this->isSafeDriveSourcePath($relativePath)) continue;
+                $target = rtrim($driveFilesDir, '/') . '/' . $relativePath;
+                $targetDir = dirname($target);
+                if (!is_dir($targetDir) && !mkdir($targetDir, 0775, true)) {
+                    $zip->close();
+                    throw new RuntimeException('Unable to prepare restore directory');
+                }
+            } else {
+                $target = $configDir . '/' . $entry;
+            }
             if (file_put_contents($target, $content) === false) {
                 $zip->close();
                 throw new RuntimeException('Unable to restore file attachment');
@@ -3555,6 +3775,24 @@ final class App
             @chmod($target, 0600);
         }
         $zip->close();
+    }
+
+    private function removeDirectoryFiles(string $root): void
+    {
+        if (!is_dir($root)) return;
+        $items = @scandir($root);
+        if ($items === false) return;
+        foreach ($items as $name) {
+            if ($name === '.' || $name === '..') continue;
+            $path = rtrim($root, '/') . '/' . $name;
+            if (is_link($path)) continue;
+            if (is_dir($path)) {
+                $this->removeDirectoryFiles($path);
+                @rmdir($path);
+                continue;
+            }
+            if (is_file($path)) @unlink($path);
+        }
     }
 
     private function downloadBackup(array $user, string $name): void
