@@ -1,7 +1,7 @@
 const collapsedCategoryStorageKey = 'divault_collapsed_categories';
 const categoryListCollapsedStorageKey = 'divault_categories_collapsed';
 const savedViewsStorageKey = 'divault_saved_views';
-const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), lastSelectedNoteId: null, noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), noteLimit: Number(localStorage.getItem('divault_note_limit') || 200), noteHasMore: false, noteTotal: 0, taskFilter: localStorage.getItem('divault_task_filter') || 'open', driveFolderId: localStorage.getItem('divault_drive_folder_id') || '', driveFolders: [], driveFiles: [], driveBreadcrumbs: [], driveLayout: localStorage.getItem('divault_drive_layout') || 'list', driveSelectionMode: false, selectedDriveItems: new Set(), lastSelectedDriveKey: '', homeSummary: null, loadingSection: '', collapsedCategories: readCollapsedCategoryIds(), categoriesCollapsed: localStorage.getItem(categoryListCollapsedStorageKey) === '1', theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
+const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), lastSelectedNoteId: null, noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), noteLimit: Number(localStorage.getItem('divault_note_limit') || 150), noteHasMore: false, noteTotal: 0, taskFilter: localStorage.getItem('divault_task_filter') || 'open', driveFolderId: localStorage.getItem('divault_drive_folder_id') || '', driveFolders: [], driveFiles: [], driveBreadcrumbs: [], driveLayout: localStorage.getItem('divault_drive_layout') || 'list', driveSelectionMode: false, selectedDriveItems: new Set(), lastSelectedDriveKey: '', homeSummary: null, loadingSection: '', collapsedCategories: readCollapsedCategoryIds(), categoriesCollapsed: localStorage.getItem(categoryListCollapsedStorageKey) === '1', theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, lastBackgroundRefreshAt: 0, lastEmergencySnapshotAt: 0, syncTimer: null, syncDebounceTimer: null, syncing: false, desktop: false, setupMode: 'local' };
 let sectionLoadToken = 0;
 Object.assign(state, { features: null, calendars: [], calendarFeeds: [], events: [], tasks: [], calendarDate: new Date(), miniCalendarDate: new Date(), calendarView: localStorage.getItem('divault_calendar_view') || 'schedule', reminders: [], reminderTimer: null, linkableNotesLoaded: false, routeNoteId: null });
 if (state.calendarView === 'agenda') state.calendarView = 'schedule';
@@ -880,7 +880,7 @@ async function applyRouteFromHash() {
 
 async function boot() {
   loadEmergencySnapshot();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').then(reg => reg.update()).catch(() => {});
   let bootInfo;
   try {
     bootInfo = await api('/bootstrap');
@@ -1046,7 +1046,7 @@ async function loadAll() {
   state.lastSyncedAt = new Date();
   const syncedPending = await syncPendingNotes();
   if (syncedPending) await loadCurrentSection();
-  await saveEmergencySnapshot();
+  await maybeSaveEmergencySnapshot(true);
   startReminderPolling();
 }
 
@@ -1150,6 +1150,13 @@ async function saveEmergencySnapshot() {
   const passphrase = sessionStorage.getItem('divault_emergency_passphrase');
   if (!passphrase) return;
   try { await createEncryptedEmergencySnapshot(passphrase); } catch {}
+}
+
+async function maybeSaveEmergencySnapshot(force = false) {
+  const now = Date.now();
+  if (!force && now - state.lastEmergencySnapshotAt < 10 * 60 * 1000) return;
+  state.lastEmergencySnapshotAt = now;
+  await saveEmergencySnapshot();
 }
 
 async function createEncryptedEmergencySnapshot(passphrase) {
@@ -1358,12 +1365,33 @@ function updateSyncStatus() {
   });
 }
 
-async function refreshFromServer({ quiet = true } = {}) {
-  if (!state.user || state.loadingSection || state.panel || document.querySelector('.editor') || document.querySelector('[data-inline-editor]') || state.syncing) return;
+function shouldSkipRefresh(force = false) {
+  if (!state.user || state.loadingSection || state.panel || document.querySelector('.editor') || document.querySelector('[data-inline-editor]') || state.syncing) return true;
+  if (!force && Date.now() - state.lastBackgroundRefreshAt < 45000) return true;
+  return false;
+}
+
+async function refreshFromServer({ quiet = true, full = false, force = false } = {}) {
+  if (shouldSkipRefresh(force)) return;
+  state.lastBackgroundRefreshAt = Date.now();
   state.syncing = true;
   updateSyncStatus();
   try {
-    await loadAll();
+    if (full) {
+      await loadAll();
+    } else {
+      const [counts, features] = await Promise.all([
+        api('/asset-counts').catch(() => ({ counts: state.counts || {} })),
+        api('/features').catch(() => ({ features: state.features || defaultFeatures() }))
+      ]);
+      state.counts = counts.counts || state.counts || {};
+      state.features = features.features || state.features || defaultFeatures();
+      await loadCurrentSection();
+      state.lastSyncedAt = new Date();
+      const syncedPending = await syncPendingNotes();
+      if (syncedPending) await loadCurrentSection();
+      await maybeSaveEmergencySnapshot();
+    }
     renderApp();
     if (!quiet) toast('Synced');
   } catch (err) {
@@ -1374,6 +1402,11 @@ async function refreshFromServer({ quiet = true } = {}) {
   }
 }
 
+function scheduleRefreshFromServer(options = {}) {
+  window.clearTimeout(state.syncDebounceTimer);
+  state.syncDebounceTimer = window.setTimeout(() => refreshFromServer(options), 800);
+}
+
 function startSyncLoop() {
   if (state.syncTimer) return;
   window.addEventListener('beforeunload', e => {
@@ -1381,11 +1414,11 @@ function startSyncLoop() {
     e.preventDefault();
     e.returnValue = '';
   });
-  window.addEventListener('focus', () => refreshFromServer());
-  window.addEventListener('online', () => refreshFromServer({ quiet: false }));
+  window.addEventListener('focus', () => scheduleRefreshFromServer());
+  window.addEventListener('online', () => scheduleRefreshFromServer({ quiet: false, full: true, force: true }));
   window.addEventListener('offline', updateSyncStatus);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshFromServer(); });
-  state.syncTimer = setInterval(() => refreshFromServer(), 30000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleRefreshFromServer(); });
+  state.syncTimer = setInterval(() => refreshFromServer(), 90000);
 }
 
 async function loadCurrentSection() {
@@ -1559,12 +1592,12 @@ function parseNoteSearch(value) {
 }
 
 function currentNoteLimit() {
-  const value = Number(state.noteLimit) || 200;
+  const value = Number(state.noteLimit) || 150;
   return Math.min(1000, Math.max(50, value));
 }
 
 function resetNoteLimit() {
-  state.noteLimit = 200;
+  state.noteLimit = 150;
   localStorage.setItem('divault_note_limit', String(state.noteLimit));
 }
 
@@ -2593,7 +2626,7 @@ function bindApp() {
   document.querySelector('#shortcutsHelpBtn')?.addEventListener('click', showShortcutsHelp);
   document.querySelector('#saveCurrentView')?.addEventListener('click', saveCurrentView);
   document.querySelectorAll('[data-saved-view]').forEach(btn => btn.addEventListener('click', () => applySavedView(btn.dataset.savedView)));
-  document.querySelector('#syncBtn')?.addEventListener('click', () => refreshFromServer({ quiet: false }));
+  document.querySelector('#syncBtn')?.addEventListener('click', () => refreshFromServer({ quiet: false, full: true, force: true }));
   document.querySelector('#emptyTrashBtn')?.addEventListener('click', async () => {
     if (!await confirmDialog({ title: 'Empty recycle bin?', message: 'This permanently deletes every note in the recycle bin.', confirmText: 'Empty recycle bin' })) return;
     await runUserAction(async () => {
@@ -2774,7 +2807,7 @@ function bindContentActions() {
     bindContentActions();
   }));
   document.querySelector('#loadMoreNotes')?.addEventListener('click', async () => {
-    state.noteLimit = currentNoteLimit() + 200;
+    state.noteLimit = currentNoteLimit() + 100;
     localStorage.setItem('divault_note_limit', String(state.noteLimit));
     await loadCurrentSection();
     refreshContentArea(renderNotesWorkspace());

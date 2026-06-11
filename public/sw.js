@@ -1,6 +1,7 @@
-const CACHE = 'divault-v283';
-const ASSETS = ['/', '/app.html', '/styles.css?v=283', '/app.js?v=283', '/manifest.webmanifest', '/assets/divault-logo.svg', '/assets/icon.svg'];
+const CACHE = 'divault-v284';
+const ASSETS = ['/', '/app.html', '/styles.css?v=284', '/app.js?v=284', '/manifest.webmanifest', '/assets/divault-logo.svg', '/assets/icon.svg'];
 const ASSET_PATHS = new Set(ASSETS.map(asset => new URL(asset, self.location.origin).pathname));
+const FRESH_PATHS = new Set(['/', '/app.html', '/app.js', '/styles.css', '/sw.js']);
 
 function cacheableRequest(request) {
   if (request.method !== 'GET') return false;
@@ -21,12 +22,17 @@ self.addEventListener('activate', event => {
 });
 self.addEventListener('fetch', event => {
   if (!cacheableRequest(event.request)) return;
+  const url = new URL(event.request.url);
   event.respondWith(fetch(event.request).then(response => {
     if (cacheableResponse(response)) {
       event.waitUntil(caches.open(CACHE).then(cache => cache.put(event.request, response.clone())).catch(() => {}));
     }
     return response;
-  }).catch(() => event.request.mode === 'navigate' ? caches.match('/app.html').then(match => match || caches.match('/')) : caches.match(event.request)));
+  }).catch(() => {
+    if (event.request.mode === 'navigate') return caches.match('/app.html').then(match => match || caches.match('/'));
+    if (FRESH_PATHS.has(url.pathname)) return caches.match(event.request).then(match => match || caches.match(url.pathname));
+    return caches.match(event.request);
+  }));
 });
 
 self.addEventListener('notificationclick', event => {
