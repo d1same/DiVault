@@ -487,6 +487,42 @@ body.auth-screen .app-shell,
   0%, 30% { transform: translateX(-100%); }
   70%, 100% { transform: translateX(100%); }
 }
+
+.section-loading-panel {
+  min-height: min(46vh, 420px);
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 14px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface-card) 88%, transparent);
+  color: var(--text);
+  text-align: center;
+}
+.section-loading-panel > div:last-child {
+  display: grid;
+  gap: 5px;
+}
+.section-loading-panel b {
+  font-size: var(--text-ui);
+  font-weight: var(--weight-strong);
+}
+.section-loading-panel span {
+  color: var(--muted);
+  font-size: var(--text-ui-sm);
+}
+.section-loading-spinner {
+  width: 34px;
+  height: 34px;
+  border: 3px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-top-color: var(--primary);
+  border-radius: 999px;
+  animation: section-spin .72s linear infinite;
+}
+@keyframes section-spin {
+  to { transform: rotate(360deg); }
+}
 @media (prefers-reduced-motion: reduce) {
   .loading-card::before, .loading-bar span { animation: none; transform: none; }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "divault_desktop"
-version = "2.1.16"
+version = "2.1.17"
 description = "DiVault desktop shell"
 authors = ["DiVault"]
 edition = "2021"

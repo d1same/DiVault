@@ -1,7 +1,8 @@
 const collapsedCategoryStorageKey = 'divault_collapsed_categories';
 const categoryListCollapsedStorageKey = 'divault_categories_collapsed';
 const savedViewsStorageKey = 'divault_saved_views';
-const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), lastSelectedNoteId: null, noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), noteLimit: Number(localStorage.getItem('divault_note_limit') || 200), noteHasMore: false, noteTotal: 0, taskFilter: localStorage.getItem('divault_task_filter') || 'open', driveFolderId: localStorage.getItem('divault_drive_folder_id') || '', driveFolders: [], driveFiles: [], driveBreadcrumbs: [], driveLayout: localStorage.getItem('divault_drive_layout') || 'list', driveSelectionMode: false, selectedDriveItems: new Set(), lastSelectedDriveKey: '', homeSummary: null, collapsedCategories: readCollapsedCategoryIds(), categoriesCollapsed: localStorage.getItem(categoryListCollapsedStorageKey) === '1', theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
+const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), lastSelectedNoteId: null, noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), noteLimit: Number(localStorage.getItem('divault_note_limit') || 200), noteHasMore: false, noteTotal: 0, taskFilter: localStorage.getItem('divault_task_filter') || 'open', driveFolderId: localStorage.getItem('divault_drive_folder_id') || '', driveFolders: [], driveFiles: [], driveBreadcrumbs: [], driveLayout: localStorage.getItem('divault_drive_layout') || 'list', driveSelectionMode: false, selectedDriveItems: new Set(), lastSelectedDriveKey: '', homeSummary: null, loadingSection: '', collapsedCategories: readCollapsedCategoryIds(), categoriesCollapsed: localStorage.getItem(categoryListCollapsedStorageKey) === '1', theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
+let sectionLoadToken = 0;
 Object.assign(state, { features: null, calendars: [], calendarFeeds: [], events: [], tasks: [], calendarDate: new Date(), miniCalendarDate: new Date(), calendarView: localStorage.getItem('divault_calendar_view') || 'schedule', reminders: [], reminderTimer: null, linkableNotesLoaded: false, routeNoteId: null });
 if (state.calendarView === 'agenda') state.calendarView = 'schedule';
 const app = document.querySelector('#app');
@@ -145,8 +146,7 @@ async function applySavedView(name) {
     resetNoteLimit();
   }
   syncSectionRoute();
-  await loadCurrentSection();
-  renderApp();
+  await loadCurrentSectionWithFeedback();
 }
 
 const esc = value => String(value ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -538,8 +538,7 @@ async function handleQuickCaptureAction(action, query) {
     state.driveFolderId = '';
     localStorage.setItem('divault_drive_folder_id', '');
     syncSectionRoute();
-    await loadCurrentSection();
-    renderApp();
+    await loadCurrentSectionWithFeedback();
     return;
   }
   if (action === 'search') {
@@ -566,9 +565,7 @@ async function handleQuickCaptureAction(action, query) {
   state.q = '';
   resetNoteLimit();
   syncSectionRoute();
-  await loadCurrentSection();
-  renderApp();
-  openEditor(null, { mode: 'quick', note: { title: captureTitle(text, 'Quick note'), body: text } });
+  await loadCurrentSectionWithFeedback(() => openEditor(null, { mode: 'quick', note: { title: captureTitle(text, 'Quick note'), body: text } }));
 }
 
 function captureTitle(text, fallback) {
@@ -608,9 +605,7 @@ async function openSearchResult(item, modal = null) {
     state.q = '';
     resetNoteLimit();
     syncSectionRoute();
-    await loadCurrentSection();
-    renderApp();
-    openEditor(Number(item.id));
+    await loadCurrentSectionWithFeedback(() => openEditor(Number(item.id)));
     return;
   }
   if (item.type === 'event') return openEventDialogById(item.series_id || item.id);
@@ -622,8 +617,7 @@ async function openSearchResult(item, modal = null) {
     state.driveFolderId = String(item.id || '');
     localStorage.setItem('divault_drive_folder_id', state.driveFolderId);
     syncSectionRoute();
-    await loadCurrentSection();
-    renderApp();
+    await loadCurrentSectionWithFeedback();
     return;
   }
   if (item.type === 'drive_file') {
@@ -635,9 +629,7 @@ async function openSearchResult(item, modal = null) {
     state.panel = '';
     state.q = '';
     syncSectionRoute();
-    await loadCurrentSection();
-    renderApp();
-    openAssetEditor(Number(item.id));
+    await loadCurrentSectionWithFeedback(() => openAssetEditor(Number(item.id)));
     return;
   }
   if (item.type === 'client') {
@@ -647,9 +639,7 @@ async function openSearchResult(item, modal = null) {
     state.panel = '';
     state.q = '';
     syncSectionRoute();
-    await loadCurrentSection();
-    renderApp();
-    toast(`Filtered to ${item.title || 'client'}`);
+    await loadCurrentSectionWithFeedback(() => toast(`Filtered to ${item.title || 'client'}`));
   }
 }
 
@@ -1369,7 +1359,7 @@ function updateSyncStatus() {
 }
 
 async function refreshFromServer({ quiet = true } = {}) {
-  if (!state.user || state.panel || document.querySelector('.editor') || document.querySelector('[data-inline-editor]') || state.syncing) return;
+  if (!state.user || state.loadingSection || state.panel || document.querySelector('.editor') || document.querySelector('[data-inline-editor]') || state.syncing) return;
   state.syncing = true;
   updateSyncStatus();
   try {
@@ -1425,6 +1415,25 @@ async function loadCurrentSection() {
   state.assets = (await loadAssets()).assets;
 }
 
+async function loadCurrentSectionWithFeedback(afterLoad = null) {
+  const token = ++sectionLoadToken;
+  state.loadingSection = state.section;
+  renderApp();
+  try {
+    await loadCurrentSection();
+    if (token !== sectionLoadToken) return;
+    state.loadingSection = '';
+    renderApp();
+    if (afterLoad) await afterLoad();
+  } catch (err) {
+    if (token === sectionLoadToken) {
+      state.loadingSection = '';
+      renderApp();
+    }
+    toast(err.message || 'Load failed');
+  }
+}
+
 async function loadDrive() {
   const params = new URLSearchParams();
   if (state.driveFolderId) params.set('folder_id', state.driveFolderId);
@@ -1448,9 +1457,15 @@ function normalizeDriveCollection(res, key) {
 }
 
 async function loadHomeData() {
-  const jobs = [loadNotes().catch(() => ({ notes: [] }))];
-  if (featureOn('calendar')) jobs.push(loadCalendarData().then(() => null));
-  if (featureOn('tasks')) jobs.push(api('/tasks').then(res => { state.tasks = res.tasks || []; }).catch(() => null));
+  const jobs = [loadNotes({ limit: 50 }).catch(() => ({ notes: [] }))];
+  if (featureOn('calendar') || featureOn('tasks')) {
+    jobs.push(api('/calendar-brief').then(res => {
+      state.calendars = res.calendars || state.calendars || [];
+      state.events = res.events || [];
+      state.tasks = res.tasks || [];
+      state.reminders = res.reminders || [];
+    }).catch(() => null));
+  }
   if (featureOn('drive')) jobs.push(api('/home-summary').then(res => { state.homeSummary = res; }).catch(() => { state.homeSummary = null; }));
   const [notes] = await Promise.all(jobs);
   state.notes = notes.notes || [];
@@ -1517,7 +1532,7 @@ function startOfWeek(value) {
   return date;
 }
 
-async function loadNotes() {
+async function loadNotes(options = {}) {
   const params = new URLSearchParams();
   params.set('view', noteView());
   const categoryId = activeNoteCategoryId();
@@ -1525,7 +1540,7 @@ async function loadNotes() {
   const query = parseNoteSearch(state.q);
   if (query.text) params.set('q', query.text);
   params.set('sort', currentNoteSort());
-  params.set('limit', String(currentNoteLimit()));
+  params.set('limit', String(options.limit || currentNoteLimit()));
   query.filters.forEach(filter => params.set(filter, '1'));
   return api('/notes?' + params);
 }
@@ -1783,11 +1798,20 @@ function topbarSubtitle() {
 function renderMainContent() {
   if (state.panel === 'categories') return renderCategoryManagerPanel();
   if (state.panel === 'settings') return `<section class="inline-panel card" id="settingsPanel">${state.settingsHtml || '<p class="muted">Loading settings...</p>'}</section>`;
+  if (state.loadingSection === state.section) return renderSectionLoading();
   if (state.section === 'home') return renderHome();
   if (state.section === 'calendar') return renderCalendar();
   if (state.section === 'tasks') return renderTasks();
   if (state.section === 'drive') return renderDrive();
   return isNoteSection(state.section) ? renderNotesWorkspace() : renderAssetTable();
+}
+
+function renderSectionLoading() {
+  const label = sectionLabel(state.section) || 'workspace';
+  return `<section class="section-loading-panel" aria-live="polite" aria-busy="true">
+    <div class="section-loading-spinner"></div>
+    <div><b>Loading ${esc(label)}</b><span>Getting the latest data...</span></div>
+  </section>`;
 }
 
 function renderNavGroups() {
@@ -2493,8 +2517,7 @@ function bindApp() {
     state.selectionMode = false;
     state.selectedNoteIds.clear();
     toggleMobileMenu(false);
-    await loadCurrentSection();
-    renderApp();
+    await loadCurrentSectionWithFeedback();
   }));
   bindNoteDropTargets();
   document.querySelector('#quickNotesBtn')?.addEventListener('click', async () => {
@@ -2504,8 +2527,7 @@ function bindApp() {
       syncSectionRoute();
       state.panel = '';
       state.q = '';
-      await loadCurrentSection();
-      renderApp();
+      await loadCurrentSectionWithFeedback();
     }
     openEditor(null, { mode: 'quick' });
   });
@@ -3037,8 +3059,7 @@ async function navigateDriveFolder(folderId = '', { replace = false } = {}) {
   state.driveFolderId = folderId || '';
   localStorage.setItem('divault_drive_folder_id', state.driveFolderId);
   syncSectionRoute({ replace });
-  await loadDrive();
-  renderApp();
+  await loadCurrentSectionWithFeedback();
 }
 
 function closeDriveMenus() {
