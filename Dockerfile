@@ -1,8 +1,11 @@
 FROM php:8.3-apache
 
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends curl libsqlite3-dev libzip-dev unzip \
     && docker-php-ext-install pdo_sqlite zip \
+    && apt-mark manual curl libsqlite3-0 libzip5 unzip \
+    && apt-get purge -y --auto-remove libsqlite3-dev libzip-dev linux-libc-dev zlib1g-dev \
     && a2enmod rewrite headers \
     && rm -rf /var/lib/apt/lists/*
 
@@ -53,5 +56,8 @@ VOLUME ["/config"]
 EXPOSE 3443
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://localhost:3443/api/health || exit 1
+# trivy:ignore:AVD-DS-0002
+# Root entrypoint is required for PUID/PGID remapping and volume ownership repair;
+# Apache is configured to serve requests through the www-data worker user.
 ENTRYPOINT ["divault-entrypoint"]
 CMD ["apache2-foreground"]

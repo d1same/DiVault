@@ -48,7 +48,7 @@ function Assert-MutatingRequestFails {
     [hashtable]$Headers = @{}
   )
   try {
-    Invoke-WebRequest -Uri "$BaseUrl$Path" -Method Post -WebSession $Session -Headers $Headers -ContentType "application/json" -Body "{}" | Out-Null
+    Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl$Path" -Method Post -WebSession $Session -Headers $Headers -ContentType "application/json" -Body "{}" | Out-Null
   } catch {
     $response = $_.Exception.Response
     if ($response -and [int]$response.StatusCode -ge 400) { return }
@@ -232,10 +232,17 @@ function Test-DriveApis {
     $folderList = Invoke-Json -Method Get -Path "/api/drive?folder_id=$driveFolderId" -Session $Session
     $folderListJson = $folderList | ConvertTo-Json -Depth 8
     if ($folderListJson -notmatch [regex]::Escape([string]$textFileId) -or $folderListJson -notmatch [regex]::Escape([string]$pdfFileId)) { throw "Drive folder listing did not include uploaded files" }
+    $driveSearchQuery = [System.Uri]::EscapeDataString("$RunId-drive")
+    $driveSearch = Invoke-Json -Method Get -Path "/api/drive?q=$driveSearchQuery&scope=all" -Session $Session
+    $driveSearchJson = $driveSearch | ConvertTo-Json -Depth 8
+    if ($driveSearchJson -notmatch [regex]::Escape([string]$textFileId) -or $driveSearchJson -notmatch [regex]::Escape([string]$pdfFileId)) { throw "Drive all-scope search did not include uploaded files" }
+    $globalDriveSearch = Invoke-Json -Method Get -Path "/api/search?q=$driveSearchQuery" -Session $Session
+    $globalDriveFile = $globalDriveSearch.results | Where-Object { $_.type -eq "drive_file" -and ($_.id -eq $textFileId -or $_.id -eq $pdfFileId) } | Select-Object -First 1
+    if (-not $globalDriveFile) { throw "Global search missing Drive files" }
 
-    $preview = Invoke-WebRequest -Uri "$BaseUrl/api/drive/files/$textFileId/preview" -Method Get -WebSession $Session -ErrorAction Stop
+    $preview = Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/api/drive/files/$textFileId/preview" -Method Get -WebSession $Session -ErrorAction Stop
     if ($preview.StatusCode -ne 200 -or $preview.Content -notmatch "Drive smoke text file") { throw "Drive file preview failed" }
-    $download = Invoke-WebRequest -Uri "$BaseUrl/api/drive/files/$pdfFileId/download" -Method Get -WebSession $Session -ErrorAction Stop
+    $download = Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/api/drive/files/$pdfFileId/download" -Method Get -WebSession $Session -ErrorAction Stop
     if ($download.StatusCode -ne 200) { throw "Drive file download failed" }
 
     try {
@@ -248,7 +255,7 @@ function Test-DriveApis {
 
     try {
       Invoke-Json -Method Patch -Path "/api/drive/files/$textFileId/content" -Session $Session -Csrf $Csrf -Body @{ content = "Drive smoke edited text file $RunId" } | Out-Null
-      $editedPreview = Invoke-WebRequest -Uri "$BaseUrl/api/drive/files/$textFileId/preview" -Method Get -WebSession $Session -ErrorAction Stop
+      $editedPreview = Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/api/drive/files/$textFileId/preview" -Method Get -WebSession $Session -ErrorAction Stop
       if ($editedPreview.Content -notmatch "edited text file") { throw "Drive text editor update failed" }
     } catch {
       if (@(404, 405) -notcontains (Get-HttpStatusCode -ErrorRecord $_)) { throw }
@@ -320,6 +327,7 @@ $aiReviewNote = $null
 $noteCategory = $null
 $calendar = $null
 $event = $null
+$birthdayEvent = $null
 $task = $null
 $csrf = $null
 $tmpFile = $null
@@ -408,6 +416,19 @@ try {
   $rangeEnd = [System.Uri]::EscapeDataString($now.AddDays(1).ToString("o"))
   $events = Invoke-Json -Method Get -Path "/api/events?start=$rangeStart&end=$rangeEnd" -Session $session
   if (-not ($events.events | Where-Object { $_.id -eq $event.id } | Select-Object -First 1)) { throw "Event list/range failed" }
+
+  $birthdayTitle = "Friend-$runId Birthday"
+  $birthdayStart = $now.AddYears(1).AddMonths(2).ToString("yyyy-MM-dd HH:mm:ss")
+  $birthdayEnd = $now.AddYears(1).AddMonths(2).AddHours(1).ToString("yyyy-MM-dd HH:mm:ss")
+  $birthdayResponse = Invoke-Json -Method Post -Path "/api/events" -Session $session -Csrf $csrf -Body @{ calendar_id = $calendar.id; title = $birthdayTitle; description = "Future birthday search smoke"; location = "Birthday search"; starts_at = $birthdayStart; ends_at = $birthdayEnd; all_day = $true; reminder_minutes = -1; note_ids = @($note.id) }
+  $birthdayEvent = $birthdayResponse.event
+  $birthdayQuery = [System.Uri]::EscapeDataString("Friend-$runId")
+  $birthdayMatches = Invoke-Json -Method Get -Path "/api/events?q=$birthdayQuery" -Session $session
+  if (-not ($birthdayMatches.events | Where-Object { $_.id -eq $birthdayEvent.id -or $_.series_id -eq $birthdayEvent.id } | Select-Object -First 1)) { throw "Calendar event name search failed" }
+  $birthdayMissQuery = [System.Uri]::EscapeDataString("no-event-$runId")
+  $birthdayMisses = Invoke-Json -Method Get -Path "/api/events?q=$birthdayMissQuery" -Session $session
+  if ($birthdayMisses.events | Where-Object { $_.id -eq $birthdayEvent.id -or $_.series_id -eq $birthdayEvent.id } | Select-Object -First 1) { throw "Calendar event search returned a nonmatching event" }
+
   $eventPatch = Invoke-Json -Method Patch -Path "/api/events/$($event.id)" -Session $session -Csrf $csrf -Body @{ calendar_id = $calendar.id; title = "$runId event updated"; description = "Smoke event updated"; location = "Smoke room"; starts_at = $eventStart; ends_at = $eventEnd; reminder_minutes = 0; note_ids = @($note.id) }
   if ($eventPatch.event.title -ne "$runId event updated") { throw "Event update failed" }
 
@@ -420,6 +441,16 @@ try {
 
   $openTasks = Invoke-Json -Method Get -Path "/api/tasks?q=$runId" -Session $session
   if (-not ($openTasks.tasks | Where-Object { $_.id -eq $task.id } | Select-Object -First 1)) { throw "Open task list failed" }
+  $missingTaskQuery = [System.Uri]::EscapeDataString("no-task-$runId")
+  $missingTasks = Invoke-Json -Method Get -Path "/api/tasks?q=$missingTaskQuery" -Session $session
+  if ($missingTasks.tasks | Where-Object { $_.id -eq $task.id } | Select-Object -First 1) { throw "Task search returned a nonmatching task" }
+
+  $globalSearchQuery = [System.Uri]::EscapeDataString($runId)
+  $globalSearch = Invoke-Json -Method Get -Path "/api/search?q=$globalSearchQuery" -Session $session
+  $globalSearchTypes = @($globalSearch.results | ForEach-Object { $_.type })
+  foreach ($expected in @("note", "event", "task", "asset", "client")) {
+    if ($globalSearchTypes -notcontains $expected) { throw "Global search missing $expected" }
+  }
 
   $reminders = Invoke-Json -Method Get -Path "/api/reminders/due" -Session $session
   $eventReminder = $reminders.reminders | Where-Object { $_.kind -eq "event" -and $_.title -eq "$runId event updated" } | Select-Object -First 1
@@ -460,7 +491,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "File upload failed: $curlOutput" }
   $details = Invoke-Json -Method Get -Path "/api/notes/$($note.id)" -Session $session
   if ($details.files.Count -lt 1) { throw "File upload failed" }
-  $preview = Invoke-WebRequest -Uri "$BaseUrl/api/files/$($details.files[0].id)/preview" -Method Get -WebSession $session
+  $preview = Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/api/files/$($details.files[0].id)/preview" -Method Get -WebSession $session
   if ($preview.StatusCode -ne 200) { throw "File preview failed" }
   Remove-Item -LiteralPath $tmpFile.FullName -Force
 
@@ -470,7 +501,7 @@ try {
   $backups = Invoke-Json -Method Get -Path "/api/backups" -Session $session
   if ($backups.backups.Count -lt 1) { throw "Backup list failed" }
   $backupZip = Join-Path ([System.IO.Path]::GetTempPath()) "$runId-backup.zip"
-  Invoke-WebRequest -Uri "$BaseUrl/api/backups/$($backup.file)" -Method Get -WebSession $session -OutFile $backupZip
+  Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/api/backups/$($backup.file)" -Method Get -WebSession $session -OutFile $backupZip
   Assert-BackupZipContainsRequiredFiles -ZipPath $backupZip
   Remove-Item -LiteralPath $backupZip -Force
 
@@ -479,7 +510,7 @@ try {
     $encryptedBackup = Invoke-Json -Method Post -Path "/api/backup" -Session $session -Csrf $csrf -Body @{ passphrase = $backupPassphrase }
     if ($encryptedBackup.file) {
       $encryptedBackupZip = Join-Path ([System.IO.Path]::GetTempPath()) "$runId-encrypted-backup.zip"
-      Invoke-WebRequest -Uri "$BaseUrl/api/backups/$($encryptedBackup.file)" -Method Get -WebSession $session -OutFile $encryptedBackupZip
+      Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/api/backups/$($encryptedBackup.file)" -Method Get -WebSession $session -OutFile $encryptedBackupZip
       $encryptedBackupCheck = Test-ZipEntriesWithPassphrase -ZipPath $encryptedBackupZip -Passphrase $backupPassphrase
       Remove-Item -LiteralPath $encryptedBackupZip -Force
       $encryptedBackupZip = $null
@@ -563,6 +594,7 @@ try {
     if ($note -and $note.id) { $cleanup["note"] = Remove-SmokeResource -Path "/api/notes/$($note.id)/permanent" -Session $session -Csrf $csrf }
     if ($aiReviewNote -and $aiReviewNote.id) { $cleanup["aiReviewNote"] = Remove-SmokeResource -Path "/api/notes/$($aiReviewNote.id)/permanent" -Session $session -Csrf $csrf }
     if ($task -and $task.id) { $cleanup["task"] = Remove-SmokeResource -Path "/api/tasks/$($task.id)" -Session $session -Csrf $csrf }
+    if ($birthdayEvent -and $birthdayEvent.id) { $cleanup["birthdayEvent"] = Remove-SmokeResource -Path "/api/events/$($birthdayEvent.id)" -Session $session -Csrf $csrf }
     if ($event -and $event.id) { $cleanup["event"] = Remove-SmokeResource -Path "/api/events/$($event.id)" -Session $session -Csrf $csrf }
     if ($calendar -and $calendar.id) { $cleanup["calendar"] = Remove-SmokeResource -Path "/api/calendars/$($calendar.id)" -Session $session -Csrf $csrf }
     if ($noteCategory -and $noteCategory.id) { $cleanup["noteCategory"] = Remove-SmokeResource -Path "/api/categories/$($noteCategory.id)" -Session $session -Csrf $csrf }

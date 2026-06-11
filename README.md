@@ -496,6 +496,8 @@ Available endpoints:
 GET    /status
 GET    /me
 GET    /daily?start=2026-05-25T00:00&end=2026-05-25T23:59
+       (defaults to today in America/New_York and returns calendars, events,
+       overdue_tasks, upcoming_tasks, tasks, recent_notes, and reminders)
 GET    /notes?q=search&view=all
 POST   /notes
 GET    /notes/{id}

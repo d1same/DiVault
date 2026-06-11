@@ -390,6 +390,7 @@ SQL);
         $this->pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_drive_files_owner_source ON drive_files(owner_user_id, source_path) WHERE source_path IS NOT NULL');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_drive_shares_user ON drive_shares(user_id, item_type, permission)');
         $this->pdo->exec('CREATE INDEX IF NOT EXISTS idx_drive_shares_item ON drive_shares(item_type, item_id)');
+        $this->ensureNotesFullTextIndex();
     }
 
     private function addColumnIfMissing(string $table, string $column, string $definition): void
@@ -399,5 +400,18 @@ SQL);
             if (($row['name'] ?? '') === $column) return;
         }
         $this->pdo->exec('ALTER TABLE ' . $table . ' ADD COLUMN ' . $column . ' ' . $definition);
+    }
+
+    private function ensureNotesFullTextIndex(): void
+    {
+        try {
+            $this->pdo->exec("CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(title, body, tags, content='notes', content_rowid='id')");
+            $this->pdo->exec("CREATE TRIGGER IF NOT EXISTS notes_fts_ai AFTER INSERT ON notes BEGIN INSERT INTO notes_fts(rowid, title, body, tags) VALUES (new.id, new.title, new.body, new.tags); END");
+            $this->pdo->exec("CREATE TRIGGER IF NOT EXISTS notes_fts_ad AFTER DELETE ON notes BEGIN INSERT INTO notes_fts(notes_fts, rowid, title, body, tags) VALUES ('delete', old.id, old.title, old.body, old.tags); END");
+            $this->pdo->exec("CREATE TRIGGER IF NOT EXISTS notes_fts_au AFTER UPDATE ON notes BEGIN INSERT INTO notes_fts(notes_fts, rowid, title, body, tags) VALUES ('delete', old.id, old.title, old.body, old.tags); INSERT INTO notes_fts(rowid, title, body, tags) VALUES (new.id, new.title, new.body, new.tags); END");
+            $this->pdo->exec("INSERT INTO notes_fts(notes_fts) VALUES ('rebuild')");
+        } catch (PDOException) {
+            // Some SQLite builds omit FTS5; LIKE search remains available.
+        }
     }
 }

@@ -86,6 +86,8 @@ final class App
         if ($method === 'POST' && $path === '/retention-settings') $this->saveRetentionSettings($user);
         if ($method === 'GET' && $path === '/features') $this->featureSettings($user);
         if ($method === 'PATCH' && $path === '/features') $this->saveFeatureSettings($user);
+        if ($method === 'GET' && $path === '/search') $this->globalSearch($user);
+        if ($method === 'GET' && $path === '/home-summary') $this->homeSummary($user);
         if ($method === 'GET' && preg_match('#^/sync/files/(\d+)$#', $path, $m)) $this->downloadFile($user, (int)$m[1]);
         if ($method === 'GET' && $path === '/drive/storage-settings') $this->driveStorageSettings($user);
         if ($method === 'POST' && $path === '/drive/storage-settings') $this->saveDriveStorageSettings($user);
@@ -765,11 +767,246 @@ final class App
         return $row;
     }
 
+    private function globalSearch(array $user): void
+    {
+        $q = trim((string)($_GET['q'] ?? ''));
+        $limit = min(12, max(3, (int)($_GET['limit'] ?? 6)));
+        if ($q === '') {
+            $this->json(['query' => '', 'results' => [], 'total' => 0]);
+        }
+
+        $like = '%' . $q . '%';
+        $groups = [
+            'notes' => $this->searchNotes($user, $q, $like, $limit),
+            'events' => $this->searchEvents($user, $like, $limit),
+            'tasks' => $this->searchTasks($user, $like, $limit),
+            'drive' => $this->searchDrive($user, $like, $limit),
+            'assets' => $this->searchAssets($user, $like, $limit),
+            'clients' => $this->searchClients($user, $like, $limit),
+        ];
+        $results = [];
+        foreach ($groups as $items) {
+            foreach ($items as $item) $results[] = $item;
+        }
+        $this->json(['query' => $q, 'groups' => $groups, 'results' => $results, 'total' => count($results)]);
+    }
+
+    private function homeSummary(array $user): void
+    {
+        $recentFiles = [];
+        $stmt = $this->db->query('SELECT id FROM drive_files WHERE deleted = 0 ORDER BY updated_at DESC, id DESC LIMIT 60');
+        foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $id) {
+            try {
+                $file = $this->driveFileAccess($user, (int)$id, 'view');
+            } catch (RuntimeException) {
+                continue;
+            }
+            $recentFiles[] = [
+                'id' => (int)$file['id'],
+                'folder_id' => $file['folder_id'] === null ? null : (int)$file['folder_id'],
+                'original_name' => (string)$file['original_name'],
+                'mime' => (string)($file['mime'] ?? ''),
+                'size' => (int)($file['size'] ?? 0),
+                'updated_at' => (string)($file['updated_at'] ?? $file['created_at'] ?? ''),
+            ];
+            if (count($recentFiles) >= 6) break;
+        }
+
+        $backup = null;
+        $backupCount = null;
+        if (in_array((string)($user['role'] ?? ''), ['owner', 'admin'], true)) {
+            $backups = [];
+            foreach (glob(Config::dir() . '/backups/backup-*.zip') ?: [] as $file) {
+                $backups[] = ['file' => basename($file), 'size' => filesize($file), 'created_at' => date('c', filemtime($file))];
+            }
+            usort($backups, fn ($a, $b) => strcmp($b['created_at'], $a['created_at']));
+            $backup = $backups[0] ?? null;
+            $backupCount = count($backups);
+        }
+
+        $this->json(['recent_drive_files' => $recentFiles, 'latest_backup' => $backup, 'backup_count' => $backupCount]);
+    }
+
+    private function searchNotes(array $user, string $q, string $like, int $limit): array
+    {
+        $where = ['n.user_id = ?', 'n.deleted = 0'];
+        $args = [(int)$user['id']];
+        $ftsQuery = $this->noteFtsQuery($q);
+        if ($ftsQuery !== null && $this->notesFtsAvailable()) {
+            $where[] = '(n.id IN (SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?) OR ns.label LIKE ? OR ac.name LIKE ? OR c.name LIKE ?)';
+            array_push($args, $ftsQuery, $like, $like, $like);
+        } else {
+            $where[] = '(n.title LIKE ? OR n.body LIKE ? OR n.tags LIKE ? OR ns.label LIKE ? OR ac.name LIKE ? OR c.name LIKE ?)';
+            array_push($args, $like, $like, $like, $like, $like, $like);
+        }
+        $stmt = $this->db->prepare('SELECT DISTINCT n.id, n.title, n.body, n.tags, n.pinned, n.updated_at, ac.name AS category_name, c.name AS client_name FROM notes n LEFT JOIN asset_categories ac ON ac.id = n.category_id LEFT JOIN clients c ON c.id = n.client_id LEFT JOIN note_secrets ns ON ns.note_id = n.id WHERE ' . implode(' AND ', $where) . ' ORDER BY n.pinned DESC, n.updated_at DESC, n.id DESC LIMIT ' . $limit);
+        $stmt->execute($args);
+        return array_map(fn ($row) => [
+            'type' => 'note',
+            'id' => (int)$row['id'],
+            'title' => (string)($row['title'] ?: 'Untitled note'),
+            'subtitle' => trim(implode(' / ', array_filter([(string)($row['category_name'] ?? ''), (string)($row['client_name'] ?? '')]))) ?: 'Note',
+            'snippet' => $this->searchSnippet((string)($row['body'] ?? ''), $q),
+            'updated_at' => (string)($row['updated_at'] ?? ''),
+            'pinned' => (int)($row['pinned'] ?? 0),
+        ], $stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    private function searchEvents(array $user, string $like, int $limit): array
+    {
+        $rangeStart = gmdate('Y-m-d 00:00:00', strtotime('-2 years') ?: time());
+        $rangeEnd = gmdate('Y-m-d 23:59:59', strtotime('+5 years') ?: time());
+        $stmt = $this->db->prepare('SELECT e.*, c.name AS calendar_name, c.color AS calendar_color FROM calendar_events e JOIN calendars c ON c.id = e.calendar_id LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?) AND ((e.recurrence_rule IS NULL AND e.starts_at <= ? AND COALESCE(e.ends_at, e.starts_at) >= ?) OR (e.recurrence_rule IS NOT NULL AND e.starts_at <= ?)) AND (e.title LIKE ? OR e.description LIKE ? OR e.location LIKE ? OR c.name LIKE ?) ORDER BY e.starts_at ASC LIMIT 120');
+        $stmt->execute([(int)$user['id'], (int)$user['id'], (int)$user['id'], $rangeEnd, $rangeStart, $rangeEnd, $like, $like, $like, $like]);
+        $events = $this->expandRecurringEvents($stmt->fetchAll(PDO::FETCH_ASSOC), $rangeStart, $rangeEnd);
+        $now = time();
+        usort($events, function ($a, $b) use ($now) {
+            $left = strtotime((string)($a['starts_at'] ?? '')) ?: 0;
+            $right = strtotime((string)($b['starts_at'] ?? '')) ?: 0;
+            $leftFuture = $left >= $now;
+            $rightFuture = $right >= $now;
+            if ($leftFuture !== $rightFuture) return $leftFuture ? -1 : 1;
+            return $leftFuture ? ($left <=> $right) : ($right <=> $left);
+        });
+        $events = array_slice($events, 0, $limit);
+        return array_map(fn ($row) => [
+            'type' => 'event',
+            'id' => (int)$row['id'],
+            'series_id' => isset($row['series_id']) ? (int)$row['series_id'] : null,
+            'title' => (string)($row['title'] ?: 'Untitled event'),
+            'subtitle' => trim(implode(' / ', array_filter([(string)($row['calendar_name'] ?? ''), (string)($row['location'] ?? '')]))) ?: 'Event',
+            'snippet' => $this->searchSnippet((string)($row['description'] ?? ''), ''),
+            'starts_at' => (string)($row['starts_at'] ?? ''),
+            'updated_at' => (string)($row['updated_at'] ?? $row['starts_at'] ?? ''),
+        ], $events);
+    }
+
+    private function searchTasks(array $user, string $like, int $limit): array
+    {
+        $where = ['(t.user_id = ? OR (t.private = 0 AND t.calendar_id IN (SELECT c.id FROM calendars c LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?))))', '(t.title LIKE ? OR t.description LIKE ? OR t.location LIKE ? OR c.name LIKE ?)'];
+        $args = [(int)$user['id'], (int)$user['id'], (int)$user['id'], (int)$user['id'], $like, $like, $like, $like];
+        $stmt = $this->db->prepare('SELECT t.*, c.name AS calendar_name FROM tasks t LEFT JOIN calendars c ON c.id = t.calendar_id WHERE ' . implode(' AND ', $where) . ' ORDER BY CASE WHEN t.status = \'done\' THEN 1 ELSE 0 END, t.due_at IS NULL, t.due_at ASC, t.priority DESC, t.id DESC LIMIT ' . $limit);
+        $stmt->execute($args);
+        return array_map(fn ($row) => [
+            'type' => 'task',
+            'id' => (int)$row['id'],
+            'title' => (string)($row['title'] ?: 'Untitled task'),
+            'subtitle' => trim(implode(' / ', array_filter([(string)($row['status'] ?? ''), (string)($row['calendar_name'] ?? '')]))) ?: 'Task',
+            'snippet' => $this->searchSnippet((string)($row['description'] ?? ''), ''),
+            'due_at' => (string)($row['due_at'] ?? ''),
+            'updated_at' => (string)($row['updated_at'] ?? ''),
+        ], $stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    private function searchDrive(array $user, string $like, int $limit): array
+    {
+        $items = [];
+        $folderStmt = $this->db->prepare('SELECT id FROM drive_folders WHERE deleted = 0 AND name LIKE ? ORDER BY updated_at DESC, name COLLATE NOCASE LIMIT 80');
+        $folderStmt->execute([$like]);
+        foreach ($folderStmt->fetchAll(PDO::FETCH_COLUMN) as $id) {
+            try {
+                $folder = $this->driveFolderAccess($user, (int)$id, 'view');
+            } catch (RuntimeException) {
+                continue;
+            }
+            $items[] = [
+                'type' => 'drive_folder',
+                'id' => (int)$folder['id'],
+                'title' => (string)$folder['name'],
+                'subtitle' => 'Drive folder',
+                'snippet' => $this->drivePathLabel($user, (int)$folder['id']),
+                'updated_at' => (string)($folder['updated_at'] ?? $folder['created_at'] ?? ''),
+            ];
+            if (count($items) >= $limit) return $items;
+        }
+        $fileStmt = $this->db->prepare('SELECT id FROM drive_files WHERE deleted = 0 AND (original_name LIKE ? OR mime LIKE ?) ORDER BY updated_at DESC, original_name COLLATE NOCASE LIMIT 80');
+        $fileStmt->execute([$like, $like]);
+        foreach ($fileStmt->fetchAll(PDO::FETCH_COLUMN) as $id) {
+            try {
+                $file = $this->driveFileAccess($user, (int)$id, 'view');
+            } catch (RuntimeException) {
+                continue;
+            }
+            $items[] = [
+                'type' => 'drive_file',
+                'id' => (int)$file['id'],
+                'folder_id' => $file['folder_id'] === null ? null : (int)$file['folder_id'],
+                'title' => (string)$file['original_name'],
+                'subtitle' => trim((string)($file['mime'] ?? '')) ?: 'Drive file',
+                'snippet' => $this->drivePathLabel($user, $file['folder_id'] === null ? null : (int)$file['folder_id']),
+                'mime' => (string)($file['mime'] ?? ''),
+                'size' => (int)($file['size'] ?? 0),
+                'updated_at' => (string)($file['updated_at'] ?? $file['created_at'] ?? ''),
+            ];
+            if (count($items) >= $limit) break;
+        }
+        return $items;
+    }
+
+    private function searchAssets(array $user, string $like, int $limit): array
+    {
+        $stmt = $this->db->prepare('SELECT a.id, a.name, a.type, a.status, a.asset_type, a.primary_ip, a.serial_number, a.location, a.contact, a.username, a.notes, a.updated_at, c.name AS client_name FROM asset_records a LEFT JOIN clients c ON c.id = a.client_id WHERE a.user_id = ? AND a.archived = 0 AND (a.name LIKE ? OR a.status LIKE ? OR a.asset_type LIKE ? OR a.primary_ip LIKE ? OR a.serial_number LIKE ? OR a.location LIKE ? OR a.contact LIKE ? OR a.username LIKE ? OR a.notes LIKE ? OR c.name LIKE ?) ORDER BY a.updated_at DESC, a.name LIMIT ' . $limit);
+        $stmt->execute([(int)$user['id'], $like, $like, $like, $like, $like, $like, $like, $like, $like, $like]);
+        return array_map(fn ($row) => [
+            'type' => 'asset',
+            'id' => (int)$row['id'],
+            'asset_type' => (string)($row['type'] ?? ''),
+            'title' => (string)($row['name'] ?: 'Untitled asset'),
+            'subtitle' => trim(implode(' / ', array_filter([(string)($row['type'] ?? ''), (string)($row['client_name'] ?? '')]))) ?: 'Asset',
+            'snippet' => $this->searchSnippet((string)($row['notes'] ?? ''), ''),
+            'updated_at' => (string)($row['updated_at'] ?? ''),
+        ], $stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    private function searchClients(array $user, string $like, int $limit): array
+    {
+        $stmt = $this->db->prepare('SELECT DISTINCT c.id, c.name, c.notes, c.created_at FROM clients c WHERE (c.name LIKE ? OR c.notes LIKE ?) AND (EXISTS (SELECT 1 FROM notes n WHERE n.client_id = c.id AND n.user_id = ? AND n.deleted = 0) OR EXISTS (SELECT 1 FROM asset_records a WHERE a.client_id = c.id AND a.user_id = ? AND a.archived = 0)) ORDER BY c.name COLLATE NOCASE LIMIT ' . $limit);
+        $stmt->execute([$like, $like, (int)$user['id'], (int)$user['id']]);
+        return array_map(fn ($row) => [
+            'type' => 'client',
+            'id' => (int)$row['id'],
+            'title' => (string)($row['name'] ?: 'Client'),
+            'subtitle' => 'Organization',
+            'snippet' => $this->searchSnippet((string)($row['notes'] ?? ''), ''),
+            'updated_at' => (string)($row['created_at'] ?? ''),
+        ], $stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    private function searchSnippet(string $value, string $query): string
+    {
+        $plain = trim(preg_replace('/\s+/', ' ', strip_tags($value)) ?? '');
+        if ($plain === '') return '';
+        $query = trim($query);
+        if ($query !== '') {
+            $pos = stripos($plain, $query);
+            if ($pos !== false) {
+                $start = max(0, $pos - 60);
+                $snippet = substr($plain, $start, 180);
+                return ($start > 0 ? '...' : '') . $snippet . (strlen($plain) > $start + 180 ? '...' : '');
+            }
+        }
+        return strlen($plain) > 180 ? substr($plain, 0, 177) . '...' : $plain;
+    }
+
+    private function drivePathLabel(array $user, ?int $folderId): string
+    {
+        if (!$folderId) return 'Drive / Root';
+        try {
+            $crumbs = $this->driveBreadcrumbs($user, $folderId);
+        } catch (RuntimeException) {
+            return 'Drive';
+        }
+        $names = array_map(fn ($crumb) => (string)($crumb['name'] ?? 'Folder'), $crumbs);
+        return 'Drive / ' . implode(' / ', $names);
+    }
+
     private function listNotes(array $user): void
     {
         $q = trim($_GET['q'] ?? '');
         $view = trim($_GET['view'] ?? 'all');
         $categoryId = isset($_GET['category_id']) && $_GET['category_id'] !== '' ? (int)$_GET['category_id'] : null;
+        $limit = min(1000, max(50, (int)($_GET['limit'] ?? 200)));
+        $fetchLimit = $limit + 1;
         $where = ['n.user_id = ?'];
         $args = [(int)$user['id']];
         if ($view === 'trash') {
@@ -788,10 +1025,18 @@ final class App
                 $where[] = 'n.category_id IS NULL';
             }
         }
-        if ($q !== '') { $where[] = '(n.title LIKE ? OR n.body LIKE ? OR n.tags LIKE ?)'; array_push($args, "%$q%", "%$q%", "%$q%"); }
+        $ftsQuery = $q !== '' ? $this->noteFtsQuery($q) : null;
+        if ($ftsQuery !== null && $this->notesFtsAvailable()) {
+            $where[] = 'n.id IN (SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?)';
+            $args[] = $ftsQuery;
+        } elseif ($q !== '') {
+            $where[] = '(n.title LIKE ? OR n.body LIKE ? OR n.tags LIKE ?)';
+            array_push($args, "%$q%", "%$q%", "%$q%");
+        }
         if (!empty($_GET['has_file'])) $where[] = 'EXISTS (SELECT 1 FROM files f WHERE f.note_id = n.id AND f.user_id = n.user_id)';
         if (!empty($_GET['has_secret'])) $where[] = 'EXISTS (SELECT 1 FROM note_secrets s WHERE s.note_id = n.id)';
         if (!empty($_GET['has_code'])) $where[] = "n.body LIKE '%```%'";
+        if (!empty($_GET['pinned'])) $where[] = 'n.pinned = 1';
         $sort = $_GET['sort'] ?? 'updated_desc';
         $order = match ($sort) {
             'updated_asc' => 'n.pinned DESC, n.updated_at ASC, n.id ASC',
@@ -801,10 +1046,36 @@ final class App
             'title_desc' => 'n.pinned DESC, lower(n.title) DESC, n.updated_at DESC',
             default => 'n.pinned DESC, n.updated_at DESC, n.id DESC',
         };
-        $sql = 'SELECT n.*, ac.name AS category_name, ac.slug AS category_slug, c.name AS client_name, (SELECT COUNT(*) FROM files f WHERE f.note_id = n.id AND f.user_id = n.user_id) AS file_count, (SELECT COUNT(*) FROM note_secrets s WHERE s.note_id = n.id) AS secret_count FROM notes n LEFT JOIN asset_categories ac ON ac.id = n.category_id LEFT JOIN clients c ON c.id = n.client_id WHERE ' . implode(' AND ', $where) . ' ORDER BY ' . $order . ' LIMIT 200';
+        $sql = 'SELECT n.*, ac.name AS category_name, ac.slug AS category_slug, c.name AS client_name, (SELECT COUNT(*) FROM files f WHERE f.note_id = n.id AND f.user_id = n.user_id) AS file_count, (SELECT COUNT(*) FROM note_secrets s WHERE s.note_id = n.id) AS secret_count FROM notes n LEFT JOIN asset_categories ac ON ac.id = n.category_id LEFT JOIN clients c ON c.id = n.client_id WHERE ' . implode(' AND ', $where) . ' ORDER BY ' . $order . ' LIMIT ' . $fetchLimit;
         $stmt = $this->db->prepare($sql);
         $stmt->execute($args);
-        $this->json(['notes' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $hasMore = count($rows) > $limit;
+        if ($hasMore) $rows = array_slice($rows, 0, $limit);
+        $this->json(['notes' => $rows, 'has_more' => $hasMore, 'limit' => $limit, 'visible_count' => count($rows)]);
+    }
+
+    private function notesFtsAvailable(): bool
+    {
+        static $available = null;
+        if ($available !== null) return $available;
+        try {
+            $stmt = $this->db->query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notes_fts' LIMIT 1");
+            $available = (bool)$stmt->fetchColumn();
+        } catch (Throwable) {
+            $available = false;
+        }
+        return $available;
+    }
+
+    private function noteFtsQuery(string $query): ?string
+    {
+        $parts = [];
+        $normalized = preg_replace('/[^\p{L}\p{N}_]+/u', ' ', trim($query)) ?? '';
+        foreach (preg_split('/\s+/', trim($normalized)) ?: [] as $term) {
+            if ($term !== '') $parts[] = $term . '*';
+        }
+        return $parts ? implode(' AND ', $parts) : null;
     }
 
     private function assetCounts(array $user): void
@@ -995,11 +1266,21 @@ final class App
         $this->json(['note' => $note, 'files' => $files->fetchAll(PDO::FETCH_ASSOC), 'secrets' => $secrets->fetchAll(PDO::FETCH_ASSOC), 'versions' => $versions->fetchAll(PDO::FETCH_ASSOC)]);
     }
 
+    private function noteSummary(int $id, array $user): array
+    {
+        $stmt = $this->db->prepare('SELECT n.*, ac.name AS category_name, ac.slug AS category_slug, c.name AS client_name, (SELECT COUNT(*) FROM files f WHERE f.note_id = n.id AND f.user_id = n.user_id) AS file_count, (SELECT COUNT(*) FROM note_secrets s WHERE s.note_id = n.id) AS secret_count FROM notes n LEFT JOIN asset_categories ac ON ac.id = n.category_id LEFT JOIN clients c ON c.id = n.client_id WHERE n.id = ? AND n.user_id = ?');
+        $stmt->execute([$id, (int)$user['id']]);
+        $note = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$note) throw new RuntimeException('Note not found');
+        return $note;
+    }
+
     private function saveNote(array $user, int $id = 0): void
     {
         $this->requireEditor($user);
         $data = $this->input();
         $id = $id > 0 ? $id : (isset($data['id']) ? (int)$data['id'] : 0);
+        $autosave = !empty($data['autosave']);
         $parsed = $this->extractSecrets($data['body'] ?? '', $id);
         $clientId = !empty($data['client_id']) ? (int)$data['client_id'] : null;
         $title = trim($data['title'] ?? '') ?: 'Quick note';
@@ -1015,8 +1296,10 @@ final class App
         try {
             if ($id > 0) {
                 $old = $this->note($id, $user);
-                $this->db->prepare('INSERT INTO note_versions (note_id, user_id, title, body) VALUES (?, ?, ?, ?)')->execute([$id, (int)$user['id'], $old['title'], $old['body']]);
-                $this->pruneNoteVersions($id);
+                if ($this->shouldSnapshotNoteVersion($id, $autosave)) {
+                    $this->db->prepare('INSERT INTO note_versions (note_id, user_id, title, body) VALUES (?, ?, ?, ?)')->execute([$id, (int)$user['id'], $old['title'], $old['body']]);
+                    $this->pruneNoteVersions($id);
+                }
                 $stmt = $this->db->prepare('UPDATE notes SET title=?, body=?, type=?, section=?, category_id=?, category=?, tags=?, client_id=?, pinned=?, archived=?, deleted=0, updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?');
                 $stmt->execute([$title, $parsed['body'], $type, $section, $categoryId, $category, $tags, $clientId, $pinned, $archived, $id, (int)$user['id']]);
                 $this->db->prepare('DELETE FROM note_secrets WHERE note_id = ?')->execute([$id]);
@@ -1036,7 +1319,7 @@ final class App
             $this->db->rollBack();
             throw $e;
         }
-        $this->json(['id' => $id]);
+        $this->json(['id' => $id, 'note' => $this->noteSummary($id, $user)]);
     }
 
     private function createAiReviewNote(): void
@@ -1276,9 +1559,24 @@ final class App
     {
         $this->ensureDefaultCalendar($user);
         $this->syncDueCalendarFeeds($user);
-        [$start, $end] = $this->dateRangeFromQuery();
+        $q = trim((string)($_GET['q'] ?? ''));
+        if ($q !== '' && !isset($_GET['start']) && !isset($_GET['end'])) {
+            $start = gmdate('Y-m-d 00:00:00', strtotime('-2 years') ?: time());
+            $end = gmdate('Y-m-d 23:59:59', strtotime('+5 years') ?: time());
+        } else {
+            [$start, $end] = $this->dateRangeFromQuery();
+        }
+        $where = [
+            'c.archived = 0',
+            '(c.owner_user_id = ? OR s.user_id = ?)',
+            '((e.recurrence_rule IS NULL AND e.starts_at <= ? AND COALESCE(e.ends_at, e.starts_at) >= ?) OR (e.recurrence_rule IS NOT NULL AND e.starts_at <= ?))',
+        ];
         $args = [(int)$user['id'], (int)$user['id'], (int)$user['id'], $end, $start, $end];
-        $stmt = $this->db->prepare("SELECT e.*, c.name AS calendar_name, c.color AS calendar_color FROM calendar_events e JOIN calendars c ON c.id = e.calendar_id LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?) AND ((e.recurrence_rule IS NULL AND e.starts_at <= ? AND COALESCE(e.ends_at, e.starts_at) >= ?) OR (e.recurrence_rule IS NOT NULL AND e.starts_at <= ?)) ORDER BY e.starts_at ASC");
+        if ($q !== '') {
+            $where[] = '(e.title LIKE ? OR e.description LIKE ? OR e.location LIKE ? OR c.name LIKE ?)';
+            array_push($args, "%$q%", "%$q%", "%$q%", "%$q%");
+        }
+        $stmt = $this->db->prepare('SELECT e.*, c.name AS calendar_name, c.color AS calendar_color FROM calendar_events e JOIN calendars c ON c.id = e.calendar_id LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE ' . implode(' AND ', $where) . ' ORDER BY e.starts_at ASC LIMIT 500');
         $stmt->execute($args);
         $this->json(['events' => $this->expandRecurringEvents($stmt->fetchAll(PDO::FETCH_ASSOC), $start, $end)]);
     }
@@ -1396,9 +1694,14 @@ final class App
     {
         $this->ensureDefaultCalendar($user);
         $view = $_GET['view'] ?? 'open';
+        $q = trim((string)($_GET['q'] ?? ''));
         $where = ['(t.user_id = ? OR (t.private = 0 AND t.calendar_id IN (SELECT c.id FROM calendars c LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?))))'];
         $args = [(int)$user['id'], (int)$user['id'], (int)$user['id'], (int)$user['id']];
         if ($view !== 'all') $where[] = $view === 'done' ? "t.status = 'done'" : "t.status != 'done'";
+        if ($q !== '') {
+            $where[] = '(t.title LIKE ? OR t.description LIKE ? OR t.location LIKE ? OR c.name LIKE ?)';
+            array_push($args, "%$q%", "%$q%", "%$q%", "%$q%");
+        }
         $stmt = $this->db->prepare('SELECT t.*, c.name AS calendar_name, c.color AS calendar_color FROM tasks t LEFT JOIN calendars c ON c.id = t.calendar_id WHERE ' . implode(' AND ', $where) . ' ORDER BY CASE WHEN t.status = \'done\' THEN 1 ELSE 0 END, t.due_at IS NULL, t.due_at ASC, t.priority DESC, t.id DESC');
         $stmt->execute($args);
         $this->json(['tasks' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
@@ -1463,8 +1766,15 @@ final class App
         $this->ensureDefaultCalendar($user);
         $this->syncDueCalendarFeeds($user);
         $userId = (int)$user['id'];
-        $start = $this->cleanDateTime($_GET['start'] ?? '') ?: gmdate('Y-m-d 00:00:00');
-        $end = $this->cleanDateTime($_GET['end'] ?? '') ?: gmdate('Y-m-d 23:59:59');
+
+        $briefTz = new DateTimeZone('America/New_York');
+        $utcTz = new DateTimeZone('UTC');
+        $now = new DateTimeImmutable('now', $briefTz);
+        $defaultStart = $now->setTime(0, 0, 0)->setTimezone($utcTz)->format('Y-m-d H:i:s');
+        $defaultEnd = $now->setTime(23, 59, 59)->setTimezone($utcTz)->format('Y-m-d H:i:s');
+        $overdueCutoff = $now->setTimezone($utcTz)->format('Y-m-d H:i:s');
+        $start = $this->cleanDateTime($_GET['start'] ?? '') ?: $defaultStart;
+        $end = $this->cleanDateTime($_GET['end'] ?? '') ?: $defaultEnd;
 
         $calendarStmt = $this->db->prepare("SELECT c.id, c.name, c.color, c.description, CASE WHEN c.owner_user_id = ? THEN 'owner' ELSE s.permission END AS permission, u.name AS owner_name FROM calendars c JOIN users u ON u.id = c.owner_user_id LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?) ORDER BY c.owner_user_id = ? DESC, c.name COLLATE NOCASE");
         $calendarStmt->execute([$userId, $userId, $userId, $userId, $userId]);
@@ -1475,8 +1785,14 @@ final class App
         $eventStmt = $this->db->prepare("SELECT e.*, c.name AS calendar_name, c.color AS calendar_color FROM calendar_events e JOIN calendars c ON c.id = e.calendar_id LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?) AND ((e.recurrence_rule IS NULL AND e.starts_at <= ? AND COALESCE(e.ends_at, e.starts_at) >= ?) OR (e.recurrence_rule IS NOT NULL AND e.starts_at <= ?)) ORDER BY e.starts_at ASC");
         $eventStmt->execute([$userId, $userId, $userId, $end, $start, $end]);
 
-        $taskStmt = $this->db->prepare("SELECT t.*, c.name AS calendar_name, c.color AS calendar_color FROM tasks t LEFT JOIN calendars c ON c.id = t.calendar_id WHERE t.status != 'done' AND (t.user_id = ? OR (t.private = 0 AND t.calendar_id IN (SELECT c2.id FROM calendars c2 LEFT JOIN calendar_shares s ON s.calendar_id = c2.id AND s.user_id = ? WHERE c2.archived = 0 AND (c2.owner_user_id = ? OR s.user_id = ?)))) ORDER BY t.due_at IS NULL, t.due_at ASC, t.priority DESC, t.id DESC LIMIT 25");
-        $taskStmt->execute([$userId, $userId, $userId, $userId]);
+        $taskBaseWhere = '(t.user_id = ? OR (t.private = 0 AND t.calendar_id IN (SELECT c2.id FROM calendars c2 LEFT JOIN calendar_shares s ON s.calendar_id = c2.id AND s.user_id = ? WHERE c2.archived = 0 AND (c2.owner_user_id = ? OR s.user_id = ?))))';
+        $taskArgs = [$userId, $userId, $userId, $userId];
+        $overdueTaskStmt = $this->db->prepare('SELECT t.*, c.name AS calendar_name, c.color AS calendar_color FROM tasks t LEFT JOIN calendars c ON c.id = t.calendar_id WHERE t.status != \'done\' AND t.due_at IS NOT NULL AND t.due_at < ? AND ' . $taskBaseWhere . ' ORDER BY t.due_at ASC, t.priority DESC, t.id DESC LIMIT 25');
+        $overdueTaskStmt->execute(array_merge([$overdueCutoff], $taskArgs));
+        $upcomingTaskStmt = $this->db->prepare('SELECT t.*, c.name AS calendar_name, c.color AS calendar_color FROM tasks t LEFT JOIN calendars c ON c.id = t.calendar_id WHERE t.status != \'done\' AND (t.due_at IS NULL OR t.due_at >= ?) AND ' . $taskBaseWhere . ' ORDER BY t.due_at IS NULL, t.due_at ASC, t.priority DESC, t.id DESC LIMIT 25');
+        $upcomingTaskStmt->execute(array_merge([$overdueCutoff], $taskArgs));
+        $taskStmt = $this->db->prepare('SELECT t.*, c.name AS calendar_name, c.color AS calendar_color FROM tasks t LEFT JOIN calendars c ON c.id = t.calendar_id WHERE t.status != \'done\' AND ' . $taskBaseWhere . ' ORDER BY CASE WHEN t.due_at IS NOT NULL AND t.due_at < ? THEN 0 ELSE 1 END, t.due_at IS NULL, t.due_at ASC, t.priority DESC, t.id DESC LIMIT 25');
+        $taskStmt->execute(array_merge($taskArgs, [$overdueCutoff]));
 
         $eventReminderStmt = $this->db->prepare("SELECT r.id, 'event' AS kind, r.remind_at, e.title, e.starts_at AS due_at FROM calendar_event_reminders r JOIN calendar_events e ON e.id = r.event_id JOIN calendars c ON c.id = e.calendar_id LEFT JOIN calendar_shares s ON s.calendar_id = c.id AND s.user_id = ? WHERE r.user_id = ? AND c.archived = 0 AND (c.owner_user_id = ? OR s.user_id = ?) AND r.dismissed_at IS NULL AND r.sent_at IS NULL AND r.remind_at <= CURRENT_TIMESTAMP ORDER BY r.remind_at LIMIT 25");
         $eventReminderStmt->execute([$userId, $userId, $userId, $userId]);
@@ -1487,6 +1803,8 @@ final class App
             'range' => ['start' => $start, 'end' => $end],
             'calendars' => $calendarStmt->fetchAll(PDO::FETCH_ASSOC),
             'events' => $this->expandRecurringEvents($eventStmt->fetchAll(PDO::FETCH_ASSOC), $start, $end),
+            'overdue_tasks' => $overdueTaskStmt->fetchAll(PDO::FETCH_ASSOC),
+            'upcoming_tasks' => $upcomingTaskStmt->fetchAll(PDO::FETCH_ASSOC),
             'tasks' => $taskStmt->fetchAll(PDO::FETCH_ASSOC),
             'recent_notes' => $noteStmt->fetchAll(PDO::FETCH_ASSOC),
             'reminders' => array_merge($eventReminderStmt->fetchAll(PDO::FETCH_ASSOC), $taskReminderStmt->fetchAll(PDO::FETCH_ASSOC)),
@@ -2139,6 +2457,17 @@ final class App
         $stmt->execute([$noteId, $noteId, $limit]);
     }
 
+    private function shouldSnapshotNoteVersion(int $noteId, bool $autosave): bool
+    {
+        if (!$autosave) return true;
+        $stmt = $this->db->prepare('SELECT created_at FROM note_versions WHERE note_id = ? ORDER BY id DESC LIMIT 1');
+        $stmt->execute([$noteId]);
+        $last = $stmt->fetchColumn();
+        if (!$last) return true;
+        $lastTime = strtotime((string)$last);
+        return !$lastTime || $lastTime < time() - 300;
+    }
+
     private function pruneAllNoteVersions(): void
     {
         $ids = $this->db->query('SELECT DISTINCT note_id FROM note_versions')->fetchAll(PDO::FETCH_COLUMN);
@@ -2194,8 +2523,45 @@ final class App
     {
         $parentId = isset($_GET['parent_id']) && $_GET['parent_id'] !== '' ? (int)$_GET['parent_id'] : (isset($_GET['folder_id']) && $_GET['folder_id'] !== '' ? (int)$_GET['folder_id'] : null);
         $q = trim((string)($_GET['q'] ?? ''));
+        $scopeAll = $q !== '' && (string)($_GET['scope'] ?? '') === 'all';
         $userId = (int)$user['id'];
         if ($parentId) $this->driveFolderAccess($user, $parentId, 'view');
+        if ($scopeAll) {
+            $folderStmt = $this->db->prepare('SELECT id FROM drive_folders WHERE deleted = 0 AND name LIKE ? ORDER BY updated_at DESC, name COLLATE NOCASE LIMIT 200');
+            $folderStmt->execute(['%' . $q . '%']);
+            $folders = [];
+            foreach ($folderStmt->fetchAll(PDO::FETCH_COLUMN) as $folderId) {
+                try {
+                    $folders[] = $this->driveFolderAccess($user, (int)$folderId, 'view');
+                } catch (RuntimeException) {
+                    continue;
+                }
+                if (count($folders) >= 100) break;
+            }
+            $fileStmt = $this->db->prepare('SELECT id FROM drive_files WHERE deleted = 0 AND (original_name LIKE ? OR mime LIKE ?) ORDER BY updated_at DESC, original_name COLLATE NOCASE LIMIT 200');
+            $fileStmt->execute(['%' . $q . '%', '%' . $q . '%']);
+            $files = [];
+            foreach ($fileStmt->fetchAll(PDO::FETCH_COLUMN) as $fileId) {
+                try {
+                    $file = $this->driveFileAccess($user, (int)$fileId, 'view');
+                } catch (RuntimeException) {
+                    continue;
+                }
+                $files[] = [
+                    'id' => (int)$file['id'],
+                    'owner_user_id' => (int)$file['owner_user_id'],
+                    'folder_id' => $file['folder_id'] === null ? null : (int)$file['folder_id'],
+                    'original_name' => (string)$file['original_name'],
+                    'mime' => (string)($file['mime'] ?? ''),
+                    'size' => (int)($file['size'] ?? 0),
+                    'created_at' => (string)($file['created_at'] ?? ''),
+                    'updated_at' => (string)($file['updated_at'] ?? ''),
+                    'permission' => (string)($file['permission'] ?? 'view'),
+                ];
+                if (count($files) >= 100) break;
+            }
+            $this->json(['folders' => $folders, 'files' => $files, 'breadcrumbs' => $this->driveBreadcrumbs($user, $parentId), 'search_scope' => 'all']);
+        }
         if ($parentId) {
             $folderSql = "SELECT f.*, CASE WHEN f.owner_user_id = ? THEN 'owner' ELSE COALESCE(s.permission, 'view') END AS permission FROM drive_folders f LEFT JOIN drive_shares s ON s.item_type = 'folder' AND s.item_id = f.id AND s.user_id = ? WHERE f.deleted = 0 AND f.parent_id = ?";
             $folderArgs = [$userId, $userId, $parentId];

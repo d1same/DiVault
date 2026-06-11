@@ -1,6 +1,7 @@
 const collapsedCategoryStorageKey = 'divault_collapsed_categories';
 const categoryListCollapsedStorageKey = 'divault_categories_collapsed';
-const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), lastSelectedNoteId: null, noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), taskFilter: localStorage.getItem('divault_task_filter') || 'open', driveFolderId: localStorage.getItem('divault_drive_folder_id') || '', driveFolders: [], driveFiles: [], driveBreadcrumbs: [], driveLayout: localStorage.getItem('divault_drive_layout') || 'list', driveSelectionMode: false, selectedDriveItems: new Set(), lastSelectedDriveKey: '', collapsedCategories: readCollapsedCategoryIds(), categoriesCollapsed: localStorage.getItem(categoryListCollapsedStorageKey) === '1', theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
+const savedViewsStorageKey = 'divault_saved_views';
+const state = { user: null, notes: [], assets: [], clients: [], categories: [], counts: {}, section: localStorage.getItem('divault_section') || '', panel: '', settingsHtml: '', settingsTab: localStorage.getItem('divault_settings_tab') || 'account', q: '', clientId: localStorage.getItem('divault_client_id') || localStorage.getItem('qv_client_id') || '', includeArchive: false, active: null, activeExtra: null, editingNote: false, newNoteMode: 'full', pendingAttachments: [], selectionMode: false, selectedNoteIds: new Set(), lastSelectedNoteId: null, noteLayout: localStorage.getItem('divault_note_layout') || 'cards', noteSort: localStorage.getItem('divault_note_sort') || 'updated_desc', noteFocus: localStorage.getItem('divault_note_focus') === '1', notePaneWidth: Number(localStorage.getItem('divault_note_pane_width') || 300), noteLimit: Number(localStorage.getItem('divault_note_limit') || 200), noteHasMore: false, noteTotal: 0, taskFilter: localStorage.getItem('divault_task_filter') || 'open', driveFolderId: localStorage.getItem('divault_drive_folder_id') || '', driveFolders: [], driveFiles: [], driveBreadcrumbs: [], driveLayout: localStorage.getItem('divault_drive_layout') || 'list', driveSelectionMode: false, selectedDriveItems: new Set(), lastSelectedDriveKey: '', homeSummary: null, collapsedCategories: readCollapsedCategoryIds(), categoriesCollapsed: localStorage.getItem(categoryListCollapsedStorageKey) === '1', theme: localStorage.getItem('divault_theme') || localStorage.getItem('qv_theme') || 'soft', loginMfa: false, lastSyncedAt: null, syncTimer: null, syncing: false, desktop: false, setupMode: 'local' };
 Object.assign(state, { features: null, calendars: [], calendarFeeds: [], events: [], tasks: [], calendarDate: new Date(), miniCalendarDate: new Date(), calendarView: localStorage.getItem('divault_calendar_view') || 'schedule', reminders: [], reminderTimer: null, linkableNotesLoaded: false, routeNoteId: null });
 if (state.calendarView === 'agenda') state.calendarView = 'schedule';
 const app = document.querySelector('#app');
@@ -82,6 +83,72 @@ function saveCategoryListCollapsed() {
   localStorage.setItem(categoryListCollapsedStorageKey, state.categoriesCollapsed ? '1' : '0');
 }
 
+function readSavedViews() {
+  try {
+    const views = JSON.parse(localStorage.getItem(savedViewsStorageKey) || '[]');
+    return Array.isArray(views) ? views.filter(view => view && view.name && view.scope) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeSavedViews(views) {
+  localStorage.setItem(savedViewsStorageKey, JSON.stringify(views.slice(0, 16)));
+}
+
+function savedViewScope() {
+  if (state.section === 'drive') return 'drive';
+  if (isNoteSection(state.section)) return 'notes';
+  return '';
+}
+
+function savedViewsForCurrentSection() {
+  const scope = savedViewScope();
+  return scope ? readSavedViews().filter(view => view.scope === scope) : [];
+}
+
+function renderSavedViewControls() {
+  const scope = savedViewScope();
+  if (!scope) return '';
+  const views = savedViewsForCurrentSection();
+  return `<div class="saved-view-strip" aria-label="Saved views"><button class="filter-chip save-view-chip" type="button" id="saveCurrentView">Save view</button>${views.map(view => `<button class="filter-chip" type="button" data-saved-view="${esc(view.name)}">${esc(view.name)}</button>`).join('')}</div>`;
+}
+
+async function saveCurrentView() {
+  const scope = savedViewScope();
+  if (!scope) return;
+  const name = await promptDialog({ title: 'Save view', message: 'Name this search or filter so you can reopen it quickly.', placeholder: scope === 'drive' ? 'Client files' : 'Pinned work notes', required: true, confirmText: 'Save' });
+  if (!name) return;
+  const views = readSavedViews().filter(view => !(view.scope === scope && view.name.toLowerCase() === name.trim().toLowerCase()));
+  const view = scope === 'drive'
+    ? { scope, name: name.trim(), q: state.q, driveFolderId: state.driveFolderId || '' }
+    : { scope, name: name.trim(), section: state.section, q: state.q, noteSort: currentNoteSort() };
+  writeSavedViews([view, ...views]);
+  toast('View saved');
+  renderApp();
+}
+
+async function applySavedView(name) {
+  const view = savedViewsForCurrentSection().find(item => item.name === name);
+  if (!view) return;
+  if (!await confirmDiscardUnsaved()) return;
+  state.panel = '';
+  state.q = view.q || '';
+  if (view.scope === 'drive') {
+    state.section = 'drive';
+    state.driveFolderId = view.driveFolderId || '';
+    localStorage.setItem('divault_drive_folder_id', state.driveFolderId);
+  } else {
+    state.section = view.section || 'notes:all';
+    state.noteSort = view.noteSort || state.noteSort;
+    localStorage.setItem('divault_note_sort', state.noteSort);
+    resetNoteLimit();
+  }
+  syncSectionRoute();
+  await loadCurrentSection();
+  renderApp();
+}
+
 const esc = value => String(value ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function linkifyText(value) {
   const text = String(value ?? '');
@@ -99,12 +166,25 @@ function linkifyText(value) {
   return html + esc(text.slice(lastIndex));
 }
 const brandMark = (alt = 'DiVault') => `<img src="/assets/divault-logo.svg" alt="${esc(alt)}">`;
-const toast = message => {
+const toast = (message, options = {}) => {
   const el = document.createElement('div');
   el.className = 'toast';
-  el.textContent = message;
+  const text = document.createElement('span');
+  text.textContent = message;
+  el.appendChild(text);
+  if (options.actionLabel && typeof options.onAction === 'function') {
+    const action = document.createElement('button');
+    action.type = 'button';
+    action.textContent = options.actionLabel;
+    action.addEventListener('click', async () => {
+      clearTimeout(timer);
+      el.remove();
+      await options.onAction();
+    });
+    el.appendChild(action);
+  }
   document.body.appendChild(el);
-  setTimeout(() => el.remove(), 2600);
+  const timer = setTimeout(() => el.remove(), options.duration || 4200);
 };
 
 document.addEventListener('click', e => {
@@ -147,6 +227,21 @@ function formatDateTime(value) {
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function formatRelativeDate(value) {
+  if (!value) return '';
+  const date = new Date(normalizeDate(value));
+  if (Number.isNaN(date.getTime())) return String(value);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const dayDiff = Math.round((startOfToday - startOfDate) / 86400000);
+  const time = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (dayDiff === 0) return `Today ${time}`;
+  if (dayDiff === 1) return `Yesterday ${time}`;
+  if (dayDiff > 1 && dayDiff < 7) return `${date.toLocaleDateString([], { weekday: 'short' })} ${time}`;
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: date.getFullYear() === now.getFullYear() ? undefined : 'numeric' });
 }
 
 function formatScheduleDateTime(value) {
@@ -338,6 +433,241 @@ function alertDialog({ title, message, confirmText = 'OK' }) {
   });
 }
 
+function openCommandCenter(initialQuery = '') {
+  if (!state.user) return;
+  const modal = document.createElement('div');
+  modal.className = 'editor command-center-modal';
+  modal.innerHTML = `<section class="editor-panel command-center-panel">
+    <div class="command-search-wrap"><span class="command-search-icon">${toolIcon('search', 'Search')}</span><input id="commandInput" autocomplete="off" spellcheck="false" value="${esc(initialQuery)}" placeholder="Search everything or type what you want to create"></div>
+    <div class="command-content" id="commandContent"></div>
+  </section>`;
+  document.body.appendChild(modal);
+  setupAccessibleModal(modal, '#commandInput');
+  const input = modal.querySelector('#commandInput');
+  const content = modal.querySelector('#commandContent');
+  const resultMap = new Map();
+  let searchToken = 0;
+
+  const render = response => {
+    const query = input.value.trim();
+    resultMap.clear();
+    content.innerHTML = `${renderCommandActions(query)}${renderCommandResults(response, query, resultMap)}`;
+    content.querySelectorAll('[data-command-action]').forEach(btn => btn.addEventListener('click', () => handleCommandAction(btn.dataset.commandAction, input.value.trim(), modal)));
+    content.querySelectorAll('[data-command-result]').forEach(btn => btn.addEventListener('click', () => openSearchResult(resultMap.get(btn.dataset.commandResult), modal)));
+  };
+
+  const runSearch = debounce(async () => {
+    const query = input.value.trim();
+    if (query.length < 2) {
+      render(null);
+      return;
+    }
+    const token = ++searchToken;
+    content.innerHTML = `${renderCommandActions(query)}<p class="muted small command-loading">Searching DiVault...</p>`;
+    try {
+      const response = await api('/search?' + new URLSearchParams({ q: query, limit: '6' }));
+      if (token === searchToken) render(response);
+    } catch (err) {
+      if (token === searchToken) content.innerHTML = `${renderCommandActions(query)}<p class="muted small">${esc(err.message || 'Search failed')}</p>`;
+    }
+  }, 180);
+
+  input.addEventListener('input', runSearch);
+  input.addEventListener('keydown', event => {
+    if (event.key !== 'Enter') return;
+    const first = content.querySelector('[data-command-result], [data-command-action]');
+    if (!first) return;
+    event.preventDefault();
+    first.click();
+  });
+  render(null);
+  runSearch();
+}
+
+function renderCommandActions(query) {
+  const value = query.trim();
+  const label = value || 'Untitled';
+  return `<div class="command-action-grid" aria-label="Quick actions">
+    <button type="button" data-command-action="note"><span>${toolIcon('note', 'Note')}</span><b>New note</b><small>${esc(label)}</small></button>
+    ${featureOn('tasks') ? `<button type="button" data-command-action="task"><span>${toolIcon('check', 'Task')}</span><b>New task</b><small>${esc(label)}</small></button>` : ''}
+    ${featureOn('calendar') ? `<button type="button" data-command-action="event"><span>${toolIcon('calendar', 'Event')}</span><b>New event</b><small>${esc(label)}</small></button>` : ''}
+    ${featureOn('drive') ? `<button type="button" data-command-action="drive"><span>${toolIcon('folder', 'Files')}</span><b>Search files</b><small>${esc(label)}</small></button>` : ''}
+  </div>`;
+}
+
+function renderCommandResults(response, query, resultMap) {
+  if (!query || query.length < 2) return '<p class="muted small command-empty">Type at least two characters to search notes, calendar, tasks, files, assets, and clients.</p>';
+  const groups = response?.groups || {};
+  const labels = { notes: 'Notes', events: 'Calendar', tasks: 'Tasks', drive: 'Files', assets: 'Assets', clients: 'Clients' };
+  const sections = Object.entries(labels).map(([key, label]) => {
+    const items = groups[key] || [];
+    if (!items.length) return '';
+    return `<section class="command-result-group"><h3>${esc(label)}</h3>${items.map(item => {
+      const resultKey = `${item.type}:${item.id}:${resultMap.size}`;
+      resultMap.set(resultKey, item);
+      return `<button type="button" class="command-result-row" data-command-result="${esc(resultKey)}"><span class="command-result-kind">${esc(commandResultKind(item))}</span><span class="command-result-copy"><b>${esc(item.title || 'Untitled')}</b><small>${esc(commandResultMeta(item))}</small>${item.snippet ? `<em>${esc(item.snippet)}</em>` : ''}</span></button>`;
+    }).join('')}</section>`;
+  }).join('');
+  return sections || `<p class="muted small command-empty">No results for "${esc(query)}". You can still create a note, task, or event from it.</p>`;
+}
+
+function commandResultKind(item) {
+  return ({ note: 'Note', event: 'Event', task: 'Task', drive_folder: 'Folder', drive_file: 'File', asset: 'Asset', client: 'Client' }[item?.type] || 'Item');
+}
+
+function commandResultMeta(item) {
+  if (!item) return '';
+  if (item.type === 'event') return item.starts_at ? `${item.subtitle || 'Event'} / ${formatScheduleDateTime(item.starts_at)}` : item.subtitle || 'Event';
+  if (item.type === 'task') return item.due_at ? `${item.subtitle || 'Task'} / ${formatScheduleDateTime(item.due_at)}` : item.subtitle || 'Task';
+  if (item.type === 'drive_file') return [item.subtitle || 'Drive file', formatDriveSize(item.size || 0), item.snippet].filter(Boolean).join(' / ');
+  return [item.subtitle, item.updated_at ? formatRelativeDate(item.updated_at) : ''].filter(Boolean).join(' / ');
+}
+
+async function handleCommandAction(action, query, modal = null) {
+  modal?.remove();
+  await handleQuickCaptureAction(action, query);
+}
+
+async function handleQuickCaptureAction(action, query) {
+  const text = query.trim();
+  if (action === 'drive') {
+    if (!featureOn('drive')) return;
+    state.section = 'drive';
+    state.panel = '';
+    state.q = text;
+    state.driveFolderId = '';
+    localStorage.setItem('divault_drive_folder_id', '');
+    syncSectionRoute();
+    await loadCurrentSection();
+    renderApp();
+    return;
+  }
+  if (action === 'search') {
+    openCommandCenter(text);
+    return;
+  }
+  if (action === 'task') {
+    if (!featureOn('tasks')) return;
+    openTaskDialog({ title: captureTitle(text, 'New task'), due_at: captureDateInput(text, 15), calendar_id: state.calendars[0]?.id || '' });
+    return;
+  }
+  if (action === 'event') {
+    if (!featureOn('calendar')) return;
+    const isBirthday = /\bbirthday\b/i.test(text);
+    const startsAt = captureDateInput(text, isBirthday ? 9 : 10);
+    const endDate = new Date(normalizeDate(startsAt));
+    if (!Number.isNaN(endDate.getTime())) endDate.setHours(endDate.getHours() + 1);
+    openEventDialog({ title: captureTitle(text, isBirthday ? 'Birthday' : 'New event'), starts_at: startsAt, ends_at: dateInputValue(endDate), all_day: isBirthday, calendar_id: state.calendars[0]?.id || '' });
+    return;
+  }
+  if (!await confirmDiscardUnsaved()) return;
+  state.section = 'notes:all';
+  state.panel = '';
+  state.q = '';
+  resetNoteLimit();
+  syncSectionRoute();
+  await loadCurrentSection();
+  renderApp();
+  openEditor(null, { mode: 'quick', note: { title: captureTitle(text, 'Quick note'), body: text } });
+}
+
+function captureTitle(text, fallback) {
+  return String(text || '').replace(/^\s*(note|task|event|birthday|remind me to|reminder)\s*:?\s*/i, '').trim() || fallback;
+}
+
+function captureDateInput(text, fallbackHour = 9) {
+  const lower = String(text || '').toLowerCase();
+  const now = new Date();
+  let date = new Date(now.getFullYear(), now.getMonth(), now.getDate(), fallbackHour, 0, 0);
+  if (lower.includes('tomorrow')) date.setDate(date.getDate() + 1);
+  const monthMatch = lower.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:,\s*(\d{4}))?/i);
+  if (monthMatch) {
+    const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    const month = monthNames.findIndex(name => monthMatch[1].slice(0, 3).toLowerCase() === name);
+    const year = monthMatch[3] ? Number(monthMatch[3]) : now.getFullYear();
+    date = new Date(year, month, Number(monthMatch[2]), fallbackHour, 0, 0);
+    if (!monthMatch[3] && date < now) date.setFullYear(date.getFullYear() + 1);
+  }
+  const timeMatch = lower.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
+  if (timeMatch) {
+    let hour = Number(timeMatch[1]);
+    if (timeMatch[3].toLowerCase() === 'pm' && hour < 12) hour += 12;
+    if (timeMatch[3].toLowerCase() === 'am' && hour === 12) hour = 0;
+    date.setHours(hour, Number(timeMatch[2] || 0), 0, 0);
+  }
+  return dateInputValue(date);
+}
+
+async function openSearchResult(item, modal = null) {
+  if (!item) return;
+  modal?.remove();
+  if (item.type === 'note') {
+    if (!await confirmDiscardUnsaved()) return;
+    state.section = 'notes:all';
+    state.panel = '';
+    state.q = '';
+    resetNoteLimit();
+    syncSectionRoute();
+    await loadCurrentSection();
+    renderApp();
+    openEditor(Number(item.id));
+    return;
+  }
+  if (item.type === 'event') return openEventDialogById(item.series_id || item.id);
+  if (item.type === 'task') return openTaskDialogById(item.id);
+  if (item.type === 'drive_folder') {
+    state.section = 'drive';
+    state.panel = '';
+    state.q = '';
+    state.driveFolderId = String(item.id || '');
+    localStorage.setItem('divault_drive_folder_id', state.driveFolderId);
+    syncSectionRoute();
+    await loadCurrentSection();
+    renderApp();
+    return;
+  }
+  if (item.type === 'drive_file') {
+    openDriveFilePreviewFromResult(item);
+    return;
+  }
+  if (item.type === 'asset') {
+    state.section = item.asset_type || 'configurations';
+    state.panel = '';
+    state.q = '';
+    syncSectionRoute();
+    await loadCurrentSection();
+    renderApp();
+    openAssetEditor(Number(item.id));
+    return;
+  }
+  if (item.type === 'client') {
+    state.clientId = String(item.id || '');
+    localStorage.setItem('divault_client_id', state.clientId);
+    state.section = 'notes:all';
+    state.panel = '';
+    state.q = '';
+    syncSectionRoute();
+    await loadCurrentSection();
+    renderApp();
+    toast(`Filtered to ${item.title || 'client'}`);
+  }
+}
+
+function openDriveFilePreviewFromResult(item) {
+  const id = item?.id;
+  if (!id) return;
+  const name = item.title || item.original_name || 'File';
+  const mime = item.mime || '';
+  const previewUrl = `/api/drive/files/${encodeURIComponent(id)}/preview`;
+  openFilePreview(previewUrl, name, mime, {
+    downloadUrl: `/api/drive/files/${encodeURIComponent(id)}/download`,
+    metadataId: id,
+    editId: isDriveEditable(name, mime) ? id : '',
+    officeId: isDriveOfficeEditable(name, mime) ? id : '',
+    extractId: isDriveZip(name, mime) ? id : '',
+  });
+}
+
 async function runUserAction(action, fallback = 'Action failed') {
   try {
     return await action();
@@ -363,6 +693,21 @@ function canAdminSettings() {
 const codeTypes = {
   code: { label: 'Code', fence: 'text', extension: 'txt' },
 };
+
+const noteFilterChips = [
+  { token: 'has:file', filter: 'has_file', label: 'Files' },
+  { token: 'has:secret', filter: 'has_secret', label: 'Secrets' },
+  { token: 'has:code', filter: 'has_code', label: 'Code' },
+  { token: 'is:pinned', filter: 'pinned', label: 'Pinned' }
+];
+
+const noteTemplates = [
+  { key: 'meeting', label: 'Meeting' },
+  { key: 'checklist', label: 'Checklist' },
+  { key: 'client', label: 'Client note' },
+  { key: 'secret', label: 'Secret' },
+  { key: 'file', label: 'File note' }
+];
 
 const themePresets = [
   { key: 'light', label: 'Metallic chic', note: 'Sapphire, silver, aqua, champagne' },
@@ -478,6 +823,7 @@ const heroIcons = {
   mail: lucideIcon("<path d=\"m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7\" /> <rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\" />"),
   terminal: lucideIcon("<path d=\"M12 19h8\" /> <path d=\"m4 17 6-6-6-6\" />"),
   wrench: lucideIcon("<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z\" />"),
+  search: lucideIcon("<path d=\"m21 21-4.34-4.34\" /> <circle cx=\"11\" cy=\"11\" r=\"8\" />"),
 };
 const icon = name => heroIcons[name] || '';
 
@@ -1070,7 +1416,10 @@ async function loadCurrentSection() {
     return;
   }
   if (isNoteSection(state.section)) {
-    state.notes = (await loadNotes()).notes;
+    const res = await loadNotes();
+    state.notes = res.notes || [];
+    state.noteHasMore = Boolean(res.has_more);
+    state.noteTotal = Number(res.total || state.notes.length);
     return;
   }
   state.assets = (await loadAssets()).assets;
@@ -1079,7 +1428,10 @@ async function loadCurrentSection() {
 async function loadDrive() {
   const params = new URLSearchParams();
   if (state.driveFolderId) params.set('folder_id', state.driveFolderId);
-  if (state.q) params.set('q', state.q);
+  if (state.q) {
+    params.set('q', state.q);
+    params.set('scope', 'all');
+  }
   const suffix = params.toString() ? `?${params}` : '';
   const res = await api(`/drive${suffix}`).catch(err => ({ error: err.message, folders: [], files: [] }));
   state.driveFolders = normalizeDriveCollection(res, 'folders');
@@ -1099,12 +1451,26 @@ async function loadHomeData() {
   const jobs = [loadNotes().catch(() => ({ notes: [] }))];
   if (featureOn('calendar')) jobs.push(loadCalendarData().then(() => null));
   if (featureOn('tasks')) jobs.push(api('/tasks').then(res => { state.tasks = res.tasks || []; }).catch(() => null));
+  if (featureOn('drive')) jobs.push(api('/home-summary').then(res => { state.homeSummary = res; }).catch(() => { state.homeSummary = null; }));
   const [notes] = await Promise.all(jobs);
   state.notes = notes.notes || [];
+  state.noteHasMore = Boolean(notes.has_more);
+  state.noteTotal = Number(notes.total || state.notes.length);
 }
 
 async function loadCalendarData() {
   state.calendars = (await api('/calendars').catch(() => ({ calendars: state.calendars || [] }))).calendars || [];
+  const search = calendarSearchTerm();
+  if (search) {
+    const [first, last] = calendarSearchRange();
+    const eventParams = new URLSearchParams({ q: search, start: first.toISOString(), end: last.toISOString() });
+    state.events = (await api('/events?' + eventParams).catch(() => ({ events: [] }))).events || [];
+    if (featureOn('tasks')) {
+      const taskParams = new URLSearchParams({ view: 'all', q: search });
+      state.tasks = (await api('/tasks?' + taskParams).catch(() => ({ tasks: [] }))).tasks || [];
+    }
+    return;
+  }
   const [visibleFirst, visibleLast] = calendarVisibleRange();
   const miniFirst = new Date(state.miniCalendarDate.getFullYear(), state.miniCalendarDate.getMonth(), 1);
   const miniLast = new Date(state.miniCalendarDate.getFullYear(), state.miniCalendarDate.getMonth() + 1, 0, 23, 59, 59);
@@ -1113,6 +1479,18 @@ async function loadCalendarData() {
   const params = new URLSearchParams({ start: first.toISOString(), end: last.toISOString() });
   state.events = (await api('/events?' + params).catch(() => ({ events: [] }))).events || [];
   if (featureOn('tasks')) state.tasks = (await api('/tasks?view=all').catch(() => ({ tasks: [] }))).tasks || [];
+}
+
+function calendarSearchTerm() {
+  return state.section === 'calendar' ? state.q.trim() : '';
+}
+
+function calendarSearchRange() {
+  const now = new Date();
+  return [
+    new Date(now.getFullYear() - 2, 0, 1, 0, 0, 0),
+    new Date(now.getFullYear() + 5, 11, 31, 23, 59, 59)
+  ];
 }
 
 function calendarVisibleRange() {
@@ -1147,6 +1525,7 @@ async function loadNotes() {
   const query = parseNoteSearch(state.q);
   if (query.text) params.set('q', query.text);
   params.set('sort', currentNoteSort());
+  params.set('limit', String(currentNoteLimit()));
   query.filters.forEach(filter => params.set(filter, '1'));
   return api('/notes?' + params);
 }
@@ -1158,9 +1537,39 @@ function parseNoteSearch(value) {
     if (normalized === 'has:file' || normalized === 'has:files') { filters.add('has_file'); return false; }
     if (normalized === 'has:secret' || normalized === 'has:secrets') { filters.add('has_secret'); return false; }
     if (normalized === 'has:code') { filters.add('has_code'); return false; }
+    if (normalized === 'is:pinned' || normalized === 'pinned') { filters.add('pinned'); return false; }
     return true;
   }).join(' ');
   return { text, filters: [...filters] };
+}
+
+function currentNoteLimit() {
+  const value = Number(state.noteLimit) || 200;
+  return Math.min(1000, Math.max(50, value));
+}
+
+function resetNoteLimit() {
+  state.noteLimit = 200;
+  localStorage.setItem('divault_note_limit', String(state.noteLimit));
+}
+
+function toggleNoteSearchToken(value, token) {
+  const target = String(token || '').toLowerCase();
+  const parts = String(value || '').split(/\s+/).filter(Boolean);
+  const aliases = new Map([
+    ['has:file', ['has:file', 'has:files']],
+    ['has:secret', ['has:secret', 'has:secrets']],
+    ['has:code', ['has:code']],
+    ['is:pinned', ['is:pinned', 'pinned']]
+  ]);
+  const group = aliases.get(target) || [target];
+  const hasToken = parts.some(part => group.includes(part.toLowerCase()));
+  const next = hasToken ? parts.filter(part => !group.includes(part.toLowerCase())) : [...parts, token];
+  return next.join(' ');
+}
+
+function noteSearchFilterActive(filter) {
+  return parseNoteSearch(state.q).filters.includes(filter);
 }
 
 async function loadAssets() {
@@ -1235,6 +1644,7 @@ function renderApp() {
       <div class="brand"><button class="brand-mark brand-home" id="brandHomeBtn" type="button" aria-label="Go to home" title="Go to home">${state.user.avatar_data ? `<img src="${esc(state.user.avatar_data)}" alt="">` : brandMark()}</button><div class="brand-text"><h2>DiVault</h2><div class="small muted">${esc(state.user.name)} · ${esc(state.user.role)}</div></div><button class="sidebar-collapse" id="sidebarCollapse" type="button" aria-label="Collapse sidebar" title="Collapse sidebar">‹</button><button class="menu-toggle" id="menuToggle" type="button" aria-label="Open navigation" aria-expanded="false">☰</button></div>
       <nav class="nav">${renderNavGroups()}</nav>
       <div class="sidebar-footer">
+        <button class="btn sidebar-action icon-only-btn" id="commandCenterBtn" aria-label="Search and commands" title="Search and commands (Ctrl+K)">${toolIcon('search', 'Search and commands')}</button>
         <button class="sync-pill sidebar-sync" data-sync-status type="button" id="syncBtn">${esc(syncLabel())}</button>
         ${renderNotificationBell()}
         <button class="btn sidebar-action icon-only-btn" id="settingsBtn" aria-label="Settings" title="Settings">${toolIcon('settings', 'Settings')}</button>
@@ -1252,6 +1662,14 @@ function renderApp() {
   bindApp();
 }
 
+function renderNoteFilterChips() {
+  return `<div class="note-filter-chips" aria-label="Note filters">${noteFilterChips.map(chip => `<button class="filter-chip ${noteSearchFilterActive(chip.filter) ? 'active' : ''}" type="button" data-note-filter-token="${esc(chip.token)}" aria-pressed="${noteSearchFilterActive(chip.filter) ? 'true' : 'false'}">${esc(chip.label)}</button>`).join('')}</div>`;
+}
+
+function renderNoteCreateMenu() {
+  return `<div class="note-create-control"><button class="btn primary icon-only-btn action-fab" id="newBtn" aria-label="New note" title="New full note (N or +)">+</button><details class="note-template-menu"><summary class="btn ghost icon-only-btn" aria-label="Note templates" title="Note templates">${toolIcon('bookmark', 'Note templates')}</summary><div class="note-template-panel" role="menu">${noteTemplates.map(template => `<button type="button" role="menuitem" data-new-note-template="${esc(template.key)}">${esc(template.label)}</button>`).join('')}</div></details></div>`;
+}
+
 function renderFilterBar(panelOpen) {
   if (panelOpen) return '';
   if (state.section === 'home') return '';
@@ -1259,7 +1677,7 @@ function renderFilterBar(panelOpen) {
   if (state.section === 'tasks') return `<div class="filterbar task-filter"><input class="search" id="search" aria-label="Search tasks" placeholder="Search tasks..." value="${esc(state.q)}"><button class="btn primary" id="newTaskBtn" type="button">New task</button></div>`;
   if (state.section === 'drive') return renderDriveFilterBar();
   if (isNoteSection(state.section)) {
-    return `<div class="filterbar notes-filter"><div class="filter-actions filter-actions-left">${state.notes.length && !state.selectionMode ? '<button class="btn" type="button" id="startSelectNotes">Select</button>' : ''}${renderNoteLayoutToggle()}${renderNoteSortSelect()}${state.section === 'notes:trash' ? '<button class="btn danger" id="emptyTrashBtn" type="button">Empty recycle bin</button>' : ''}</div><input class="search" id="search" aria-label="Search notes. Press Q to focus search." title="Press Q to search" placeholder="Search ${esc(sectionLabel(state.section))}...  Q" value="${esc(state.q)}"><div class="filter-actions note-filter-actions"><button class="btn ghost icon-only-btn" id="shortcutsHelpBtn" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">?</button><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick notes" title="Quick notes (K)">${toolIcon('quick', 'Quick notes')}</button><button class="btn primary icon-only-btn action-fab" id="newBtn" aria-label="New note" title="New full note (N or +)">+</button></div></div>`;
+    return `<div class="filterbar notes-filter"><div class="filter-actions filter-actions-left">${state.notes.length && !state.selectionMode ? '<button class="btn" type="button" id="startSelectNotes">Select</button>' : ''}${renderNoteLayoutToggle()}${renderNoteSortSelect()}${state.section === 'notes:trash' ? '<button class="btn danger" id="emptyTrashBtn" type="button">Empty recycle bin</button>' : ''}</div><label class="note-search-stack"><span class="sr-only">Search notes</span><input class="search" id="search" aria-label="Search notes. Press Q to focus search." title="Press Q to search" placeholder="Search ${esc(sectionLabel(state.section))}...  Q" value="${esc(state.q)}">${renderNoteFilterChips()}${renderSavedViewControls()}</label><div class="filter-actions note-filter-actions"><button class="btn ghost icon-only-btn" id="shortcutsHelpBtn" type="button" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">?</button><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick notes" title="Quick notes (K)">${toolIcon('quick', 'Quick notes')}</button>${renderNoteCreateMenu()}</div></div>`;
   }
   return `<div class="filterbar"><select id="clientFilter" aria-label="Organization"><option value="">All organizations</option>${state.clients.map(c => `<option value="${c.id}" ${String(c.id) === String(state.clientId) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select><input class="search" id="search" aria-label="Search. Press Q to focus search." title="Press Q to search" placeholder="Search ${esc(sectionLabel(state.section))}...  Q" value="${esc(state.q)}"><label class="checkline"><input type="checkbox" id="includeArchive" ${state.includeArchive ? 'checked' : ''}> Include archive</label></div>`;
 }
@@ -1267,7 +1685,7 @@ function renderFilterBar(panelOpen) {
 function renderDriveFilterBar() {
   const selectLabel = state.driveSelectionMode ? 'Cancel selection' : 'Select files';
   const selectIcon = state.driveSelectionMode ? 'selectNone' : 'selectAll';
-  return `<div class="filterbar drive-filter"><label class="drive-search-field"><span class="sr-only">Search Drive</span><input class="search" id="search" type="search" aria-label="Search files" placeholder="Search files and folders...  Q" value="${esc(state.q)}"></label><div class="filter-actions drive-commandbar"><div class="drive-tool-group" aria-label="Drive actions"><button class="btn drive-tool-btn icon-only-btn ${state.driveSelectionMode ? 'active' : ''}" id="toggleDriveSelect" type="button" aria-label="${esc(selectLabel)}" title="${esc(selectLabel)}">${toolIcon(selectIcon, selectLabel)}</button><button class="btn primary drive-upload-button drive-tool-btn" id="driveUploadButton" type="button" aria-label="Upload files" title="Upload files">${toolIcon('upload', 'Upload')}<span>Upload</span></button><input id="driveUploadInput" class="drive-upload-input" type="file" multiple aria-hidden="true" tabindex="-1"><button class="btn drive-tool-btn icon-only-btn" id="newDriveFolderBtn" type="button" aria-label="New folder" title="New folder">${toolIcon('folderPlus', 'New folder')}</button><button class="btn drive-tool-btn icon-only-btn" id="newDriveTextBtn" type="button" aria-label="Text file" title="Text file">${toolIcon('textFile', 'Text file')}</button></div><div class="note-layout-toggle drive-layout-toggle" role="group" aria-label="Drive layout"><button class="btn ghost icon-only-btn ${state.driveLayout === 'grid' ? 'active' : ''}" data-drive-layout="grid" type="button" aria-label="Grid view" title="Grid view">${toolIcon('cards', 'Grid view')}</button><button class="btn ghost icon-only-btn ${state.driveLayout === 'list' ? 'active' : ''}" data-drive-layout="list" type="button" aria-label="List view" title="List view">${toolIcon('list', 'List view')}</button></div></div></div>`;
+  return `<div class="filterbar drive-filter"><label class="drive-search-field"><span class="sr-only">Search Drive</span><input class="search" id="search" type="search" aria-label="Search files" placeholder="Search files and folders...  Q" value="${esc(state.q)}">${renderSavedViewControls()}</label><div class="filter-actions drive-commandbar"><div class="drive-tool-group" aria-label="Drive actions"><button class="btn drive-tool-btn icon-only-btn ${state.driveSelectionMode ? 'active' : ''}" id="toggleDriveSelect" type="button" aria-label="${esc(selectLabel)}" title="${esc(selectLabel)}">${toolIcon(selectIcon, selectLabel)}</button><button class="btn primary drive-upload-button drive-tool-btn" id="driveUploadButton" type="button" aria-label="Upload files" title="Upload files">${toolIcon('upload', 'Upload')}<span>Upload</span></button><input id="driveUploadInput" class="drive-upload-input" type="file" multiple aria-hidden="true" tabindex="-1"><button class="btn drive-tool-btn icon-only-btn" id="newDriveFolderBtn" type="button" aria-label="New folder" title="New folder">${toolIcon('folderPlus', 'New folder')}</button><button class="btn drive-tool-btn icon-only-btn" id="newDriveTextBtn" type="button" aria-label="Text file" title="Text file">${toolIcon('textFile', 'Text file')}</button></div><div class="note-layout-toggle drive-layout-toggle" role="group" aria-label="Drive layout"><button class="btn ghost icon-only-btn ${state.driveLayout === 'grid' ? 'active' : ''}" data-drive-layout="grid" type="button" aria-label="Grid view" title="Grid view">${toolIcon('cards', 'Grid view')}</button><button class="btn ghost icon-only-btn ${state.driveLayout === 'list' ? 'active' : ''}" data-drive-layout="list" type="button" aria-label="List view" title="List view">${toolIcon('list', 'List view')}</button></div></div></div>`;
 }
 
 function notificationItems() {
@@ -1300,19 +1718,31 @@ function renderNotificationDropdown() {
 
 async function completeTask(task, after = async () => {}) {
   if (!task || task.status === 'done') return;
+  const previousStatus = task.status || 'open';
   await runUserAction(async () => {
     await api(`/tasks/${task.id}`, { method: 'PATCH', body: { ...task, status: 'done', shared: Number(task.private) === 0 } });
     await after();
+    toast('Task completed', { actionLabel: 'Undo', onAction: () => undoTaskStatus(task, previousStatus, after) });
   }, 'Task update failed');
 }
 
 async function toggleTaskStatus(task, after = async () => {}) {
   if (!task) return;
+  const previousStatus = task.status || 'open';
   const status = task.status === 'done' ? 'open' : 'done';
   await runUserAction(async () => {
     await api(`/tasks/${task.id}`, { method: 'PATCH', body: { ...task, status, shared: Number(task.private) === 0 } });
     await after(status);
+    toast(status === 'done' ? 'Task completed' : 'Task reopened', { actionLabel: 'Undo', onAction: () => undoTaskStatus(task, previousStatus, after) });
   }, 'Task update failed');
+}
+
+async function undoTaskStatus(task, status, after = async () => {}) {
+  await runUserAction(async () => {
+    await api(`/tasks/${task.id}`, { method: 'PATCH', body: { ...task, status, shared: Number(task.private) === 0 } });
+    await after(status);
+    toast('Undo complete');
+  }, 'Undo failed');
 }
 
 function renderTopbar(panelOpen) {
@@ -1469,22 +1899,36 @@ function renderHome() {
   const scheduleEnd = new Date(selected.getFullYear(), selected.getMonth(), selected.getDate() + 7, 23, 59, 59);
   const todaysEvents = state.events.filter(event => new Date(normalizeDate(event.starts_at)).toDateString() === new Date().toDateString()).slice(0, 6);
   const dueToday = state.tasks.filter(task => task.status !== 'done' && task.due_at && new Date(normalizeDate(task.due_at)).toDateString() === new Date().toDateString()).slice(0, 6);
+  const overdue = state.tasks.filter(task => task.status !== 'done' && task.due_at && new Date(normalizeDate(task.due_at)) < startOfToday());
   const recentNotes = feature('home').settings.notes_enabled ? state.notes.filter(note => !query || matchesText(query, note.title, note.body, note.tags, note.category_name, note.client_name)).slice(0, 6) : [];
   const scheduleItems = agendaItemsForRange(scheduleStart, scheduleEnd).slice(0, 12);
+  const nextScheduleItem = scheduleItems.find(item => new Date(normalizeDate(item.when)) >= new Date());
+  const recentDriveFiles = state.homeSummary?.recent_drive_files || [];
+  const latestBackup = state.homeSummary?.latest_backup || null;
+  const nextSection = featureOn('calendar') ? 'calendar' : 'tasks';
   const noteEmpty = query ? 'No matching recent notes.' : 'No recent notes.';
   return `<div class="home-grid refined-home">
     <section class="home-main stack">
-      <div class="home-hero card"><div><p class="breadcrumb">Today in DiVault</p><h2>${new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</h2></div><div class="home-stat-row"><span class="pill">${state.notes.length} notes</span><span class="pill">${todaysEvents.length} events today</span><span class="pill">${dueToday.length} tasks due</span></div><label class="home-search"><span class="sr-only">Search Home</span><input class="search" id="search" type="search" aria-label="Search Home. Press Q to focus search." title="Press Q to search" placeholder="Search Home notes and schedule...  Q" value="${esc(state.q)}"></label><div class="home-action-row"><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick note" title="Quick note">${toolIcon('quick', 'Quick note')}</button><button class="btn icon-only-btn action-fab" id="newBtn" type="button" aria-label="Add note" title="Add note">+</button>${featureOn('calendar') ? `<button class="btn icon-only-btn action-fab" id="newEventBtn" type="button" aria-label="New event" title="New event">${toolIcon('calendar', 'New event')}</button>` : ''}${featureOn('tasks') ? `<button class="btn icon-only-btn action-fab" id="newCalendarTaskBtn" type="button" aria-label="New task" title="New task">${toolIcon('check', 'New task')}</button>` : ''}</div></div>
+      <div class="home-hero card"><div><p class="breadcrumb">Today in DiVault</p><h2>${new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</h2></div><div class="home-stat-row"><span class="pill">${state.notes.length} notes</span><span class="pill">${todaysEvents.length} events today</span><span class="pill">${dueToday.length} tasks due</span></div><label class="home-search"><span class="sr-only">Search Home</span><input class="search" id="search" type="search" aria-label="Search Home. Press Q to focus search." title="Press Q to search" placeholder="Search Home notes and schedule...  Q" value="${esc(state.q)}"></label><div class="home-action-row"><button class="btn primary icon-only-btn action-fab" id="commandCenterHeroBtn" type="button" aria-label="Search and commands" title="Search and commands">${toolIcon('search', 'Search and commands')}</button><button class="btn primary icon-only-btn action-fab" id="quickNotesBtn" type="button" aria-label="Quick note" title="Quick note">${toolIcon('quick', 'Quick note')}</button><button class="btn icon-only-btn action-fab" id="newBtn" type="button" aria-label="Add note" title="Add note">+</button>${featureOn('calendar') ? `<button class="btn icon-only-btn action-fab" id="newEventBtn" type="button" aria-label="New event" title="New event">${toolIcon('calendar', 'New event')}</button>` : ''}${featureOn('tasks') ? `<button class="btn icon-only-btn action-fab" id="newCalendarTaskBtn" type="button" aria-label="New task" title="New task">${toolIcon('check', 'New task')}</button>` : ''}</div></div>
+      <section class="card home-widget home-capture-widget stack"><div class="section-title-row"><h3>Quick capture</h3><span class="small muted">note, task, event, or search</span></div><form id="homeQuickCaptureForm" class="home-capture-form"><input class="search" name="capture" autocomplete="off" placeholder="Type anything... birthday, reminder, note, file, client"><button class="btn primary" type="submit">Go</button></form><div class="home-capture-actions"><button class="btn ghost" type="button" data-home-capture="note">Note</button>${featureOn('tasks') ? '<button class="btn ghost" type="button" data-home-capture="task">Task</button>' : ''}${featureOn('calendar') ? '<button class="btn ghost" type="button" data-home-capture="event">Event</button>' : ''}<button class="btn ghost" type="button" data-home-capture="search">Search</button></div></section>
+      <section class="home-focus-grid" aria-label="Workspace focus">
+        <button class="home-focus-card ${overdue.length ? 'urgent' : ''}" type="button" data-section="tasks"><span>Overdue</span><b>${overdue.length}</b><small>${overdue.length ? 'needs attention' : 'nothing late'}</small></button>
+        <button class="home-focus-card" type="button" data-section="tasks"><span>Due today</span><b>${dueToday.length}</b><small>tasks before midnight</small></button>
+        <button class="home-focus-card" type="button" data-section="${esc(nextSection)}"><span>Next up</span><b>${nextScheduleItem ? esc(nextScheduleItem.item?.title || nextScheduleItem.item?.name || 'Scheduled') : 'Clear'}</b><small>${nextScheduleItem ? esc(formatScheduleDateTime(nextScheduleItem.when)) : 'no upcoming items'}</small></button>
+      </section>
       <section class="card home-widget home-notes-widget stack"><div class="section-title-row"><h3>${query ? 'Matching notes' : 'Recent notes'}</h3><button class="btn ghost" data-section="notes:all" type="button">View all</button></div>${recentNotes.length ? `<div class="home-note-grid">${recentNotes.map(note => `<button class="home-note-card" data-open="${note.id}"><b>${esc(note.title)}</b><span>${esc(note.updated_at || '')}</span></button>`).join('')}</div>` : `<p class="muted small">${noteEmpty}</p>`}</section>
     </section>
     <aside class="home-side stack">
       ${featureOn('calendar') && feature('calendar').settings.home_enabled ? renderMiniMonthPicker() : ''}
       <section class="card home-widget home-schedule-widget stack"><div class="section-title-row"><h3>Schedule</h3>${featureOn('calendar') ? '<button class="btn ghost" data-section="calendar" type="button">Calendar</button>' : ''}</div><p class="small muted">${scheduleStart.toLocaleDateString([], { month: 'short', day: 'numeric' })} - ${scheduleEnd.toLocaleDateString([], { month: 'short', day: 'numeric' })}</p>${(featureOn('calendar') || featureOn('tasks')) ? renderAgendaItems(scheduleItems, true, { readonly: true }) : '<p class="muted small">Calendar and tasks are disabled.</p>'}</section>
+      <section class="card home-widget home-files-widget stack"><div class="section-title-row"><h3>Recent files</h3>${featureOn('drive') ? '<button class="btn ghost" data-section="drive" type="button">Files</button>' : ''}</div>${recentDriveFiles.length ? `<div class="home-file-list">${recentDriveFiles.map(file => `<button class="home-file-row" type="button" data-open-drive-file="${esc(file.id)}" data-file-name="${esc(file.original_name || 'File')}" data-file-mime="${esc(file.mime || '')}"><span>${toolIcon(driveFileVisualIcon(driveFileVisualType(file.original_name || '', file.mime || '')), 'File')}</span><b>${esc(file.original_name || 'File')}</b><small>${esc(formatDriveSize(file.size || 0) || driveFileTypeLabel(file.original_name || '', file.mime || ''))}</small></button>`).join('')}</div>` : '<p class="muted small">Recent Drive files will appear here after uploads.</p>'}</section>
+      <section class="card home-widget home-backup-widget stack"><div class="section-title-row"><h3>Backup health</h3><button class="btn ghost" type="button" id="openBackupSettingsBtn">Settings</button></div>${latestBackup ? `<div class="backup-health-line"><b>${esc(latestBackup.file)}</b><span class="small muted">${esc(formatDateTime(latestBackup.created_at))} / ${esc(formatDriveSize(latestBackup.size || 0))}</span><span class="pill">${Number(state.homeSummary?.backup_count || 0)} backup${Number(state.homeSummary?.backup_count || 0) === 1 ? '' : 's'}</span></div>` : '<p class="muted small">No backup found yet, or backup status is available only to admins.</p>'}</section>
     </aside>
   </div>`;
 }
 
 function renderCalendar() {
+  if (calendarSearchTerm()) return renderCalendarSearchResults();
   if (state.calendarView === 'day') return renderCalendarDay();
   if (state.calendarView === 'week') return renderCalendarWeek();
   if (state.calendarView === 'year') return renderCalendarYear();
@@ -1506,6 +1950,13 @@ function renderCalendar() {
     cells.push(`<div class="${classes.join(' ')}" data-quick-add="${dateInputValue(new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 0))}"><div class="calendar-day-head"><b>${day.getDate()}</b></div>${dayEvents.slice(0, 3).map(event => renderEventChip(event)).join('')}${dayTasks.slice(0, 2).map(task => renderTaskChip(task)).join('')}${dayEvents.length + dayTasks.length > 5 ? `<p class="small muted">+${dayEvents.length + dayTasks.length - 5} more</p>` : ''}</div>`);
   }
   return `${renderCalendarSearchPanel()}<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title"><h2>${month.toLocaleString([], { month: 'long', year: 'numeric' })}</h2></div><div class="calendar-grid">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(day => `<div class="small muted"><b>${day}</b></div>`).join('')}${cells.join('')}</div></div>${renderCalendarSidebar('Upcoming', agendaItemsForRange(...calendarVisibleRange()).slice(0, 10))}</section>`;
+}
+
+function renderCalendarSearchResults() {
+  const query = calendarSearchTerm();
+  const items = agendaItemsForCalendarSearch();
+  const content = items.length ? `<div class="agenda-list-stack">${renderAgendaItems(items, true)}</div>` : '<section class="card"><p class="muted small">No matching events or tasks. Try a name, place, calendar, or detail from the description.</p></section>';
+  return `${renderCalendarSearchPanel()}<section class="calendar-page-grid"><div class="calendar-primary stack"><div class="card calendar-toolbar compact-view-title calendar-search-title"><div><p class="breadcrumb">Calendar search</p><h2>Results for "${esc(query)}"</h2></div><span class="pill">${items.length} match${items.length === 1 ? '' : 'es'}</span></div>${content}</div>${renderCalendarSidebar()}</section>`;
 }
 
 function startOfToday() {
@@ -1588,7 +2039,8 @@ function renderCalendarScheduleView() {
 }
 
 function renderCalendarSearchPanel() {
-  return `<div class="card calendar-search-panel"><label><span class="sr-only">Search calendar</span><input class="search" id="search" type="search" aria-label="Search calendar events and tasks. Press Q to focus search." title="Press Q to search" placeholder="Search Calendar events and tasks...  Q" value="${esc(state.q)}"></label>${state.q ? `<span class="pill">Filtering: ${esc(state.q)}</span>` : '<span class="small muted">Events and tasks in the current view</span>'}</div>`;
+  const searching = Boolean(calendarSearchTerm());
+  return `<div class="card calendar-search-panel"><label><span class="sr-only">Search calendar</span><input class="search" id="search" type="search" aria-label="Search calendar events and tasks. Press Q to focus search." title="Press Q to search" placeholder="Search names, birthdays, places, tasks...  Q" value="${esc(state.q)}"></label>${searching ? '<span class="pill">Searching all calendars</span>' : '<span class="small muted">Events and tasks in the current view</span>'}</div>`;
 }
 
 function renderCalendarSidebar(agendaTitle = '', agendaItems = []) {
@@ -1646,6 +2098,18 @@ function agendaItemsForRange(start, end) {
     ...state.events.filter(event => calendarVisible(event.calendar_id) && (!query || matchesCalendarEvent(event, query)) && (() => { const time = new Date(normalizeDate(event.starts_at)).getTime(); return time >= startTs && time <= endTs; })()).map(event => ({ kind: 'event', when: event.starts_at, item: event })),
     ...state.tasks.filter(task => task.status !== 'done' && (!task.calendar_id || calendarVisible(task.calendar_id)) && (!query || matchesCalendarTask(task, query)) && task.due_at && (() => { const time = new Date(normalizeDate(task.due_at)).getTime(); return time >= startTs && time <= endTs; })()).map(task => ({ kind: 'task', when: task.due_at, item: task })),
   ].sort((a, b) => new Date(normalizeDate(a.when)) - new Date(normalizeDate(b.when)));
+}
+
+function agendaItemsForCalendarSearch() {
+  const query = calendarSearchTerm().toLowerCase();
+  const fallbackWhen = new Date().toISOString();
+  return [
+    ...state.events.filter(event => calendarVisible(event.calendar_id) && (!query || matchesCalendarEvent(event, query))).map(event => ({ kind: 'event', when: event.starts_at, item: event })),
+    ...state.tasks.filter(task => (!task.calendar_id || calendarVisible(task.calendar_id)) && (!query || matchesCalendarTask(task, query))).map(task => ({ kind: 'task', when: task.due_at || task.updated_at || task.created_at || fallbackWhen, item: task, undated: !task.due_at })),
+  ].sort((a, b) => {
+    if (a.undated !== b.undated) return a.undated ? 1 : -1;
+    return new Date(normalizeDate(a.when)) - new Date(normalizeDate(b.when));
+  }).slice(0, 100);
 }
 
 function matchesText(query, ...values) {
@@ -1736,6 +2200,34 @@ function renderTaskRows(tasks, options = {}) {
   }).join('') : `<div class="task-empty"><h3>${esc(options.emptyTitle || 'No tasks found')}</h3><p class="muted small">${esc(options.emptyText || 'Create a task or clear the search to see more work.')}</p></div>`;
 }
 
+function plainTextFromHtml(value) {
+  const template = document.createElement('template');
+  template.innerHTML = sanitizeRichHtml(value);
+  return template.content.textContent || '';
+}
+
+function notePreviewText(note) {
+  const body = stripHiddenSecretLines(note?.body || '');
+  const text = parseBodyToBlocks(body).map(block => {
+    if (block.type === 'paragraph') return plainTextFromHtml(block.text || '');
+    if (['heading', 'quote', 'checklist', 'bullet', 'numbered'].includes(block.type)) return block.text || '';
+    if (block.type === 'table') return 'Table';
+    if (block.type === 'code') return 'Code block';
+    if (block.type === 'drawing') return 'Drawing';
+    return '';
+  }).filter(Boolean).join(' ');
+  return text.replace(/\s+/g, ' ').trim().slice(0, 180);
+}
+
+function renderNotePills(note) {
+  return `
+      ${note.category_name ? `<span class="pill">${esc(note.category_name)}</span>` : ''}
+      ${note.client_name ? `<span class="pill">${esc(note.client_name)}</span>` : ''}
+      ${note.tags ? esc(note.tags).split(',').slice(0,3).map(t => `<span class="pill">#${t.trim()}</span>`).join('') : ''}
+      ${Number(note.secret_count) ? `<span class="pill secret">${note.secret_count} hidden</span>` : ''}
+      ${Number(note.file_count) ? `<span class="pill file">${note.file_count} file${Number(note.file_count) === 1 ? '' : 's'}</span>` : ''}`;
+}
+
 function renderNotes() {
   if (!state.notes.length) return `<div class="empty card"><h2>No notes here yet</h2><p>Tap + to capture a quick thought, photo, file, password, checklist, or client note.</p></div>`;
   const titleOnly = Boolean(state.active) && currentNoteLayout() === 'list';
@@ -1753,6 +2245,22 @@ function renderNotes() {
     <div class="small muted">${esc(note.updated_at)}</div>
     `}
   </article>`).join('');
+}
+
+function renderNotesImproved() {
+  if (!state.notes.length) return `<div class="empty card"><h2>No notes here yet</h2><p>Tap + to capture a quick thought, photo, file, password, checklist, or client note.</p></div>`;
+  const titleOnly = Boolean(state.active) && currentNoteLayout() === 'list';
+  const privateList = state.noteFocus && Boolean(state.active);
+  return state.notes.map(note => {
+    const isActive = state.active && Number(state.active.id) === Number(note.id);
+    const hidden = privateList && !isActive;
+    const preview = hidden ? '' : notePreviewText(note);
+    const pinned = Number(note.pinned) ? `<span class="pin-badge" title="Pinned">${toolIcon('pin', 'Pinned')}</span>` : '';
+    return `<article class="card note-card ${titleOnly ? 'title-only' : ''} ${isActive ? 'active' : ''} ${state.selectedNoteIds.has(Number(note.id)) ? 'selected' : ''}" draggable="true" data-note-id="${note.id}" data-open-card="${note.id}" tabindex="0" role="button" aria-label="Open ${esc(note.title || 'note')}">
+      <div class="note-title-row">${state.selectionMode ? `<label class="note-select"><input type="checkbox" data-select-note="${note.id}" ${state.selectedNoteIds.has(Number(note.id)) ? 'checked' : ''} aria-label="Select ${esc(note.title)}"><span class="sr-only">Select ${esc(note.title)}</span></label>` : ''}<span class="note-title-heading">${pinned}<h2>${hidden ? 'Hidden note' : esc(note.title || 'Untitled note')}</h2></span></div>
+      ${titleOnly || privateList ? '' : `<p class="note-body">${esc(preview || 'No preview yet')}</p><div class="pill-row">${renderNotePills(note)}</div><div class="small muted">Updated ${esc(formatRelativeDate(note.updated_at))}</div>`}
+    </article>`;
+  }).join('');
 }
 
 function renderNoteLayoutToggle() {
@@ -1818,7 +2326,8 @@ function renderNotesWorkspace() {
   return `<div class="notes-workspace ${quickNotes ? 'quick-notes' : ''} ${editorOpen ? 'editor-open' : ''} ${listView ? 'list-view' : ''} ${editorOpen && state.noteFocus ? 'focus-mode' : ''}" style="--note-pane-width: ${paneWidth}px;">
     <div class="notes-list-pane">
       ${renderBulkNoteActions()}
-      <div class="grid notes-grid" id="notesGrid">${renderNotes()}</div>
+      <div class="grid notes-grid" id="notesGrid">${renderNotesImproved()}</div>
+      ${state.noteHasMore ? `<button class="btn ghost load-more-notes" id="loadMoreNotes" type="button">Load more notes</button>` : ''}
     </div>
     ${editorOpen ? '<button class="note-pane-resizer" id="notePaneResizer" type="button" aria-label="Resize notes list" title="Drag to resize notes list"></button>' : ''}
     <div class="inline-editor-slot" id="inlineEditorSlot">
@@ -1837,7 +2346,8 @@ function renderInlineEditor() {
   const quickMode = ((!id && state.newNoteMode === 'quick') || (id && state.section === 'notes:quick' && !note.category_id)) && !hasInlineSecrets;
   if (!editing) return renderReadOnlyNote(note, visibleBody, id);
   const focusLabel = state.noteFocus ? 'Show notes' : 'Focus';
-  const editorActions = `<div class="btn-row note-top-actions"><button class="btn ghost icon-only-btn" data-editor-command="undo" type="button" aria-label="Undo" title="Undo">${toolIcon('undo', 'Undo')}</button><button class="btn ghost icon-only-btn" data-editor-command="redo" type="button" aria-label="Redo" title="Redo">${toolIcon('redo', 'Redo')}</button><button type="button" class="btn ghost icon-only-btn ${state.noteFocus ? 'active' : ''}" id="focusNoteBtn" aria-label="${focusLabel}" title="${focusLabel}">${toolIcon('focus', focusLabel)}</button>${id ? `<button type="button" class="btn" id="archiveNote">Archive</button><button type="button" class="btn danger" id="deleteNote">Recycle</button>` : ''}<button class="btn primary" form="noteForm" type="submit">Save</button><button class="btn ghost" data-close-inline type="button">Back</button></div>`;
+  const pinLabel = Number(note.pinned) ? 'Unpin' : 'Pin';
+  const editorActions = `<div class="btn-row note-top-actions"><button class="btn ghost icon-only-btn" data-editor-command="undo" type="button" aria-label="Undo" title="Undo">${toolIcon('undo', 'Undo')}</button><button class="btn ghost icon-only-btn" data-editor-command="redo" type="button" aria-label="Redo" title="Redo">${toolIcon('redo', 'Redo')}</button><button type="button" class="btn ghost icon-only-btn ${state.noteFocus ? 'active' : ''}" id="focusNoteBtn" aria-label="${focusLabel}" title="${focusLabel}">${toolIcon('focus', focusLabel)}</button><button type="button" class="btn ghost icon-only-btn ${Number(note.pinned) ? 'active' : ''}" id="pinNoteBtn" aria-label="${pinLabel}" title="${pinLabel}">${toolIcon('pin', pinLabel)}</button>${id ? `<button type="button" class="btn" id="archiveNote">Archive</button><button type="button" class="btn danger" id="deleteNote">Recycle</button>` : ''}<button class="btn primary" form="noteForm" type="submit">Save</button><button class="btn ghost" data-close-inline type="button">Back</button></div>`;
   return `<section class="editor-panel note-editor-panel inline-note-editor" data-inline-editor data-editing="1" data-is-new-note="${id ? '0' : '1'}">
     <div class="topbar editor-topbar terminal-topbar"><div><p class="terminal-path">divault ~/notes/${id || (quickMode ? 'quick' : 'new')}</p><h2>${quickMode ? 'Quick note' : (id ? 'Edit note' : 'New note')}</h2></div>${editorActions}</div>
     <form id="noteForm" class="note-editor-form">
@@ -1855,6 +2365,7 @@ function renderInlineEditor() {
         <input type="hidden" name="client_id" value="${esc(note.client_id || '')}">
         <input type="hidden" name="tags" value="${esc(note.tags || '')}">
         <input type="hidden" name="category" value="${esc(note.category || '')}">
+        <input type="hidden" name="pinned" value="${Number(note.pinned) ? '1' : '0'}">
         <input type="hidden" name="section" value="All">
         <input type="hidden" name="type" value="${esc(note.type || 'text')}">
         <input type="hidden" name="body" id="noteBodySerialized" value="${esc(visibleBody)}">
@@ -1874,8 +2385,9 @@ function renderReadOnlyNote(note, visibleBody, id) {
   const recycleIcon = `<button class="btn danger icon-only-btn" data-trash-note-readonly type="button" aria-label="Recycle" title="Recycle">${toolIcon('trash', 'Recycle')}</button>`;
   const recoveryActions = Number(note.deleted) ? '<button class="btn primary" data-restore-note type="button">Restore</button><button class="btn danger" data-permanent-delete-note type="button">Delete forever</button>' : (Number(note.archived) ? '<button class="btn primary" data-restore-note type="button">Restore</button>' : `<button class="btn" data-archive-note-readonly type="button">Archive</button>${recycleIcon}`);
   const focusLabel = state.noteFocus ? 'Show notes' : 'Focus';
+  const pinLabel = Number(note.pinned) ? 'Unpin' : 'Pin';
   return `<section class="editor-panel note-editor-panel inline-note-editor readonly-note" data-inline-editor data-editing="0">
-    <div class="topbar editor-topbar terminal-topbar"><div><p class="terminal-path">divault ~/notes/${id}</p><h2>${esc(note.title || 'Untitled note')}</h2></div><div class="btn-row"><button class="btn ghost icon-only-btn ${state.noteFocus ? 'active' : ''}" id="focusNoteBtn" type="button" aria-label="${focusLabel}" title="${focusLabel}">${toolIcon('focus', focusLabel)}</button>${recoveryActions}<button class="btn primary" data-edit-note type="button">Edit</button><button class="btn ghost" data-close-inline type="button">Back</button></div></div>
+    <div class="topbar editor-topbar terminal-topbar"><div><p class="terminal-path">divault ~/notes/${id}</p><h2>${esc(note.title || 'Untitled note')}</h2></div><div class="btn-row"><button class="btn ghost icon-only-btn ${state.noteFocus ? 'active' : ''}" id="focusNoteBtn" type="button" aria-label="${focusLabel}" title="${focusLabel}">${toolIcon('focus', focusLabel)}</button><button class="btn ghost icon-only-btn ${Number(note.pinned) ? 'active' : ''}" data-toggle-pin-readonly type="button" aria-label="${pinLabel}" title="${pinLabel}">${toolIcon('pin', pinLabel)}</button>${recoveryActions}<button class="btn primary" data-edit-note type="button">Edit</button><button class="btn ghost" data-close-inline type="button">Back</button></div></div>
     <div class="note-read-body">${renderReadableBlocks(parseBodyToBlocks(visibleBody))}</div>
     ${renderNoteExtras(visibleBody, note.title || 'note', state.activeExtra || {})}
     ${renderVersionPanel(id)}
@@ -1937,6 +2449,7 @@ function bindApp() {
   document.querySelector('#brandHomeBtn')?.addEventListener('click', goHome);
   document.querySelector('#menuToggle')?.addEventListener('click', () => toggleMobileMenu());
   document.querySelector('#sidebarCollapse')?.addEventListener('click', () => toggleDesktopSidebar());
+  document.querySelector('#commandCenterBtn')?.addEventListener('click', () => openCommandCenter());
   restoreDesktopSidebarState();
   document.querySelector('#sidebarBackdrop')?.addEventListener('click', () => toggleMobileMenu(false));
   document.querySelector('#notificationBellBtn')?.addEventListener('click', e => {
@@ -1973,6 +2486,7 @@ function bindApp() {
     state.panel = '';
     syncSectionRoute();
     state.q = '';
+    resetNoteLimit();
     state.active = null;
     state.activeExtra = null;
     state.editingNote = false;
@@ -2007,6 +2521,19 @@ function bindApp() {
     }
     openEditor(null, { mode: 'full' });
   });
+  document.querySelectorAll('[data-new-note-template]').forEach(btn => btn.addEventListener('click', async () => {
+    if (!await confirmDiscardUnsaved()) return;
+    if (state.panel || !isNoteSection(state.section)) {
+      state.section = 'notes:all';
+      syncSectionRoute();
+      state.panel = '';
+      state.q = '';
+      resetNoteLimit();
+      await loadCurrentSection();
+      renderApp();
+    }
+    openEditor(null, { mode: 'full', template: btn.dataset.newNoteTemplate });
+  }));
   document.querySelector('#logoutBtn')?.addEventListener('click', () => runUserAction(async () => {
     toggleMobileMenu(false);
     await api('/logout', { method: 'POST' });
@@ -2032,6 +2559,7 @@ function bindApp() {
   document.querySelector('#noteSort')?.addEventListener('change', async e => {
     state.noteSort = e.target.value;
     localStorage.setItem('divault_note_sort', state.noteSort);
+    resetNoteLimit();
     state.active = null;
     state.activeExtra = null;
     state.editingNote = false;
@@ -2041,6 +2569,8 @@ function bindApp() {
     renderApp();
   });
   document.querySelector('#shortcutsHelpBtn')?.addEventListener('click', showShortcutsHelp);
+  document.querySelector('#saveCurrentView')?.addEventListener('click', saveCurrentView);
+  document.querySelectorAll('[data-saved-view]').forEach(btn => btn.addEventListener('click', () => applySavedView(btn.dataset.savedView)));
   document.querySelector('#syncBtn')?.addEventListener('click', () => refreshFromServer({ quiet: false }));
   document.querySelector('#emptyTrashBtn')?.addEventListener('click', async () => {
     if (!await confirmDialog({ title: 'Empty recycle bin?', message: 'This permanently deletes every note in the recycle bin.', confirmText: 'Empty recycle bin' })) return;
@@ -2053,6 +2583,7 @@ function bindApp() {
   });
   document.querySelector('#search')?.addEventListener('input', debounce(async e => {
     state.q = e.target.value;
+    resetNoteLimit();
     state.active = null;
     state.activeExtra = null;
     state.editingNote = false;
@@ -2062,6 +2593,17 @@ function bindApp() {
     document.querySelector('#contentArea').innerHTML = renderMainContent();
     bindContentActions();
   }, 240));
+  document.querySelectorAll('[data-note-filter-token]').forEach(btn => btn.addEventListener('click', async () => {
+    state.q = toggleNoteSearchToken(state.q, btn.dataset.noteFilterToken || '');
+    resetNoteLimit();
+    state.active = null;
+    state.activeExtra = null;
+    state.editingNote = false;
+    state.selectionMode = false;
+    state.selectedNoteIds.clear();
+    await loadCurrentSection();
+    renderApp();
+  }));
   bindContentActions();
 }
 
@@ -2069,7 +2611,13 @@ function bindGlobalShortcuts() {
   if (window.__divaultShortcutsBound) return;
   window.__divaultShortcutsBound = true;
   document.addEventListener('keydown', event => {
-    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.defaultPrevented) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      openCommandCenter();
+      return;
+    }
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
     const active = document.activeElement;
     const typing = active?.matches?.('input, textarea, select, [contenteditable="true"]');
     if (typing) return;
@@ -2160,6 +2708,19 @@ function bindContentActions() {
   bindSettingsPanel(document.querySelector('#settingsPanel'));
   bindNotePaneResize();
   bindCalendarTaskActions();
+  document.querySelector('#commandCenterHeroBtn')?.addEventListener('click', () => openCommandCenter());
+  document.querySelector('#openBackupSettingsBtn')?.addEventListener('click', () => openSettings({ tab: 'data' }));
+  document.querySelector('#homeQuickCaptureForm')?.addEventListener('submit', e => {
+    e.preventDefault();
+    openCommandCenter(new FormData(e.currentTarget).get('capture') || '');
+  });
+  document.querySelectorAll('[data-home-capture]').forEach(btn => btn.addEventListener('click', () => {
+    const value = document.querySelector('#homeQuickCaptureForm input[name="capture"]')?.value || '';
+    handleQuickCaptureAction(btn.dataset.homeCapture, value);
+  }));
+  document.querySelectorAll('[data-open-drive-file]').forEach(btn => btn.addEventListener('click', () => {
+    openDriveFilePreviewFromResult({ id: btn.dataset.openDriveFile, title: btn.dataset.fileName || 'File', mime: btn.dataset.fileMime || '' });
+  }));
   document.querySelectorAll('[data-open]').forEach(el => el.addEventListener('click', async e => {
     const card = el.closest('[data-open-card]');
     if (card && handleNoteSelectionClick(e, Number(card.dataset.openCard || el.dataset.open))) return;
@@ -2190,6 +2751,12 @@ function bindContentActions() {
     document.querySelector('#contentArea').innerHTML = renderNotesWorkspace();
     bindContentActions();
   }));
+  document.querySelector('#loadMoreNotes')?.addEventListener('click', async () => {
+    state.noteLimit = currentNoteLimit() + 200;
+    localStorage.setItem('divault_note_limit', String(state.noteLimit));
+    await loadCurrentSection();
+    refreshContentArea(renderNotesWorkspace());
+  });
   document.querySelectorAll('[data-select-note]').forEach(input => input.addEventListener('click', e => e.stopPropagation()));
   document.querySelectorAll('[data-select-note]').forEach(input => input.addEventListener('change', e => {
     const id = Number(e.target.dataset.selectNote);
@@ -2560,6 +3127,7 @@ function openNoteContextMenu(card, event) {
   } else if (Number(note.archived)) {
     actions.push({ label: 'Restore', iconName: 'undo', attrs: 'data-restore-note', run: () => restoreCurrentNote(id) });
   } else {
+    actions.push({ label: Number(note.pinned) ? 'Unpin' : 'Pin', iconName: 'pin', attrs: 'data-toggle-pin-readonly', run: () => toggleCurrentNotePinned(id) });
     actions.push({ label: 'Archive', iconName: 'archive', attrs: 'data-archive-note-readonly', run: () => archiveCurrentNote(id) });
     actions.push({ label: 'Recycle', iconName: 'trash', attrs: 'data-trash-note-readonly', danger: true, run: () => trashCurrentNote(id) });
   }
@@ -3158,20 +3726,19 @@ function bindCalendarTaskActions() {
   document.querySelectorAll('[data-task-done]').forEach(input => input.addEventListener('change', async e => {
     const task = state.tasks.find(item => String(item.id) === String(e.target.dataset.taskDone));
     if (!task) return;
-    await runUserAction(async () => {
-      await api(`/tasks/${task.id}`, { method: 'PATCH', body: { ...task, status: e.target.checked ? 'done' : 'open', shared: Number(task.private) === 0 } });
+    if ((task.status === 'done') === Boolean(e.target.checked)) return;
+    await toggleTaskStatus(task, async () => {
       await loadCurrentSection();
       renderApp();
-    }, 'Task update failed');
+    });
   }));
   document.querySelectorAll('[data-task-complete]').forEach(btn => btn.addEventListener('click', async () => {
     const task = state.tasks.find(item => String(item.id) === String(btn.dataset.taskComplete));
     if (!task) return;
-    await runUserAction(async () => {
-      await api(`/tasks/${task.id}`, { method: 'PATCH', body: { ...task, status: 'done', shared: Number(task.private) === 0 } });
+    await completeTask(task, async () => {
       await loadCurrentSection();
       renderApp();
-    }, 'Task update failed');
+    });
   }));
   document.querySelectorAll('[data-delete-completed-task]').forEach(btn => btn.addEventListener('click', async () => {
     const task = state.tasks.find(item => String(item.id) === String(btn.dataset.deleteCompletedTask));
@@ -3524,7 +4091,6 @@ function openTaskDetailDialog(task = {}) {
       await loadNotificationData();
       await loadCurrentSection();
       renderApp();
-      toast(status === 'done' ? 'Task completed' : 'Task reopened');
     });
   });
   modal.querySelector('[data-edit-detail]').addEventListener('click', () => { modal.remove(); openTaskDialog(task); });
@@ -3795,7 +4361,7 @@ async function moveNotesToCategory(ids, categoryId) {
   for (const id of ids) {
   const details = await api('/notes/' + id);
   const note = details.note;
-  await api('/notes', { method: 'POST', body: { id, title: note.title, body: note.body, type: note.type, section: 'All', category_id: categoryId, category: note.category || '', tags: note.tags || '', client_id: note.client_id || '' } });
+  await api('/notes', { method: 'POST', body: { id, title: note.title, body: note.body, type: note.type, section: 'All', category_id: categoryId, category: note.category || '', tags: note.tags || '', client_id: note.client_id || '', pinned: Number(note.pinned) ? 1 : 0 } });
   }
   state.selectedNoteIds.clear();
   toast(`Moved ${ids.length} note${ids.length === 1 ? '' : 's'} to ${categoryId ? sectionLabel(`notes:cat:${categoryId}`) : 'All'}`);
@@ -4615,7 +5181,7 @@ async function openEditor(id = null, options = {}) {
   state.pendingAttachments = [];
   state.newNoteMode = id ? 'full' : (options.mode || 'full');
   if (!id) clearDraftNote();
-  state.active = id ? state.notes.find(n => Number(n.id) === id) : emptyDraftNote();
+  state.active = id ? state.notes.find(n => Number(n.id) === id) : { ...emptyDraftNote(), ...noteTemplate(options.template), ...(options.note || {}) };
   state.activeExtra = id ? await api('/notes/' + id) : { files: [], secrets: [], versions: [] };
   if (id && state.activeExtra?.note) {
     state.active = state.notes.find(n => Number(n.id) === id) || state.activeExtra.note;
@@ -4666,6 +5232,7 @@ function bindInlineEditor(modal) {
     modal.querySelector('[data-trash-note-readonly]')?.addEventListener('click', () => trashCurrentNote(id));
     modal.querySelector('[data-restore-note]')?.addEventListener('click', () => restoreCurrentNote(id));
     modal.querySelector('[data-permanent-delete-note]')?.addEventListener('click', () => permanentlyDeleteCurrentNote(id));
+    modal.querySelector('[data-toggle-pin-readonly]')?.addEventListener('click', () => toggleCurrentNotePinned(id));
     bindCodeBlockActions(modal);
     bindSecretActions(modal);
     return;
@@ -4696,6 +5263,17 @@ function bindInlineEditor(modal) {
   });
   const titleField = modal.querySelector('input[name="title"]');
   const simpleBody = modal.querySelector('[data-simple-body]');
+  modal.querySelector('#pinNoteBtn')?.addEventListener('click', () => {
+    const field = modal.querySelector('input[name="pinned"]');
+    if (!field) return;
+    const pinned = field.value !== '1';
+    field.value = pinned ? '1' : '0';
+    const button = modal.querySelector('#pinNoteBtn');
+    button?.classList.toggle('active', pinned);
+    button?.setAttribute('aria-label', pinned ? 'Unpin' : 'Pin');
+    button?.setAttribute('title', pinned ? 'Unpin' : 'Pin');
+    modal.dispatchEvent(new Event('input', { bubbles: true }));
+  });
   if (simpleBody) {
     simpleBody.addEventListener('input', () => {
       const bodyField = modal.querySelector('#noteBodySerialized');
@@ -4765,12 +5343,14 @@ async function saveInlineNote(modal, initialId = null, { autosave = false } = {}
   const form = modal.querySelector('#noteForm');
   if (!form) return null;
   const data = Object.fromEntries(new FormData(form));
+  data.autosave = autosave ? 1 : 0;
   if (data.existing_secret_markers) data.body = [data.body, data.existing_secret_markers].filter(Boolean).join('\n');
   delete data.existing_secret_markers;
   const currentId = Number(modal.dataset.autosaveNoteId || initialId || 0);
   if (currentId) data.id = currentId;
   if (autosave && !currentId && !String(data.title || '').trim() && !String(data.body || '').trim() && !state.pendingAttachments.length) return null;
   const submittedSignature = editorDirtySignature(modal);
+  const hadAttachments = state.pendingAttachments.length > 0;
 
   modal.dataset.autosaving = '1';
   modal.dataset.autosaveQueued = '0';
@@ -4787,9 +5367,16 @@ async function saveInlineNote(modal, initialId = null, { autosave = false } = {}
     }
     if (savedId) {
       if (!initialId) clearDraftNote();
-      state.notes = (await loadNotes()).notes;
+      if (saved.note) upsertNoteSummary(saved.note);
+      else {
+        const notes = await loadNotes();
+        state.notes = notes.notes || [];
+        state.noteHasMore = Boolean(notes.has_more);
+        state.noteTotal = Number(notes.total || state.notes.length);
+      }
       state.active = state.notes.find(n => Number(n.id) === savedId) || state.active;
-      state.activeExtra = await api('/notes/' + savedId);
+      if (!autosave || hadAttachments || !state.activeExtra?.note || Number(state.activeExtra.note.id) !== savedId) state.activeExtra = await api('/notes/' + savedId);
+      else state.activeExtra = { ...state.activeExtra, note: { ...state.activeExtra.note, ...saved.note, id: savedId, title: data.title, body: data.body, pinned: data.pinned } };
     }
     if (editorDirtySignature(modal) === submittedSignature) modal.dataset.dirtyBaseline = submittedSignature;
     else modal.dataset.autosaveQueued = '1';
@@ -4815,7 +5402,7 @@ function editorDirtySignature(modal = document.querySelector('[data-inline-edito
   const form = modal.querySelector('#noteForm');
   if (!form) return '';
   const data = Object.fromEntries(new FormData(form));
-  return JSON.stringify({ title: data.title || '', body: data.body || '', category_id: data.category_id || '', attachments: state.pendingAttachments.map(file => `${file.name}:${file.size}:${file.type}`).join('|') });
+  return JSON.stringify({ title: data.title || '', body: data.body || '', category_id: data.category_id || '', tags: data.tags || '', pinned: data.pinned || '', attachments: state.pendingAttachments.map(file => `${file.name}:${file.size}:${file.type}`).join('|') });
 }
 
 function hasUnsavedEditorChanges() {
@@ -4841,6 +5428,23 @@ async function handleAttachmentFiles(modal, noteId, files, actionLabel = 'Added'
     toast(`${actionLabel} ${files.length} file${files.length === 1 ? '' : 's'}`);
     openEditor(noteId);
   }, 'Upload failed');
+}
+
+function upsertNoteSummary(note) {
+  if (!note?.id) return;
+  const id = Number(note.id);
+  const current = state.notes.findIndex(item => Number(item.id) === id);
+  if (current >= 0) state.notes[current] = { ...state.notes[current], ...note };
+  else state.notes.unshift(note);
+  state.notes.sort((a, b) => {
+    if (Number(a.pinned) !== Number(b.pinned)) return Number(b.pinned) - Number(a.pinned);
+    const sort = currentNoteSort();
+    if (sort === 'title_asc') return String(a.title || '').localeCompare(String(b.title || ''));
+    if (sort === 'title_desc') return String(b.title || '').localeCompare(String(a.title || ''));
+    const dateA = new Date(normalizeDate(sort.startsWith('created') ? a.created_at : a.updated_at)).getTime() || 0;
+    const dateB = new Date(normalizeDate(sort.startsWith('created') ? b.created_at : b.updated_at)).getTime() || 0;
+    return sort.endsWith('asc') ? dateA - dateB : dateB - dateA;
+  });
 }
 
 function pastedAttachmentFiles(event) {
@@ -4914,9 +5518,9 @@ function nextReviewNoteId(id) {
   return ids[index + 1] || ids[index - 1] || null;
 }
 
-async function reloadNotesAfterAction(message, { advanceFromId = null } = {}) {
+async function reloadNotesAfterAction(message, { advanceFromId = null, undo = null } = {}) {
   const nextId = advanceFromId ? nextReviewNoteId(advanceFromId) : null;
-  toast(message);
+  toast(message, undo ? { actionLabel: 'Undo', onAction: undo } : {});
   state.active = null;
   state.activeExtra = null;
   state.editingNote = false;
@@ -4933,15 +5537,39 @@ async function reloadNotesAfterAction(message, { advanceFromId = null } = {}) {
 async function archiveCurrentNote(id) {
   await runUserAction(async () => {
     await api(`/notes/${id}/archive`, { method: 'POST', body: {} });
-    await reloadNotesAfterAction('Archived', { advanceFromId: id });
+    await reloadNotesAfterAction('Archived', { advanceFromId: id, undo: () => restoreNoteUndo(id) });
   }, 'Archive failed');
+}
+
+async function toggleCurrentNotePinned(id) {
+  if (!id) return;
+  await runUserAction(async () => {
+    const details = await api('/notes/' + id);
+    const note = details.note;
+    const pinned = Number(note.pinned) ? 0 : 1;
+    await api('/notes', { method: 'POST', body: { id, title: note.title, body: note.body, type: note.type, section: note.section || 'All', category_id: note.category_id || '', category: note.category || '', tags: note.tags || '', client_id: note.client_id || '', pinned } });
+    toast(pinned ? 'Pinned' : 'Unpinned');
+    await loadCurrentSection();
+    state.active = state.notes.find(item => Number(item.id) === Number(id)) || null;
+    state.activeExtra = state.active ? await api('/notes/' + id) : null;
+    refreshContentArea(renderNotesWorkspace());
+  }, 'Pin update failed');
 }
 
 async function trashCurrentNote(id) {
   await runUserAction(async () => {
     await api('/notes/' + id, { method: 'DELETE' });
-    await reloadNotesAfterAction('Moved to recycle bin', { advanceFromId: id });
+    await reloadNotesAfterAction('Moved to recycle bin', { advanceFromId: id, undo: () => restoreNoteUndo(id) });
   }, 'Delete failed');
+}
+
+async function restoreNoteUndo(id) {
+  await runUserAction(async () => {
+    await api(`/notes/${id}/restore`, { method: 'POST', body: {} });
+    toast('Undo complete');
+    await loadAll();
+    renderApp();
+  }, 'Undo failed');
 }
 
 async function restoreCurrentNote(id) {
@@ -4980,8 +5608,18 @@ async function bulkNoteAction(action) {
     state.selectionMode = false;
     await loadAll();
     renderApp();
-    toast(`${ids.length} note${ids.length === 1 ? '' : 's'} updated`);
+    const canUndo = action === 'archive' || action === 'trash';
+    toast(`${ids.length} note${ids.length === 1 ? '' : 's'} updated`, canUndo ? { actionLabel: 'Undo', onAction: () => restoreNotesUndo(ids) } : {});
   }, 'Bulk action failed');
+}
+
+async function restoreNotesUndo(ids) {
+  await runUserAction(async () => {
+    for (const id of ids) await api(`/notes/${id}/restore`, { method: 'POST', body: {} });
+    toast('Undo complete');
+    await loadAll();
+    renderApp();
+  }, 'Undo failed');
 }
 
 async function restoreVersion(noteId, versionId) {
@@ -5414,6 +6052,42 @@ function emptyDraftNote() {
   return { title: '', body: '', type: 'text', section: 'All', category_id: activeNoteCategoryId(), category: '', tags: '', client_id: '' };
 }
 
+function noteTemplate(key = '') {
+  const today = new Date().toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  const base = { category_id: activeNoteCategoryId(), section: 'All', type: 'text' };
+  if (key === 'meeting') return {
+    ...base,
+    title: `Meeting notes - ${today}`,
+    tags: 'meeting',
+    body: `# Meeting notes\n\nDate: ${today}\n\n## Attendees\n\n- \n\n## Decisions\n\n- \n\n## Action items\n\n- [ ] `
+  };
+  if (key === 'checklist') return {
+    ...base,
+    title: `Checklist - ${today}`,
+    tags: 'checklist',
+    body: `# Checklist\n\n- [ ] First thing\n- [ ] Next thing\n- [ ] Follow up`
+  };
+  if (key === 'client') return {
+    ...base,
+    title: 'Client note',
+    tags: 'client',
+    body: `# Client note\n\n## Summary\n\n\n## Details\n\n\n## Follow-up\n\n- [ ] `
+  };
+  if (key === 'secret') return {
+    ...base,
+    title: 'Secret note',
+    tags: 'secret',
+    body: `# Secret note\n\nPassword: \n\nNotes:\n`
+  };
+  if (key === 'file') return {
+    ...base,
+    title: 'File note',
+    tags: 'file',
+    body: `# File note\n\nDrop or paste files into this note after it opens.\n\n## Notes\n\n`
+  };
+  return {};
+}
+
 function saveDraftNote(data) {
   clearDraftNote();
 }
@@ -5611,6 +6285,10 @@ function renderDesktopParityRow(label, ready, detail) {
 }
 
 async function openSettings(options = {}) {
+  if (options.tab) {
+    state.settingsTab = options.tab;
+    localStorage.setItem('divault_settings_tab', state.settingsTab);
+  }
   state.panel = 'settings';
   state.active = null;
   state.activeExtra = null;

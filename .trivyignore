@@ -1,0 +1,5 @@
+# The official Apache image starts a root master process so the entrypoint can
+# remap PUID/PGID and repair mounted volume ownership. Request workers run as
+# www-data; verify with: ps -eo user,pid,ppid,comm,args | grep apache2.
+DS-0002
+AVD-DS-0002
