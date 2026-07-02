@@ -1639,6 +1639,7 @@ async function flushOutbox() {
 // nothing is ever silently overwritten, and the queue never wedges on a conflict.
 async function resolveConflictKeepBoth(row, serverNote) {
   if (row.entity_type === 'task') return resolveTaskConflictKeepBoth(row, serverNote);
+  if (row.entity_type === 'event') return resolveEventConflictKeepBoth(row, serverNote);
   if (serverNote && serverNote.id != null) {
     const summary = { ...serverNote, offline_pending: 0 };
     await OFF.cacheNote(summary);
@@ -1670,6 +1671,7 @@ function toPushMutation(row) {
 // Map a temp id to its server id after a successful push, updating cache + state.
 async function reconcileMutation(row, result) {
   if (row.entity_type === 'task') return reconcileTaskMutation(row, result);
+  if (row.entity_type === 'event') return reconcileEventMutation(row, result);
   const serverNote = result.record || null;
   if (row.local_id != null && OFF.isTempId(row.local_id) && serverNote && serverNote.id != null) {
     const realId = Number(serverNote.id);
@@ -1809,6 +1811,136 @@ async function resolveTaskConflictKeepBoth(row, serverTask) {
   await OFF.enqueue({
     entity_type: 'task', action: 'upsert', entity_id: 0, local_id: tempId, base_updated_at: '',
     record: { ...rec, id: undefined, title: `${rec.title || 'Task'} (offline copy)` }
+  });
+}
+
+// ---- Offline events -------------------------------------------------------
+
+function upsertEventInState(row) {
+  const idx = state.events.findIndex(e => Number(e.id) === Number(row.id));
+  if (idx >= 0) state.events[idx] = { ...state.events[idx], ...row };
+  else state.events.push(row);
+}
+
+function offlineEventRow(data, id, prev) {
+  const now = new Date().toISOString();
+  const calId = data.calendar_id !== undefined && data.calendar_id !== '' ? Number(data.calendar_id) : (prev.calendar_id != null ? prev.calendar_id : (state.calendars[0]?.id || null));
+  const cal = state.calendars.find(c => String(c.id) === String(calId));
+  const starts = cleanLocalDateTime(data.starts_at) || prev.starts_at || now;
+  const ends = cleanLocalDateTime(data.ends_at) || prev.ends_at || starts;
+  return {
+    ...prev, id, calendar_id: calId,
+    title: data.title || prev.title || 'Untitled event',
+    description: data.description != null ? data.description : (prev.description || ''),
+    location: data.location != null ? data.location : (prev.location || ''),
+    starts_at: starts, ends_at: ends,
+    all_day: data.all_day ? 1 : 0,
+    recurrence_rule: data.recurrence_rule || prev.recurrence_rule || null,
+    calendar_name: cal ? cal.name : (prev.calendar_name || ''),
+    calendar_color: cal ? cal.color : (prev.calendar_color || ''),
+    source: prev.source || 'manual',
+    created_at: prev.created_at || now, updated_at: now, offline_pending: 1
+  };
+}
+
+// Normalise a datetime-local value ("2026-07-02T10:00") to the server's "Y-m-d H:i:s".
+function cleanLocalDateTime(value) {
+  let s = String(value || '').trim();
+  if (!s) return '';
+  s = s.replace('T', ' ');
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(s)) s += ':00';
+  return s.slice(0, 19);
+}
+
+async function saveEventOffline(data, id) {
+  let useId = Number(id || 0);
+  let tempId = null;
+  if (!useId) { useId = await OFF.nextTempId(); tempId = useId; }
+  else if (OFF.isTempId(useId)) { tempId = useId; }
+  const prev = state.events.find(e => Number(e.id) === useId) || {};
+  const row = offlineEventRow(data, useId, prev);
+  const record = {
+    calendar_id: row.calendar_id || '', title: row.title, description: row.description, location: row.location,
+    starts_at: row.starts_at, ends_at: row.ends_at, all_day: row.all_day, recurrence_rule: row.recurrence_rule || ''
+  };
+  if (!OFF.isTempId(useId)) record.id = useId;
+  await OFF.enqueue({ entity_type: 'event', action: 'upsert', entity_id: OFF.isTempId(useId) ? 0 : useId, local_id: tempId, base_updated_at: prev.updated_at || '', record });
+  await OFF.putCollectionItem('events', row);
+  upsertEventInState(row);
+  await refreshOutboxCount();
+  return { event: row, offline: true };
+}
+
+// Offline-capable event create/update. `id` is 0 for a new event.
+async function saveEventRequest(data, id) {
+  if (id && offlineReady() && OFF.isTempId(id)) return saveEventOffline(data, id);
+  try {
+    const res = await api(id ? `/events/${id}` : '/events', { method: id ? 'PATCH' : 'POST', body: data });
+    if (offlineReady() && res.event) OFF.putCollectionItem('events', res.event);
+    return { event: res.event, offline: false };
+  } catch (err) {
+    if (!offlineReady() || !isNetworkError(err)) throw err;
+    return saveEventOffline(data, id);
+  }
+}
+
+async function deleteEventRequest(id) {
+  const numId = Number(id);
+  if (offlineReady() && OFF.isTempId(numId)) {
+    await OFF.removeOutboxForNote(numId);
+    await OFF.deleteCollectionItem('events', numId);
+    state.events = state.events.filter(e => Number(e.id) !== numId);
+    await refreshOutboxCount();
+    return { offline: true };
+  }
+  try {
+    await api(`/events/${numId}`, { method: 'DELETE' });
+    if (offlineReady()) OFF.deleteCollectionItem('events', numId);
+    return { offline: false };
+  } catch (err) {
+    if (!offlineReady() || !isNetworkError(err)) throw err;
+    const prev = state.events.find(e => Number(e.id) === numId) || {};
+    await OFF.enqueue({ entity_type: 'event', action: 'delete', entity_id: numId, local_id: null, base_updated_at: prev.updated_at || '', record: {} });
+    await OFF.deleteCollectionItem('events', numId);
+    state.events = state.events.filter(e => Number(e.id) !== numId);
+    await refreshOutboxCount();
+    return { offline: true };
+  }
+}
+
+async function reconcileEventMutation(row, result) {
+  if (row.action === 'delete') return;
+  const server = result.record || null;
+  if (!server || server.id == null) return;
+  if (row.local_id != null && OFF.isTempId(row.local_id)) {
+    const realId = Number(server.id);
+    const tempId = Number(row.local_id);
+    const merged = { ...(state.events.find(e => Number(e.id) === tempId) || {}), ...server, id: realId, offline_pending: 0 };
+    await OFF.remapCollectionId('events', tempId, realId, merged);
+    await OFF.reassignOutboxEntityId(tempId, realId);
+    const idx = state.events.findIndex(e => Number(e.id) === tempId);
+    if (idx >= 0) state.events[idx] = merged;
+  } else {
+    const merged = { ...(state.events.find(e => Number(e.id) === Number(server.id)) || {}), ...server, offline_pending: 0 };
+    await OFF.putCollectionItem('events', merged);
+    const idx = state.events.findIndex(e => Number(e.id) === Number(server.id));
+    if (idx >= 0) state.events[idx] = merged;
+  }
+}
+
+async function resolveEventConflictKeepBoth(row, serverEvent) {
+  if (serverEvent && serverEvent.id != null) {
+    const merged = { ...serverEvent, offline_pending: 0 };
+    await OFF.putCollectionItem('events', merged);
+    const idx = state.events.findIndex(e => Number(e.id) === Number(serverEvent.id));
+    if (idx >= 0) state.events[idx] = { ...state.events[idx], ...merged };
+  }
+  const rec = row.record || {};
+  if (row.action !== 'upsert' || !String(rec.title || '').trim()) return;
+  const tempId = await OFF.nextTempId();
+  await OFF.enqueue({
+    entity_type: 'event', action: 'upsert', entity_id: 0, local_id: tempId, base_updated_at: '',
+    record: { ...rec, id: undefined, title: `${rec.title || 'Event'} (offline copy)` }
   });
 }
 
@@ -4379,7 +4511,7 @@ function bindCalendarTaskActions() {
     if (!task) return;
     if (!await confirmDialog({ title: 'Delete completed task?', message: `Permanently delete "${task.title}"?`, confirmText: 'Delete' })) return;
     await runUserAction(async () => {
-      await api(`/tasks/${task.id}`, { method: 'DELETE' });
+      await deleteTaskRequest(task.id);
       await loadCurrentSection();
       renderApp();
     }, 'Task delete failed');
@@ -4557,16 +4689,28 @@ function openCalendarDialog(id = '') {
 
 async function openEventDialogById(id) {
   await runUserAction(async () => {
-    const res = await api(`/events/${id}`);
-    openEventDetailDialog(res.event || {});
+    openEventDetailDialog(await loadOfflineFallbackItem('events', 'event', id, `/events/${id}`));
   }, 'Event load failed');
 }
 
 async function openTaskDialogById(id) {
   await runUserAction(async () => {
-    const res = await api(`/tasks/${id}`);
-    openTaskDetailDialog(res.task || {});
+    openTaskDetailDialog(await loadOfflineFallbackItem('tasks', 'task', id, `/tasks/${id}`));
   }, 'Task load failed');
+}
+
+// Fetch a single event/task for its edit dialog, falling back to the offline cache
+// (and always using the cache for offline-only temp ids the server doesn't know yet).
+async function loadOfflineFallbackItem(collection, key, id, path) {
+  const fromCache = async () => (state[collection].find(x => Number(x.id) === Number(id))
+    || (offlineReady() ? (await OFF.getCollection(collection)).find(x => Number(x.id) === Number(id)) : null) || {});
+  if (offlineReady() && OFF.isTempId(id)) return fromCache();
+  try {
+    return (await api(path))[key] || {};
+  } catch (err) {
+    if (!offlineReady() || !isNetworkError(err)) throw err;
+    return fromCache();
+  }
 }
 
 async function ensureNotesForLinking(force = false) {
@@ -4688,11 +4832,11 @@ function openEventDetailDialog(event = {}) {
   modal.querySelector('[data-delete-detail]')?.addEventListener('click', async () => {
     if (!await confirmDialog({ title: 'Delete event?', message: 'Delete this calendar event?', confirmText: 'Delete' })) return;
     await runUserAction(async () => {
-      await api(`/events/${event.id}`, { method: 'DELETE' });
+      const res = await deleteEventRequest(event.id);
       modal.remove();
       await loadCurrentSection();
       renderApp();
-      toast('Event deleted');
+      toast(res.offline ? 'Deleted offline — will sync' : 'Event deleted');
     }, 'Event delete failed');
   });
   modal.addEventListener('click', e => {
@@ -4732,11 +4876,11 @@ function openTaskDetailDialog(task = {}) {
   modal.querySelector('[data-delete-detail]').addEventListener('click', async () => {
     if (!await confirmDialog({ title: 'Delete task?', message: 'Delete this task?', confirmText: 'Delete' })) return;
     await runUserAction(async () => {
-      await api(`/tasks/${task.id}`, { method: 'DELETE' });
+      const res = await deleteTaskRequest(task.id);
       modal.remove();
       await loadCurrentSection();
       renderApp();
-      toast('Task deleted');
+      toast(res.offline ? 'Deleted offline — will sync' : 'Task deleted');
     }, 'Task delete failed');
   });
   modal.addEventListener('click', e => {
@@ -4850,18 +4994,22 @@ async function openEventDialog(event = {}) {
     data.note_ids = [...e.target.querySelector('select[name="note_ids"]').selectedOptions].map(option => Number(option.value));
     data.all_day = Boolean(data.all_day);
     await runUserAction(async () => {
-      await api(event.id ? `/events/${event.id}` : '/events', { method: event.id ? 'PATCH' : 'POST', body: data });
+      const res = await saveEventRequest(data, event.id || 0);
       modal.remove();
       await loadCurrentSection();
       renderApp();
+      if (res.offline) toast('Saved offline — will sync');
     }, 'Event save failed');
   });
   modal.querySelector('#deleteEventBtn')?.addEventListener('click', async () => {
     if (!await confirmDialog({ title: 'Delete event?', message: 'Delete this calendar event?', confirmText: 'Delete' })) return;
-    await api(`/events/${event.id}`, { method: 'DELETE' });
-    modal.remove();
-    await loadCurrentSection();
-    renderApp();
+    await runUserAction(async () => {
+      const res = await deleteEventRequest(event.id);
+      modal.remove();
+      await loadCurrentSection();
+      renderApp();
+      if (res.offline) toast('Deleted offline — will sync');
+    }, 'Event delete failed');
   });
 }
 

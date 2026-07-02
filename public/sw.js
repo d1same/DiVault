@@ -1,5 +1,5 @@
-const CACHE = 'divault-v288';
-const ASSETS = ['/', '/app.html', '/styles.css?v=286', '/app.js?v=286', '/offline.js?v=286', '/manifest.webmanifest', '/assets/divault-logo.svg', '/assets/icon.svg'];
+const CACHE = 'divault-v289';
+const ASSETS = ['/', '/app.html', '/styles.css?v=289', '/app.js?v=289', '/offline.js?v=289', '/manifest.webmanifest', '/assets/divault-logo.svg', '/assets/icon.svg'];
 const ASSET_PATHS = new Set(ASSETS.map(asset => new URL(asset, self.location.origin).pathname));
 const FRESH_PATHS = new Set(['/', '/app.html', '/app.js', '/offline.js', '/styles.css', '/sw.js']);
 

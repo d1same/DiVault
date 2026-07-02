@@ -620,6 +620,7 @@ final class App
         $type = $mutation['entity_type'] ?? '';
         if ($type === 'note') $result = $this->applyNoteSyncMutation($user, $mutation);
         elseif ($type === 'task') $result = $this->applyTaskSyncMutation($user, $mutation);
+        elseif ($type === 'event') $result = $this->applyEventSyncMutation($user, $mutation);
         else throw new RuntimeException('Unsupported sync entity type');
         $this->db->prepare('INSERT INTO sync_applied_mutations (client_id, mutation_id, user_id, result_json) VALUES (?, ?, ?, ?)')->execute([$clientId, $mutationId, (int)$user['id'], json_encode($result)]);
         return $result;
@@ -784,6 +785,83 @@ final class App
                 ->execute([(int)$user['id'], $calendarId ?: null, $title, $description, $location, $status, $priority, $dueAt, $completedAt, $private, 'manual']);
             $id = (int)$this->db->lastInsertId();
             $this->audit((int)$user['id'], 'task.created', 'task', $id);
+        }
+        return $id;
+    }
+
+    // Returns the event row (edit permission enforced) or null if it does not exist.
+    private function eventForSync(array $user, int $id): ?array
+    {
+        if ($id <= 0) return null;
+        $stmt = $this->db->prepare('SELECT id FROM calendar_events WHERE id = ?');
+        $stmt->execute([$id]);
+        if (!$stmt->fetchColumn()) return null;
+        return $this->eventAccess($user, $id, 'edit');
+    }
+
+    private function applyEventSyncMutation(array $user, array $mutation): array
+    {
+        $this->requireEditor($user);
+        $action = $mutation['action'] ?? 'upsert';
+        $record = is_array($mutation['record'] ?? null) ? $mutation['record'] : [];
+        $id = isset($record['id']) ? (int)$record['id'] : (int)($mutation['entity_id'] ?? 0);
+        $baseUpdatedAt = trim((string)($mutation['base_updated_at'] ?? ''));
+
+        $this->db->beginTransaction();
+        try {
+            $current = $this->eventForSync($user, $id);
+            if ($current && ($current['source'] ?? '') === 'ics_feed') throw new RuntimeException('Synced calendar events are read-only');
+            if ($current && $baseUpdatedAt !== '' && (string)$current['updated_at'] !== $baseUpdatedAt) {
+                $this->db->rollBack();
+                return ['status' => 'conflict', 'entity_type' => 'event', 'entity_id' => $id, 'server' => $current];
+            }
+
+            if ($action === 'delete') {
+                if (!$current) throw new RuntimeException('Event not found');
+                $this->db->prepare('DELETE FROM calendar_events WHERE id = ?')->execute([$id]);
+                $this->audit((int)$user['id'], 'event.deleted', 'event', $id);
+                $this->db->commit();
+                return ['status' => 'applied', 'entity_type' => 'event', 'entity_id' => $id, 'record' => null];
+            } elseif ($action === 'upsert') {
+                $id = $this->upsertEventFromSync($user, $record, $current);
+            } else {
+                throw new RuntimeException('Unsupported event sync action');
+            }
+
+            $fresh = $this->eventAccess($user, $id, 'view');
+            $this->db->commit();
+            return ['status' => 'applied', 'entity_type' => 'event', 'entity_id' => $id, 'record' => $fresh];
+        } catch (Throwable $e) {
+            if ($this->db->inTransaction()) $this->db->rollBack();
+            throw $e;
+        }
+    }
+
+    private function upsertEventFromSync(array $user, array $record, ?array $current): int
+    {
+        $calendarId = isset($record['calendar_id']) && $record['calendar_id'] !== ''
+            ? (int)$record['calendar_id']
+            : ($current ? (int)$current['calendar_id'] : 0);
+        if (!$calendarId) $calendarId = $this->ensureDefaultCalendar($user);
+        $this->calendarAccess($user, $calendarId, 'edit');
+        $title = trim((string)($record['title'] ?? ($current['title'] ?? ''))) ?: 'Untitled event';
+        $startsAt = $this->cleanDateTime($record['starts_at'] ?? ($current['starts_at'] ?? '')) ?: gmdate('Y-m-d H:i:s');
+        $endsAt = $this->cleanDateTime($record['ends_at'] ?? ($current['ends_at'] ?? '')) ?: $startsAt;
+        $allDay = !empty($record['all_day']) ? 1 : 0;
+        $description = (string)($record['description'] ?? $current['description'] ?? '');
+        $location = (string)($record['location'] ?? $current['location'] ?? '');
+        $recurrence = trim((string)($record['recurrence_rule'] ?? $current['recurrence_rule'] ?? '')) ?: null;
+
+        if ($current) {
+            $id = (int)$current['id'];
+            $this->db->prepare('UPDATE calendar_events SET calendar_id=?, title=?, description=?, location=?, starts_at=?, ends_at=?, all_day=?, recurrence_rule=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')
+                ->execute([$calendarId, $title, $description, $location, $startsAt, $endsAt, $allDay, $recurrence, $id]);
+            $this->audit((int)$user['id'], 'event.updated', 'event', $id);
+        } else {
+            $this->db->prepare('INSERT INTO calendar_events (calendar_id, created_by_user_id, title, description, location, starts_at, ends_at, all_day, recurrence_rule, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+                ->execute([$calendarId, (int)$user['id'], $title, $description, $location, $startsAt, $endsAt, $allDay, $recurrence, 'manual']);
+            $id = (int)$this->db->lastInsertId();
+            $this->audit((int)$user['id'], 'event.created', 'event', $id);
         }
         return $id;
     }
