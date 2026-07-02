@@ -585,6 +585,9 @@ final class App
     private function syncPush(array $user): void
     {
         $this->requireEditor($user);
+        // Bound sync throughput per user so a runaway/malicious client cannot flood the DB with versions.
+        $this->checkRateLimit('sync:' . (int)$user['id'], 240, 60);
+        $this->hitRateLimit('sync:' . (int)$user['id'], 60);
         $data = $this->input();
         $clientId = $this->cleanSyncClientId($data['client_id'] ?? '');
         $mutations = $data['mutations'] ?? [];
@@ -615,8 +618,9 @@ final class App
         }
 
         $type = $mutation['entity_type'] ?? '';
-        if ($type !== 'note') throw new RuntimeException('Only note sync push is supported in this phase');
-        $result = $this->applyNoteSyncMutation($user, $mutation);
+        if ($type === 'note') $result = $this->applyNoteSyncMutation($user, $mutation);
+        elseif ($type === 'task') $result = $this->applyTaskSyncMutation($user, $mutation);
+        else throw new RuntimeException('Unsupported sync entity type');
         $this->db->prepare('INSERT INTO sync_applied_mutations (client_id, mutation_id, user_id, result_json) VALUES (?, ?, ?, ?)')->execute([$clientId, $mutationId, (int)$user['id'], json_encode($result)]);
         return $result;
     }
@@ -701,6 +705,85 @@ final class App
         foreach ($parsed['secrets'] as $secret) {
             $ciphertext = $secret['ciphertext'] ?? $this->crypto->encrypt($secret['value']);
             $this->db->prepare('INSERT INTO note_secrets (note_id, label, ciphertext) VALUES (?, ?, ?)')->execute([$id, $secret['label'], $ciphertext]);
+        }
+        return $id;
+    }
+
+    // Returns the task row (with edit permission enforced) or null if it does not exist.
+    // Unlike taskAccess(), a missing row yields null instead of throwing so sync can insert.
+    private function taskForSync(array $user, int $id): ?array
+    {
+        if ($id <= 0) return null;
+        $stmt = $this->db->prepare('SELECT id FROM tasks WHERE id = ?');
+        $stmt->execute([$id]);
+        if (!$stmt->fetchColumn()) return null;
+        return $this->taskAccess($user, $id, 'edit');
+    }
+
+    private function applyTaskSyncMutation(array $user, array $mutation): array
+    {
+        $this->requireEditor($user);
+        $action = $mutation['action'] ?? 'upsert';
+        $record = is_array($mutation['record'] ?? null) ? $mutation['record'] : [];
+        $id = isset($record['id']) ? (int)$record['id'] : (int)($mutation['entity_id'] ?? 0);
+        $baseUpdatedAt = trim((string)($mutation['base_updated_at'] ?? ''));
+
+        $this->db->beginTransaction();
+        try {
+            $current = $this->taskForSync($user, $id);
+            if ($current && $baseUpdatedAt !== '' && (string)$current['updated_at'] !== $baseUpdatedAt) {
+                $this->db->rollBack();
+                return ['status' => 'conflict', 'entity_type' => 'task', 'entity_id' => $id, 'server' => $current];
+            }
+
+            if ($action === 'delete') {
+                if (!$current) throw new RuntimeException('Task not found');
+                $this->db->prepare('DELETE FROM tasks WHERE id = ?')->execute([$id]);
+                $this->audit((int)$user['id'], 'task.deleted', 'task', $id);
+                $this->db->commit();
+                return ['status' => 'applied', 'entity_type' => 'task', 'entity_id' => $id, 'record' => null];
+            } elseif ($action === 'upsert') {
+                $id = $this->upsertTaskFromSync($user, $record, $current);
+            } else {
+                throw new RuntimeException('Unsupported task sync action');
+            }
+
+            $fresh = $this->taskAccess($user, $id, 'view');
+            $this->db->commit();
+            return ['status' => 'applied', 'entity_type' => 'task', 'entity_id' => $id, 'record' => $fresh];
+        } catch (Throwable $e) {
+            if ($this->db->inTransaction()) $this->db->rollBack();
+            throw $e;
+        }
+    }
+
+    private function upsertTaskFromSync(array $user, array $record, ?array $current): int
+    {
+        $calendarId = isset($record['calendar_id']) && $record['calendar_id'] !== ''
+            ? (int)$record['calendar_id']
+            : ($current && $current['calendar_id'] !== null ? (int)$current['calendar_id'] : null);
+        if ($calendarId) $this->calendarAccess($user, $calendarId, 'edit');
+        $title = trim((string)($record['title'] ?? ($current['title'] ?? ''))) ?: 'Untitled task';
+        $status = in_array(($record['status'] ?? ''), ['open', 'done'], true) ? $record['status'] : ($current['status'] ?? 'open');
+        $completedAt = $status === 'done' ? ($current['completed_at'] ?? gmdate('Y-m-d H:i:s')) : null;
+        $dueAt = $this->cleanDateTime($record['due_at'] ?? ($current['due_at'] ?? ''));
+        $location = trim((string)($record['location'] ?? $current['location'] ?? ''));
+        $description = (string)($record['description'] ?? $current['description'] ?? '');
+        $priority = (int)($record['priority'] ?? $current['priority'] ?? 0);
+        if (array_key_exists('private', $record)) $private = empty($record['private']) ? 0 : 1;
+        elseif (array_key_exists('shared', $record)) $private = empty($record['shared']) ? 1 : 0;
+        else $private = $current ? (int)$current['private'] : 1;
+
+        if ($current) {
+            $id = (int)$current['id'];
+            $this->db->prepare('UPDATE tasks SET calendar_id=?, title=?, description=?, location=?, status=?, priority=?, due_at=?, completed_at=?, private=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')
+                ->execute([$calendarId ?: null, $title, $description, $location, $status, $priority, $dueAt, $completedAt, $private, $id]);
+            $this->audit((int)$user['id'], 'task.updated', 'task', $id);
+        } else {
+            $this->db->prepare('INSERT INTO tasks (user_id, calendar_id, title, description, location, status, priority, due_at, completed_at, private, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+                ->execute([(int)$user['id'], $calendarId ?: null, $title, $description, $location, $status, $priority, $dueAt, $completedAt, $private, 'manual']);
+            $id = (int)$this->db->lastInsertId();
+            $this->audit((int)$user['id'], 'task.created', 'task', $id);
         }
         return $id;
     }
@@ -1400,7 +1483,8 @@ final class App
             $this->json(['enabled' => true, 'source' => 'environment', 'token' => null, 'endpoint' => $this->origin() . '/api/integrations/ai/review-notes']);
         }
         $token = bin2hex(random_bytes(32));
-        file_put_contents($this->aiReviewTokenPath(), $token . "\n");
+        file_put_contents($this->aiReviewTokenPath(), $this->crypto->encrypt($token));
+        @chmod($this->aiReviewTokenPath(), 0660);
         $this->audit((int)$user['id'], 'integration.ai_review_enabled', 'integration', null);
         $this->json(['enabled' => true, 'source' => 'local', 'token' => $token, 'endpoint' => $this->origin() . '/api/integrations/ai/review-notes']);
     }
@@ -4358,7 +4442,14 @@ final class App
     {
         $path = $this->aiReviewTokenPath();
         if (!is_file($path)) return '';
-        return trim((string)file_get_contents($path));
+        $stored = trim((string)file_get_contents($path));
+        if ($stored === '') return '';
+        // Tokens are stored AES-256-GCM encrypted; fall back to legacy plaintext files.
+        try {
+            return trim($this->crypto->decrypt($stored));
+        } catch (Throwable $e) {
+            return $stored;
+        }
     }
 
     private function aiReviewTokenPath(): string
@@ -4598,7 +4689,13 @@ final class App
     private function input(): array
     {
         if ($this->inputOverride !== null) return $this->inputOverride;
-        $raw = file_get_contents('php://input');
+        // Cap JSON bodies so a malicious client cannot exhaust memory. Multipart
+        // uploads use $_POST/$_FILES (governed by PHP upload limits), not this path.
+        $maxBytes = 20 * 1024 * 1024;
+        $declared = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
+        if ($declared > $maxBytes) throw new RuntimeException('Request body too large');
+        $raw = file_get_contents('php://input', false, null, 0, $maxBytes + 1);
+        if ($raw !== false && strlen($raw) > $maxBytes) throw new RuntimeException('Request body too large');
         return $raw ? (json_decode($raw, true) ?: []) : $_POST;
     }
 
@@ -4610,10 +4707,14 @@ final class App
 
     private function origin(): string
     {
+        // Prefer the operator-configured canonical URL; when set, the Host header is ignored entirely.
         if (Config::appUrl() !== '') return Config::appUrl();
         $scheme = $this->isSecureRequest() ? 'https' : 'http';
         $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
         if (!preg_match('/^[A-Za-z0-9._:-]+$/', $host)) throw new RuntimeException('Invalid host header');
+        // Optional allowlist so a spoofed Host header cannot poison generated links when APP_URL is unset.
+        $allowed = array_filter(array_map('trim', explode(',', strtolower((string)(getenv('DIVAULT_ALLOWED_HOSTS') ?: '')))));
+        if ($allowed && !in_array(strtolower($host), $allowed, true)) throw new RuntimeException('Host not allowed');
         return $scheme . '://' . $host;
     }
 

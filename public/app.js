@@ -433,6 +433,84 @@ function alertDialog({ title, message, confirmText = 'OK' }) {
   });
 }
 
+// Instant, low-friction quick note: a lightweight overlay that opens immediately
+// (no section change / full re-render) and saves through the offline-capable path.
+function openQuickCapture(prefill = '') {
+  if (!state.user) return;
+  if (document.querySelector('.quick-capture-modal')) return;
+  const modal = document.createElement('div');
+  modal.className = 'editor quick-capture-modal';
+  modal.innerHTML = `<section class="editor-panel quick-capture-panel">
+    <div class="quick-capture-head"><h2>Quick note</h2><span class="small muted" data-qc-status></span></div>
+    <form id="quickCaptureForm" class="stack">
+      <textarea name="body" class="quick-capture-body" placeholder="Jot something down…  (Ctrl/Cmd+Enter to save, Esc to close)" rows="6">${esc(prefill)}</textarea>
+      <div class="btn-row quick-capture-actions">
+        <button class="btn primary" type="submit">Save note</button>
+        <button class="btn ghost" type="button" data-open-full>Open full editor</button>
+        <button class="btn ghost" type="button" data-cancel>Cancel</button>
+      </div>
+    </form>
+  </section>`;
+  document.body.appendChild(modal);
+  setupAccessibleModal(modal, '.quick-capture-body');
+  const form = modal.querySelector('#quickCaptureForm');
+  const status = modal.querySelector('[data-qc-status]');
+  const textarea = modal.querySelector('.quick-capture-body');
+  modal.querySelector('[data-cancel]').addEventListener('click', () => modal.remove());
+  modal.querySelector('[data-open-full]').addEventListener('click', async () => {
+    const body = textarea.value;
+    modal.remove();
+    if (state.panel || !isNoteSection(state.section)) {
+      state.section = 'notes:all'; state.panel = ''; state.q = '';
+      syncSectionRoute();
+      await loadCurrentSectionWithFeedback();
+    }
+    openEditor(null, { mode: 'full', note: body ? { body } : {} });
+  });
+  textarea.addEventListener('keydown', event => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); form.requestSubmit(); }
+  });
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const body = String(textarea.value || '').trim();
+    if (!body) { modal.remove(); return; }
+    status.textContent = 'Saving…';
+    const outcome = await captureQuickNote(body);
+    if (outcome === 'fail') { status.textContent = 'Save failed — try again'; return; }
+    modal.remove();
+  });
+}
+
+function quickCaptureTitle(body) {
+  const first = String(body || '').split('\n').map(line => line.trim()).find(Boolean) || 'Quick note';
+  return first.length > 80 ? first.slice(0, 79) + '…' : first;
+}
+
+// Save a plain-text quick note (offline-capable). Returns 'ok' | 'queued' | 'fail'.
+async function captureQuickNote(body, { title = '', tags = '' } = {}) {
+  if (!state.user) return 'fail';
+  try {
+    const saved = await saveNoteRequest({
+      title: title || quickCaptureTitle(body), body: body || '', type: 'text', section: 'All',
+      category_id: '', category: '', tags, client_id: '', pinned: 0
+    }, 0);
+    if (saved.note && isNoteSection(state.section)) {
+      upsertNoteSummary(saved.note);
+      if (!state.active) refreshContentArea(renderNotesWorkspace());
+    }
+    toast(saved.offline ? 'Saved offline — will sync' : 'Quick note saved');
+    return saved.offline ? 'queued' : 'ok';
+  } catch (err) {
+    toast(err.message || 'Save failed');
+    return 'fail';
+  }
+}
+
+// Native bridge hooks (Android WebView). Shared text/quick-capture routes through the
+// offline-capable path so shares land even when signed-in but offline.
+window.divaultOpenQuickCapture = (prefill = '') => openQuickCapture(prefill || '');
+window.divaultCaptureShared = (title, body) => captureQuickNote(body || '', { title: title || '', tags: 'shared' });
+
 function openCommandCenter(initialQuery = '') {
   if (!state.user) return;
   const modal = document.createElement('div');
@@ -672,8 +750,12 @@ function clearSensitiveLocalData() {
     'divault_emergency_snapshot', 'qv_emergency_snapshot',
     'divault_pending_notes', 'qv_pending_notes',
     'divault_draft_note', 'qv_draft_note',
-    'divault_note_draft', 'qv_note_draft'
+    'divault_note_draft', 'qv_note_draft',
+    'divault_cached_user', 'divault_cached_features', 'divault_cached_categories'
   ].forEach(key => localStorage.removeItem(key));
+  // Wipe the offline note cache + outbox so a shared device can't leak notes across accounts.
+  if (offlineReady()) { outboxCountCache = 0; conflictedNotes.clear(); OFF.clearAll().catch(() => {}); }
+  window.divaultReady = false;
 }
 
 function canAdminSettings() {
@@ -878,13 +960,59 @@ async function applyRouteFromHash() {
   return true;
 }
 
+// Persist just enough of the session to boot straight into cached notes while offline.
+function persistSessionCache() {
+  try {
+    if (state.user) localStorage.setItem('divault_cached_user', JSON.stringify(state.user));
+    localStorage.setItem('divault_cached_features', JSON.stringify(state.features || defaultFeatures()));
+    localStorage.setItem('divault_cached_categories', JSON.stringify(state.categories || []));
+  } catch {}
+}
+
+function readSessionCache() {
+  try {
+    return {
+      user: JSON.parse(localStorage.getItem('divault_cached_user') || 'null'),
+      features: JSON.parse(localStorage.getItem('divault_cached_features') || 'null'),
+      categories: JSON.parse(localStorage.getItem('divault_cached_categories') || '[]')
+    };
+  } catch { return { user: null, features: null, categories: [] }; }
+}
+
+// When the network is down at launch but we have a cached session + cached notes,
+// open the app in offline mode instead of the emergency-only vault screen.
+async function offlineBoot() {
+  if (!offlineReady()) return false;
+  const cache = readSessionCache();
+  if (!cache.user) return false;
+  const cachedNotes = await OFF.getCachedNotes();
+  if (!cachedNotes.length && !(await OFF.outboxCount())) return false;
+  state.user = cache.user;
+  state.features = cache.features || defaultFeatures();
+  state.categories = cache.categories || [];
+  state.clients = [];
+  state.calendars = [];
+  // Notes, calendar and tasks all render from cache offline; anything else falls back to notes.
+  if (!isNoteSection(state.section) && state.section !== 'calendar' && state.section !== 'tasks') state.section = 'notes:all';
+  await refreshOutboxCount();
+  try { await loadCurrentSection(); } catch {}
+  renderApp();
+  window.divaultReady = true;
+  window.addEventListener('hashchange', applyRouteFromHash);
+  startSyncLoop();
+  toast('Offline — showing your cached notes');
+  return true;
+}
+
 async function boot() {
   loadEmergencySnapshot();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').then(reg => reg.update()).catch(() => {});
+  if (offlineReady()) await OFF.ready();
   let bootInfo;
   try {
     bootInfo = await api('/bootstrap');
   } catch (err) {
+    if (isNetworkError(err) && await offlineBoot()) return;
     return renderOfflineVault(err);
   }
   state.desktop = Boolean(bootInfo.desktop);
@@ -892,13 +1020,16 @@ async function boot() {
   try {
     const me = await api('/me');
       state.user = me.user;
+      persistSessionCache();
       await loadAll();
       await applyRouteFromHash();
       syncSectionRoute({ replace: true });
       renderApp();
+      window.divaultReady = true;
       window.addEventListener('hashchange', applyRouteFromHash);
       startSyncLoop();
-  } catch {
+  } catch (err) {
+    if (isNetworkError(err) && await offlineBoot()) return;
     renderLogin();
   }
 }
@@ -1033,6 +1164,7 @@ async function loadAll() {
   state.clients = clients.clients;
   state.categories = categories.categories;
   state.features = features.features || defaultFeatures();
+  persistSessionCache();
   if (featureOn('calendar') || featureOn('tasks')) state.calendars = (await api('/calendars').catch(() => ({ calendars: [] }))).calendars || [];
   if (featureOn('calendar') || featureOn('tasks')) await loadNotificationData();
   if (state.clientId && !state.clients.some(client => String(client.id) === String(state.clientId))) {
@@ -1277,21 +1409,439 @@ function addPendingNote(note) {
   savePendingNotes(notes);
 }
 
-async function syncPendingNotes() {
-  const pending = loadPendingNotes();
-  if (!pending.length || !state.user) return 0;
-  const remaining = [];
-  for (const note of pending) {
+// ---- Offline-first engine -------------------------------------------------
+// Storage/queue lives in offline.js (window.DiVaultOffline). This layer wires
+// it into the network layer, state, and the sync loop.
+const OFF = window.DiVaultOffline || null;
+function offlineReady() { return !!(OFF && OFF.available); }
+
+// A save/read failed because the network is unreachable (offline, server down,
+// DNS) rather than the server actively rejecting the request. fetch() rejects
+// with a TypeError on network failure; HTTP 4xx/5xx surface as Error via api().
+function isNetworkError(err) {
+  return !navigator.onLine || err instanceof TypeError || /Failed to fetch|NetworkError|Load failed/i.test(err?.message || '');
+}
+
+// Notes edited/created offline are surfaced in the outbox; keep the sync pill honest.
+let outboxCountCache = 0;
+async function refreshOutboxCount() {
+  if (!offlineReady()) { outboxCountCache = 0; return 0; }
+  outboxCountCache = await OFF.outboxCount();
+  updateSyncStatus();
+  return outboxCountCache;
+}
+
+const conflictedNotes = new Set();
+function registerConflict(row) {
+  const id = row.entity_id || row.local_id;
+  if (id) conflictedNotes.add(Number(id));
+}
+
+// Build a note-list summary (state.notes / IndexedDB shape) from editor form data.
+function offlineNoteSummary(data, id, prev) {
+  const now = new Date().toISOString();
+  const category = state.categories.find(c => String(c.id) === String(data.category_id || ''));
+  return {
+    ...prev,
+    id,
+    title: data.title || '',
+    body: data.body || '',
+    type: data.type || prev.type || 'text',
+    section: data.section || prev.section || 'All',
+    category_id: data.category_id ? Number(data.category_id) : null,
+    category_name: category ? category.name : (prev.category_name || ''),
+    tags: data.tags || '',
+    pinned: Number(data.pinned) ? 1 : 0,
+    archived: Number(data.archived) ? 1 : (Number(prev.archived) ? 1 : 0),
+    deleted: 0,
+    created_at: prev.created_at || now,
+    updated_at: now,
+    file_count: prev.file_count || 0,
+    secret_count: prev.secret_count || 0,
+    offline_pending: 1
+  };
+}
+
+// Persist a note edit locally and queue it for the next sync. Returns the same
+// shape saveInlineNote expects from a successful POST, plus { offline, detail }.
+async function saveNoteOffline(data, currentId) {
+  const existingId = Number(currentId || data.id || 0);
+  let id = existingId;
+  let localId = null;
+  if (!id) { id = await OFF.nextTempId(); localId = id; }
+  else if (OFF.isTempId(id)) { localId = id; }
+
+  const prevSummary = state.notes.find(n => Number(n.id) === id)
+    || (state.activeExtra?.note && Number(state.activeExtra.note.id) === id ? state.activeExtra.note : null)
+    || {};
+  const note = offlineNoteSummary(data, id, prevSummary);
+  const record = {
+    title: note.title, body: note.body, type: note.type, section: note.section,
+    category_id: note.category_id || '', category: data.category || '',
+    tags: note.tags, client_id: data.client_id || '', pinned: note.pinned, archived: note.archived
+  };
+  if (!OFF.isTempId(id)) record.id = id;
+
+  await OFF.enqueue({
+    entity_type: 'note', action: 'upsert',
+    entity_id: OFF.isTempId(id) ? 0 : id,
+    local_id: localId,
+    base_updated_at: prevSummary.updated_at || '',
+    record
+  });
+
+  const prevFiles = (state.activeExtra?.note && Number(state.activeExtra.note.id) === id ? state.activeExtra.files : []) || [];
+  const detail = { note, files: prevFiles, secrets: [], versions: [] };
+  await OFF.cacheNote(note);
+  await OFF.cacheNoteDetail(detail);
+  await refreshOutboxCount();
+  return { id, note, detail, offline: true };
+}
+
+// Save through the server when possible, transparently falling back to the outbox.
+async function saveNoteRequest(data, currentId) {
+  try {
+    const saved = await api('/notes', { method: 'POST', body: data });
+    if (offlineReady() && saved.note) OFF.cacheNote(saved.note);
+    return saved;
+  } catch (err) {
+    if (!offlineReady() || !isNetworkError(err)) throw err;
+    return saveNoteOffline(data, currentId);
+  }
+}
+
+// Read a note's full detail, caching online results and falling back to cache offline.
+async function fetchNoteDetail(id) {
+  if (offlineReady() && OFF.isTempId(id)) {
+    const cached = await OFF.getCachedNoteDetail(id);
+    if (cached) return cached;
+  }
+  try {
+    const detail = await api('/notes/' + id);
+    if (offlineReady()) OFF.cacheNoteDetail(detail);
+    return detail;
+  } catch (err) {
+    if (!offlineReady() || !isNetworkError(err)) throw err;
+    const cached = await OFF.getCachedNoteDetail(id);
+    if (cached) return cached;
+    throw err;
+  }
+}
+
+// Filter/sort cached notes to mirror the server's /notes list for offline browsing.
+async function loadNotesFromCache(opts) {
+  const all = await OFF.getCachedNotes();
+  const view = opts.view;
+  let notes = all.filter(n => {
+    const archived = !!Number(n.archived);
+    const deleted = !!Number(n.deleted);
+    if (view === 'trash') return deleted;
+    if (deleted) return false;
+    if (view === 'archive') return archived;
+    if (archived) return false;
+    if (view === 'quick') return !n.category_id;
+    return true;
+  });
+  if (opts.categoryId) notes = notes.filter(n => String(n.category_id || '') === String(opts.categoryId));
+  const q = (opts.query?.text || '').toLowerCase();
+  if (q) notes = notes.filter(n => (`${n.title || ''} ${n.body || ''}`).toLowerCase().includes(q));
+  (opts.query?.filters || []).forEach(filter => {
+    if (filter === 'pinned') notes = notes.filter(n => Number(n.pinned));
+    if (filter === 'has_file') notes = notes.filter(n => Number(n.file_count));
+    if (filter === 'has_secret') notes = notes.filter(n => Number(n.secret_count));
+    if (filter === 'has_code') notes = notes.filter(n => String(n.type) === 'code' || String(n.body || '').includes('```'));
+  });
+  const sort = currentNoteSort();
+  notes.sort((a, b) => {
+    if (Number(a.pinned) !== Number(b.pinned)) return Number(b.pinned) - Number(a.pinned);
+    if (sort === 'title_asc') return String(a.title || '').localeCompare(String(b.title || ''));
+    if (sort === 'title_desc') return String(b.title || '').localeCompare(String(a.title || ''));
+    const dateA = new Date(normalizeDate(sort.startsWith('created') ? a.created_at : a.updated_at)).getTime() || 0;
+    const dateB = new Date(normalizeDate(sort.startsWith('created') ? b.created_at : b.updated_at)).getTime() || 0;
+    return sort.endsWith('asc') ? dateA - dateB : dateB - dateA;
+  });
+  const limit = currentNoteLimit();
+  return { notes: notes.slice(0, limit), has_more: notes.length > limit, total: notes.length, offline: true };
+}
+
+// Queue an archive/delete/restore for a note when offline. Returns true if handled.
+async function queueNoteStatusOffline(id, action) {
+  if (navigator.onLine || !offlineReady()) return false;
+  const numId = Number(id);
+  const cached = (await OFF.getCachedNotes()).find(n => Number(n.id) === numId)
+    || state.notes.find(n => Number(n.id) === numId) || null;
+  if (OFF.isTempId(numId) && action === 'delete') {
+    // A note that never reached the server: drop it and its queued mutations entirely.
+    await OFF.removeOutboxForNote(numId);
+    await OFF.removeCachedNote(numId);
+    state.notes = state.notes.filter(n => Number(n.id) !== numId);
+    await refreshOutboxCount();
+    return true;
+  }
+  await OFF.enqueue({
+    entity_type: 'note', action,
+    entity_id: OFF.isTempId(numId) ? 0 : numId,
+    local_id: OFF.isTempId(numId) ? numId : null,
+    base_updated_at: cached?.updated_at || '',
+    record: {}
+  });
+  const patch = action === 'archive' ? { archived: 1, deleted: 0 }
+    : action === 'delete' ? { deleted: 1 }
+    : action === 'restore' ? { archived: 0, deleted: 0 } : {};
+  if (cached) await OFF.cacheNote({ ...cached, ...patch, offline_pending: 1 });
+  await refreshOutboxCount();
+  return true;
+}
+
+// Drain the outbox through the idempotent /api/sync/push endpoint.
+async function flushOutbox() {
+  if (!offlineReady() || !state.user || !navigator.onLine) return 0;
+  const outbox = await OFF.getOutbox();
+  const pending = outbox.filter(row => !row.conflict);
+  if (!pending.length) return 0;
+  const clientId = await OFF.getSyncClientId();
+  let applied = 0;
+  let conflicts = 0;
+  for (let i = 0; i < pending.length; i += 100) {
+    const batch = pending.slice(i, i + 100);
+    let res;
     try {
-      await api('/notes', { method: 'POST', body: { title: note.title || 'Offline note', body: note.body || '', type: 'text', section: 'All', category_id: note.category_id || '', category: '', tags: 'offline-capture', client_id: '' } });
-    } catch {
-      remaining.push(note);
+      res = await api('/sync/push', { method: 'POST', body: { client_id: clientId, mutations: batch.map(toPushMutation) } });
+    } catch (err) {
+      break; // network hiccup — leave the queue intact and retry on the next loop
+    }
+    const results = res.results || [];
+    for (let j = 0; j < batch.length; j++) {
+      const row = batch[j];
+      const result = results[j] || {};
+      if (result.status === 'conflict') {
+        await resolveConflictKeepBoth(row, result.server);
+        await OFF.removeMutation(row.mutation_id);
+        conflicts++;
+      } else if (result.status === 'applied' || result.duplicate) {
+        await reconcileMutation(row, result);
+        await OFF.removeMutation(row.mutation_id);
+        applied++;
+      } else {
+        row.attempts = (row.attempts || 0) + 1;
+        await OFF.putMutation(row);
+      }
     }
   }
-  savePendingNotes(remaining);
-  const synced = pending.length - remaining.length;
-  if (synced) toast(`Synced ${synced} offline note${synced === 1 ? '' : 's'}`);
-  return synced;
+  await refreshOutboxCount();
+  if (applied) toast(`Synced ${applied} offline change${applied === 1 ? '' : 's'}`);
+  if (conflicts) toast(`${conflicts} item${conflicts === 1 ? '' : 's'} changed on another device — kept both copies`);
+  return applied + conflicts;
+}
+
+// Non-destructive conflict resolution: keep the server version canonical and
+// preserve the user's divergent offline edit as a new "(offline copy)" so
+// nothing is ever silently overwritten, and the queue never wedges on a conflict.
+async function resolveConflictKeepBoth(row, serverNote) {
+  if (row.entity_type === 'task') return resolveTaskConflictKeepBoth(row, serverNote);
+  if (serverNote && serverNote.id != null) {
+    const summary = { ...serverNote, offline_pending: 0 };
+    await OFF.cacheNote(summary);
+    const idx = state.notes.findIndex(n => Number(n.id) === Number(serverNote.id));
+    if (idx >= 0) state.notes[idx] = { ...state.notes[idx], ...summary };
+    await OFF.cacheNoteDetail({ note: summary, files: [], secrets: [], versions: [] });
+  }
+  // Only content edits are worth preserving as a copy; a losing archive/delete just yields to the server.
+  const rec = row.record || {};
+  if (row.action !== 'upsert' || !String(rec.body || '').trim()) return;
+  const tempId = await OFF.nextTempId();
+  await OFF.enqueue({
+    entity_type: 'note', action: 'upsert', entity_id: 0, local_id: tempId, base_updated_at: '',
+    record: { title: `${rec.title || 'Note'} (offline copy)`, body: rec.body || '', type: rec.type || 'text', section: rec.section || 'All', category_id: rec.category_id || '', tags: rec.tags || '', pinned: rec.pinned || 0 }
+  });
+}
+
+function toPushMutation(row) {
+  return {
+    mutation_id: row.mutation_id,
+    entity_type: row.entity_type || 'note',
+    action: row.action,
+    entity_id: row.entity_id || 0,
+    base_updated_at: row.base_updated_at || '',
+    record: row.record || {}
+  };
+}
+
+// Map a temp id to its server id after a successful push, updating cache + state.
+async function reconcileMutation(row, result) {
+  if (row.entity_type === 'task') return reconcileTaskMutation(row, result);
+  const serverNote = result.record || null;
+  if (row.local_id != null && OFF.isTempId(row.local_id) && serverNote && serverNote.id != null) {
+    const realId = Number(serverNote.id);
+    const tempId = Number(row.local_id);
+    const summary = { ...(state.notes.find(n => Number(n.id) === tempId) || {}), ...serverNote, id: realId, offline_pending: 0 };
+    await OFF.remapNoteId(tempId, realId, summary, { note: summary, files: [], secrets: [], versions: [] });
+    await OFF.reassignOutboxEntityId(tempId, realId);
+    const idx = state.notes.findIndex(n => Number(n.id) === tempId);
+    if (idx >= 0) state.notes[idx] = summary;
+    if (state.active && Number(state.active.id) === tempId) state.active = { ...state.active, ...summary };
+    if (state.activeExtra?.note && Number(state.activeExtra.note.id) === tempId) state.activeExtra.note = { ...state.activeExtra.note, ...summary };
+    const modal = document.querySelector('[data-inline-editor][data-editing="1"]');
+    if (modal && Number(modal.dataset.autosaveNoteId) === tempId) modal.dataset.autosaveNoteId = String(realId);
+  } else if (serverNote) {
+    const summary = { ...(state.notes.find(n => Number(n.id) === Number(serverNote.id)) || {}), ...serverNote, offline_pending: 0 };
+    await OFF.cacheNote(summary);
+    const idx = state.notes.findIndex(n => Number(n.id) === Number(serverNote.id));
+    if (idx >= 0) state.notes[idx] = summary;
+  }
+}
+
+// ---- Offline tasks --------------------------------------------------------
+
+function upsertTaskInState(row) {
+  const idx = state.tasks.findIndex(t => Number(t.id) === Number(row.id));
+  if (idx >= 0) state.tasks[idx] = { ...state.tasks[idx], ...row };
+  else state.tasks.unshift(row);
+}
+
+function offlineTaskRow(data, id, prev) {
+  const now = new Date().toISOString();
+  const calId = data.calendar_id !== undefined && data.calendar_id !== '' ? Number(data.calendar_id) : (prev.calendar_id != null ? prev.calendar_id : null);
+  const cal = state.calendars.find(c => String(c.id) === String(calId));
+  const priv = data.shared !== undefined ? (data.shared ? 0 : 1) : (prev.private != null ? Number(prev.private) : 1);
+  const status = ['open', 'done'].includes(data.status) ? data.status : (prev.status || 'open');
+  return {
+    ...prev, id, calendar_id: calId,
+    title: data.title || prev.title || 'Untitled task',
+    description: data.description != null ? data.description : (prev.description || ''),
+    location: data.location != null ? data.location : (prev.location || ''),
+    status, priority: Number(data.priority != null ? data.priority : (prev.priority || 0)),
+    due_at: data.due_at || prev.due_at || null,
+    completed_at: status === 'done' ? (prev.completed_at || now) : null,
+    private: priv,
+    calendar_name: cal ? cal.name : (prev.calendar_name || ''),
+    calendar_color: cal ? cal.color : (prev.calendar_color || ''),
+    created_at: prev.created_at || now, updated_at: now, offline_pending: 1
+  };
+}
+
+async function saveTaskOffline(data, id) {
+  let useId = Number(id || 0);
+  let tempId = null;
+  if (!useId) { useId = await OFF.nextTempId(); tempId = useId; }
+  else if (OFF.isTempId(useId)) { tempId = useId; }
+  const prev = state.tasks.find(t => Number(t.id) === useId) || {};
+  const row = offlineTaskRow(data, useId, prev);
+  const record = {
+    title: row.title, description: row.description, location: row.location, status: row.status,
+    priority: row.priority, due_at: row.due_at || '', calendar_id: row.calendar_id || '', shared: row.private === 0
+  };
+  if (!OFF.isTempId(useId)) record.id = useId;
+  await OFF.enqueue({ entity_type: 'task', action: 'upsert', entity_id: OFF.isTempId(useId) ? 0 : useId, local_id: tempId, base_updated_at: prev.updated_at || '', record });
+  await OFF.putCollectionItem('tasks', row);
+  upsertTaskInState(row);
+  await refreshOutboxCount();
+  return { task: row, offline: true };
+}
+
+// Offline-capable task create/update. `id` is 0 for a new task.
+async function saveTaskRequest(data, id) {
+  if (id && offlineReady() && OFF.isTempId(id)) return saveTaskOffline(data, id);
+  try {
+    const res = await api(id ? `/tasks/${id}` : '/tasks', { method: id ? 'PATCH' : 'POST', body: data });
+    if (offlineReady() && res.task) OFF.putCollectionItem('tasks', res.task);
+    return { task: res.task, offline: false };
+  } catch (err) {
+    if (!offlineReady() || !isNetworkError(err)) throw err;
+    return saveTaskOffline(data, id);
+  }
+}
+
+async function deleteTaskRequest(id) {
+  const numId = Number(id);
+  if (offlineReady() && OFF.isTempId(numId)) {
+    await OFF.removeOutboxForNote(numId);
+    await OFF.deleteCollectionItem('tasks', numId);
+    state.tasks = state.tasks.filter(t => Number(t.id) !== numId);
+    await refreshOutboxCount();
+    return { offline: true };
+  }
+  try {
+    await api(`/tasks/${numId}`, { method: 'DELETE' });
+    if (offlineReady()) OFF.deleteCollectionItem('tasks', numId);
+    return { offline: false };
+  } catch (err) {
+    if (!offlineReady() || !isNetworkError(err)) throw err;
+    const prev = state.tasks.find(t => Number(t.id) === numId) || {};
+    await OFF.enqueue({ entity_type: 'task', action: 'delete', entity_id: numId, local_id: null, base_updated_at: prev.updated_at || '', record: {} });
+    await OFF.deleteCollectionItem('tasks', numId);
+    state.tasks = state.tasks.filter(t => Number(t.id) !== numId);
+    await refreshOutboxCount();
+    return { offline: true };
+  }
+}
+
+async function reconcileTaskMutation(row, result) {
+  if (row.action === 'delete') return;
+  const server = result.record || null;
+  if (!server || server.id == null) return;
+  if (row.local_id != null && OFF.isTempId(row.local_id)) {
+    const realId = Number(server.id);
+    const tempId = Number(row.local_id);
+    const merged = { ...(state.tasks.find(t => Number(t.id) === tempId) || {}), ...server, id: realId, offline_pending: 0 };
+    await OFF.remapCollectionId('tasks', tempId, realId, merged);
+    await OFF.reassignOutboxEntityId(tempId, realId);
+    const idx = state.tasks.findIndex(t => Number(t.id) === tempId);
+    if (idx >= 0) state.tasks[idx] = merged;
+  } else {
+    const merged = { ...(state.tasks.find(t => Number(t.id) === Number(server.id)) || {}), ...server, offline_pending: 0 };
+    await OFF.putCollectionItem('tasks', merged);
+    const idx = state.tasks.findIndex(t => Number(t.id) === Number(server.id));
+    if (idx >= 0) state.tasks[idx] = merged;
+  }
+}
+
+async function resolveTaskConflictKeepBoth(row, serverTask) {
+  if (serverTask && serverTask.id != null) {
+    const merged = { ...serverTask, offline_pending: 0 };
+    await OFF.putCollectionItem('tasks', merged);
+    const idx = state.tasks.findIndex(t => Number(t.id) === Number(serverTask.id));
+    if (idx >= 0) state.tasks[idx] = { ...state.tasks[idx], ...merged };
+  }
+  const rec = row.record || {};
+  if (row.action !== 'upsert' || !String(rec.title || '').trim()) return;
+  const tempId = await OFF.nextTempId();
+  await OFF.enqueue({
+    entity_type: 'task', action: 'upsert', entity_id: 0, local_id: tempId, base_updated_at: '',
+    record: { ...rec, id: undefined, title: `${rec.title || 'Task'} (offline copy)` }
+  });
+}
+
+// Load calendar collections online with offline cache fallback.
+async function loadCollectionCached(name, path, key, { cache = true } = {}) {
+  try {
+    const res = await api(path);
+    const items = res[key] || [];
+    if (cache && offlineReady() && Array.isArray(items)) OFF.cacheCollection(name, items);
+    return items;
+  } catch (err) {
+    if (offlineReady() && isNetworkError(err)) return OFF.getCollection(name);
+    return [];
+  }
+}
+
+// Legacy localStorage capture (boot-failure vault, Android share) → durable outbox → push.
+async function syncPendingNotes() {
+  if (!state.user) return 0;
+  if (offlineReady()) {
+    const legacy = loadPendingNotes();
+    if (legacy.length) {
+      for (const note of legacy) {
+        const id = await OFF.nextTempId();
+        await OFF.enqueue({
+          entity_type: 'note', action: 'upsert', entity_id: 0, local_id: id, base_updated_at: '',
+          record: { title: note.title || 'Offline note', body: note.body || '', type: 'text', section: note.section || 'All', category_id: note.category_id || '', tags: note.tags || 'offline-capture' }
+        });
+      }
+      savePendingNotes([]);
+    }
+  }
+  return flushOutbox();
 }
 
 async function downloadEmergencySnapshot() {
@@ -1351,8 +1901,11 @@ function renderOfflineVault(err, unlockedSnapshot = null) {
 }
 
 function syncLabel() {
-  if (!navigator.onLine) return 'Offline';
+  const pending = outboxCountCache;
+  if (!navigator.onLine) return pending ? `Offline · ${pending} to sync` : 'Offline';
   if (state.syncing) return 'Syncing...';
+  if (pending) return `${pending} to sync`;
+  if (conflictedNotes.size) return 'Sync conflict';
   if (!state.lastSyncedAt) return 'Sync ready';
   return `Synced ${state.lastSyncedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
 }
@@ -1362,6 +1915,8 @@ function updateSyncStatus() {
     el.textContent = syncLabel();
     el.classList.toggle('offline', !navigator.onLine);
     el.classList.toggle('syncing', state.syncing);
+    el.classList.toggle('pending', outboxCountCache > 0 && navigator.onLine);
+    el.classList.toggle('conflict', conflictedNotes.size > 0);
   });
 }
 
@@ -1415,8 +1970,13 @@ function startSyncLoop() {
     e.returnValue = '';
   });
   window.addEventListener('focus', () => scheduleRefreshFromServer());
-  window.addEventListener('online', () => scheduleRefreshFromServer({ quiet: false, full: true, force: true }));
-  window.addEventListener('offline', updateSyncStatus);
+  window.addEventListener('online', () => {
+    // Drain queued edits immediately on reconnect, even if an editor is open
+    // (the debounced refresh is skipped while editing).
+    flushOutbox().then(synced => { if (synced) refreshFromServer({ full: true, force: true }); }).catch(() => {});
+    scheduleRefreshFromServer({ quiet: false, full: true, force: true });
+  });
+  window.addEventListener('offline', () => { refreshOutboxCount(); updateSyncStatus(); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleRefreshFromServer(); });
   state.syncTimer = setInterval(() => refreshFromServer(), 90000);
 }
@@ -1431,7 +1991,7 @@ async function loadCurrentSection() {
     return;
   }
   if (state.section === 'tasks') {
-    state.tasks = (await api('/tasks?view=all').catch(() => ({ tasks: [] }))).tasks || [];
+    state.tasks = await loadCollectionCached('tasks', '/tasks?view=all', 'tasks');
     return;
   }
   if (state.section === 'drive') {
@@ -1507,15 +2067,16 @@ async function loadHomeData() {
 }
 
 async function loadCalendarData() {
-  state.calendars = (await api('/calendars').catch(() => ({ calendars: state.calendars || [] }))).calendars || [];
+  state.calendars = await loadCollectionCached('calendars', '/calendars', 'calendars');
   const search = calendarSearchTerm();
   if (search) {
+    // Don't overwrite the offline cache with a narrow search subset.
     const [first, last] = calendarSearchRange();
     const eventParams = new URLSearchParams({ q: search, start: first.toISOString(), end: last.toISOString() });
-    state.events = (await api('/events?' + eventParams).catch(() => ({ events: [] }))).events || [];
+    state.events = await loadCollectionCached('events', '/events?' + eventParams, 'events', { cache: false });
     if (featureOn('tasks')) {
       const taskParams = new URLSearchParams({ view: 'all', q: search });
-      state.tasks = (await api('/tasks?' + taskParams).catch(() => ({ tasks: [] }))).tasks || [];
+      state.tasks = await loadCollectionCached('tasks', '/tasks?' + taskParams, 'tasks', { cache: false });
     }
     return;
   }
@@ -1525,8 +2086,8 @@ async function loadCalendarData() {
   const first = visibleFirst < miniFirst ? visibleFirst : miniFirst;
   const last = visibleLast > miniLast ? visibleLast : miniLast;
   const params = new URLSearchParams({ start: first.toISOString(), end: last.toISOString() });
-  state.events = (await api('/events?' + params).catch(() => ({ events: [] }))).events || [];
-  if (featureOn('tasks')) state.tasks = (await api('/tasks?view=all').catch(() => ({ tasks: [] }))).tasks || [];
+  state.events = await loadCollectionCached('events', '/events?' + params, 'events');
+  if (featureOn('tasks')) state.tasks = await loadCollectionCached('tasks', '/tasks?view=all', 'tasks');
 }
 
 function calendarSearchTerm() {
@@ -1575,7 +2136,14 @@ async function loadNotes(options = {}) {
   params.set('sort', currentNoteSort());
   params.set('limit', String(options.limit || currentNoteLimit()));
   query.filters.forEach(filter => params.set(filter, '1'));
-  return api('/notes?' + params);
+  try {
+    const res = await api('/notes?' + params);
+    if (offlineReady() && Array.isArray(res.notes)) OFF.cacheNotes(res.notes);
+    return res;
+  } catch (err) {
+    if (!offlineReady() || !isNetworkError(err)) throw err;
+    return loadNotesFromCache({ view: noteView(), categoryId, query });
+  }
 }
 
 function parseNoteSearch(value) {
@@ -1779,15 +2347,16 @@ async function toggleTaskStatus(task, after = async () => {}) {
   const previousStatus = task.status || 'open';
   const status = task.status === 'done' ? 'open' : 'done';
   await runUserAction(async () => {
-    await api(`/tasks/${task.id}`, { method: 'PATCH', body: { ...task, status, shared: Number(task.private) === 0 } });
+    const res = await saveTaskRequest({ ...task, status, shared: Number(task.private) === 0 }, task.id);
     await after(status);
-    toast(status === 'done' ? 'Task completed' : 'Task reopened', { actionLabel: 'Undo', onAction: () => undoTaskStatus(task, previousStatus, after) });
+    const label = status === 'done' ? 'Task completed' : 'Task reopened';
+    toast(res.offline ? `${label} (offline)` : label, { actionLabel: 'Undo', onAction: () => undoTaskStatus(task, previousStatus, after) });
   }, 'Task update failed');
 }
 
 async function undoTaskStatus(task, status, after = async () => {}) {
   await runUserAction(async () => {
-    await api(`/tasks/${task.id}`, { method: 'PATCH', body: { ...task, status, shared: Number(task.private) === 0 } });
+    await saveTaskRequest({ ...task, status, shared: Number(task.private) === 0 }, task.id);
     await after(status);
     toast('Undo complete');
   }, 'Undo failed');
@@ -1908,6 +2477,28 @@ function refreshContentArea(html) {
   if (!content) return;
   content.innerHTML = html;
   bindContentActions();
+}
+
+// Like refreshContentArea, but keeps the currently-focused field focused with its
+// caret and live value intact across the DOM swap — so typing in search/inline
+// fields doesn't drop focus (which on mobile closes the keyboard on every keystroke).
+function refreshContentKeepingFocus(html) {
+  const active = document.activeElement;
+  const focusId = active && active.id ? active.id : '';
+  const isField = active && 'selectionStart' in active;
+  const value = isField ? active.value : null;
+  const selStart = isField ? active.selectionStart : null;
+  const selEnd = isField ? active.selectionEnd : null;
+  const content = document.querySelector('#contentArea');
+  if (!content) return;
+  content.innerHTML = html;
+  bindContentActions();
+  if (!focusId) return;
+  const next = document.getElementById(focusId);
+  if (!next) return;
+  next.focus({ preventScroll: true });
+  if (value != null && 'value' in next && next.value !== value) next.value = value;
+  if (selStart != null && next.setSelectionRange) { try { next.setSelectionRange(selStart, selEnd); } catch {} }
 }
 
 function toggleNoteSelection(id) {
@@ -2553,17 +3144,7 @@ function bindApp() {
     await loadCurrentSectionWithFeedback();
   }));
   bindNoteDropTargets();
-  document.querySelector('#quickNotesBtn')?.addEventListener('click', async () => {
-    if (!await confirmDiscardUnsaved()) return;
-    if (state.panel || !['notes:all', 'notes:quick'].includes(state.section)) {
-      state.section = 'notes:all';
-      syncSectionRoute();
-      state.panel = '';
-      state.q = '';
-      await loadCurrentSectionWithFeedback();
-    }
-    openEditor(null, { mode: 'quick' });
-  });
+  document.querySelectorAll('#quickNotesBtn').forEach(btn => btn.addEventListener('click', () => openQuickCapture()));
   document.querySelector('#newBtn')?.addEventListener('click', async () => {
     if (!await confirmDiscardUnsaved()) return;
     if (state.panel || !isNoteSection(state.section)) {
@@ -2645,8 +3226,7 @@ function bindApp() {
     state.selectionMode = false;
     state.selectedNoteIds.clear();
     await loadCurrentSection();
-    document.querySelector('#contentArea').innerHTML = renderMainContent();
-    bindContentActions();
+    refreshContentKeepingFocus(renderMainContent());
   }, 240));
   document.querySelectorAll('[data-note-filter-token]').forEach(btn => btn.addEventListener('click', async () => {
     state.q = toggleNoteSearchToken(state.q, btn.dataset.noteFilterToken || '');
@@ -4303,18 +4883,22 @@ async function openTaskDialog(task = {}) {
     data.shared = Boolean(data.shared);
     data.status = task.status || 'open';
     await runUserAction(async () => {
-      await api(task.id ? `/tasks/${task.id}` : '/tasks', { method: task.id ? 'PATCH' : 'POST', body: data });
+      const res = await saveTaskRequest(data, task.id || 0);
       modal.remove();
       await loadCurrentSection();
       renderApp();
+      if (res.offline) toast('Saved offline — will sync');
     }, 'Task save failed');
   });
   modal.querySelector('#deleteTaskBtn')?.addEventListener('click', async () => {
     if (!await confirmDialog({ title: 'Delete task?', message: 'Delete this task?', confirmText: 'Delete' })) return;
-    await api(`/tasks/${task.id}`, { method: 'DELETE' });
-    modal.remove();
-    await loadCurrentSection();
-    renderApp();
+    await runUserAction(async () => {
+      const res = await deleteTaskRequest(task.id);
+      modal.remove();
+      await loadCurrentSection();
+      renderApp();
+      if (res.offline) toast('Deleted offline — will sync');
+    }, 'Task delete failed');
   });
 }
 
@@ -4413,7 +4997,7 @@ async function moveNoteToCategory(id, categoryId) {
 
 async function moveNotesToCategory(ids, categoryId) {
   for (const id of ids) {
-  const details = await api('/notes/' + id);
+  const details = await fetchNoteDetail(id);
   const note = details.note;
   await api('/notes', { method: 'POST', body: { id, title: note.title, body: note.body, type: note.type, section: 'All', category_id: categoryId, category: note.category || '', tags: note.tags || '', client_id: note.client_id || '', pinned: Number(note.pinned) ? 1 : 0 } });
   }
@@ -5236,7 +5820,7 @@ async function openEditor(id = null, options = {}) {
   state.newNoteMode = id ? 'full' : (options.mode || 'full');
   if (!id) clearDraftNote();
   state.active = id ? state.notes.find(n => Number(n.id) === id) : { ...emptyDraftNote(), ...noteTemplate(options.template), ...(options.note || {}) };
-  state.activeExtra = id ? await api('/notes/' + id) : { files: [], secrets: [], versions: [] };
+  state.activeExtra = id ? await fetchNoteDetail(id) : { files: [], secrets: [], versions: [] };
   if (id && state.activeExtra?.note) {
     state.active = state.notes.find(n => Number(n.id) === id) || state.activeExtra.note;
   }
@@ -5410,10 +5994,11 @@ async function saveInlineNote(modal, initialId = null, { autosave = false } = {}
   modal.dataset.autosaveQueued = '0';
   if (status) status.textContent = autosave ? 'Autosaving...' : 'Saving...';
   try {
-    const saved = await api('/notes', { method: 'POST', body: data });
+    const saved = await saveNoteRequest(data, currentId || initialId);
     const savedId = Number(saved.id || currentId || initialId || 0);
     if (savedId) modal.dataset.autosaveNoteId = String(savedId);
-    if (savedId && state.pendingAttachments.length) {
+    // Attachment upload requires the server; offline notes upload their queued files after they sync.
+    if (savedId && state.pendingAttachments.length && !saved.offline) {
       await uploadAttachments(savedId, state.pendingAttachments);
       state.pendingAttachments = [];
       const pending = modal.querySelector('#pendingAttachments');
@@ -5429,12 +6014,17 @@ async function saveInlineNote(modal, initialId = null, { autosave = false } = {}
         state.noteTotal = Number(notes.total || state.notes.length);
       }
       state.active = state.notes.find(n => Number(n.id) === savedId) || state.active;
-      if (!autosave || hadAttachments || !state.activeExtra?.note || Number(state.activeExtra.note.id) !== savedId) state.activeExtra = await api('/notes/' + savedId);
+      if (saved.offline) state.activeExtra = saved.detail || state.activeExtra;
+      else if (!autosave || hadAttachments || !state.activeExtra?.note || Number(state.activeExtra.note.id) !== savedId) state.activeExtra = await fetchNoteDetail(savedId);
       else state.activeExtra = { ...state.activeExtra, note: { ...state.activeExtra.note, ...saved.note, id: savedId, title: data.title, body: data.body, pinned: data.pinned } };
     }
     if (editorDirtySignature(modal) === submittedSignature) modal.dataset.dirtyBaseline = submittedSignature;
     else modal.dataset.autosaveQueued = '1';
-    if (status) status.textContent = `${autosave ? 'Autosaved' : 'Saved'} ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`;
+    if (status) {
+      const stamp = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      const verb = autosave ? 'Autosaved' : 'Saved';
+      status.textContent = saved.offline ? `${verb} offline · will sync ${stamp}.` : `${verb} ${stamp}.`;
+    }
     return savedId;
   } catch (err) {
     if (status) status.textContent = autosave ? 'Autosave failed. Keep this note open or use Save.' : 'Save failed.';
@@ -5581,7 +6171,7 @@ async function reloadNotesAfterAction(message, { advanceFromId = null, undo = nu
   await loadAll();
   if (nextId && state.notes.some(note => Number(note.id) === Number(nextId))) {
     state.active = state.notes.find(note => Number(note.id) === Number(nextId));
-    state.activeExtra = await api('/notes/' + nextId);
+    state.activeExtra = await fetchNoteDetail(nextId);
     renderApp();
     return;
   }
@@ -5590,28 +6180,40 @@ async function reloadNotesAfterAction(message, { advanceFromId = null, undo = nu
 
 async function archiveCurrentNote(id) {
   await runUserAction(async () => {
+    if (await queueNoteStatusOffline(id, 'archive')) return afterOfflineNoteAction('Archived offline · will sync');
     await api(`/notes/${id}/archive`, { method: 'POST', body: {} });
     await reloadNotesAfterAction('Archived', { advanceFromId: id, undo: () => restoreNoteUndo(id) });
   }, 'Archive failed');
 }
 
+// Refresh the note list from cache after an offline archive/trash without hitting the server.
+async function afterOfflineNoteAction(message) {
+  toast(message);
+  state.active = null;
+  state.activeExtra = null;
+  state.editingNote = false;
+  await loadCurrentSection();
+  renderApp();
+}
+
 async function toggleCurrentNotePinned(id) {
   if (!id) return;
   await runUserAction(async () => {
-    const details = await api('/notes/' + id);
+    const details = await fetchNoteDetail(id);
     const note = details.note;
     const pinned = Number(note.pinned) ? 0 : 1;
     await api('/notes', { method: 'POST', body: { id, title: note.title, body: note.body, type: note.type, section: note.section || 'All', category_id: note.category_id || '', category: note.category || '', tags: note.tags || '', client_id: note.client_id || '', pinned } });
     toast(pinned ? 'Pinned' : 'Unpinned');
     await loadCurrentSection();
     state.active = state.notes.find(item => Number(item.id) === Number(id)) || null;
-    state.activeExtra = state.active ? await api('/notes/' + id) : null;
+    state.activeExtra = state.active ? await fetchNoteDetail(id) : null;
     refreshContentArea(renderNotesWorkspace());
   }, 'Pin update failed');
 }
 
 async function trashCurrentNote(id) {
   await runUserAction(async () => {
+    if (await queueNoteStatusOffline(id, 'delete')) return afterOfflineNoteAction('Moved to recycle bin offline · will sync');
     await api('/notes/' + id, { method: 'DELETE' });
     await reloadNotesAfterAction('Moved to recycle bin', { advanceFromId: id, undo: () => restoreNoteUndo(id) });
   }, 'Delete failed');
@@ -5683,7 +6285,7 @@ async function restoreVersion(noteId, versionId) {
     toast('Version restored');
     await loadCurrentSection();
     state.active = state.notes.find(n => Number(n.id) === Number(noteId)) || null;
-    state.activeExtra = await api('/notes/' + noteId);
+    state.activeExtra = await fetchNoteDetail(noteId);
     state.editingNote = false;
     document.querySelector('#contentArea').innerHTML = renderNotesWorkspace();
     bindContentActions();

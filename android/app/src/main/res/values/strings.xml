@@ -9,7 +9,11 @@
     <string name="retry">Retry</string>
     <string name="change_server">Change server</string>
     <string name="shared_note_saved">Shared note saved to DiVault.</string>
-    <string name="shared_note_failed">Sign in to DiVault, then share again.</string>
+    <string name="shared_note_queued">Saved offline — will sync when you reconnect.</string>
+    <string name="shared_note_signedout">Sign in to DiVault, then share again.</string>
+    <string name="shared_note_failed">Could not save the shared note.</string>
+    <string name="quick_capture_short">Quick note</string>
+    <string name="quick_capture_long">New quick note</string>
     <string name="save">Save</string>
     <string name="cancel">Cancel</string>
     <string name="choose_file">Choose file</string>

@@ -40,6 +40,7 @@ public class MainActivity extends Activity {
     private static final int FILE_CHOOSER_REQUEST = 1001;
     private static final int NOTIFICATION_PERMISSION_REQUEST = 1002;
     private static final String REMINDER_CHANNEL_ID = "divault_reminders";
+    private static final String ACTION_QUICK_CAPTURE = "com.divault.mobile.QUICK_CAPTURE";
 
     private SharedPreferences preferences;
     private WebView webView;
@@ -47,6 +48,7 @@ public class MainActivity extends Activity {
     private String pendingShareTitle;
     private String pendingShareBody;
     private boolean shareAttempted;
+    private boolean pendingQuickCapture;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -59,6 +61,7 @@ public class MainActivity extends Activity {
         setTitle(R.string.app_name);
         preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         handleShareIntent(getIntent());
+        handleQuickCaptureIntent(getIntent());
         ensureNotificationChannel();
         requestNotificationPermissionIfNeeded();
         buildWebView();
@@ -71,8 +74,10 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleShareIntent(intent);
+        handleQuickCaptureIntent(intent);
         loadIntentUrl(intent);
         injectPendingShare();
+        injectPendingQuickCapture();
     }
 
     private void buildWebView() {
@@ -123,6 +128,7 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 injectPendingShare();
+                injectPendingQuickCapture();
             }
 
             @Override
@@ -245,34 +251,64 @@ public class MainActivity extends Activity {
     }
 
     private void handleShareIntent(Intent intent) {
-        if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction())) return;
-        CharSequence text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
+        if (intent == null) return;
+        String action = intent.getAction();
+        String body = null;
+        if (Intent.ACTION_SEND.equals(action)) {
+            CharSequence text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
+            body = text != null ? text.toString().trim() : null;
+        } else if (Intent.ACTION_SEND_MULTIPLE.equals(action)) {
+            ArrayList<CharSequence> items = intent.getCharSequenceArrayListExtra(Intent.EXTRA_TEXT);
+            if (items != null) {
+                StringBuilder joined = new StringBuilder();
+                for (CharSequence item : items) {
+                    if (item == null || item.toString().trim().isEmpty()) continue;
+                    if (joined.length() > 0) joined.append("\n\n");
+                    joined.append(item.toString().trim());
+                }
+                body = joined.length() > 0 ? joined.toString() : null;
+            }
+        } else {
+            return;
+        }
+        if (body == null || body.isEmpty()) return;
         CharSequence subject = intent.getCharSequenceExtra(Intent.EXTRA_SUBJECT);
-        if (text == null || text.toString().trim().isEmpty()) return;
         pendingShareTitle = subject != null && subject.toString().trim().length() > 0 ? subject.toString().trim() : "Shared to DiVault";
-        pendingShareBody = text.toString().trim();
+        pendingShareBody = body;
         shareAttempted = false;
     }
 
     private void injectPendingShare() {
         if (pendingShareBody == null || shareAttempted || webView == null) return;
         shareAttempted = true;
-        String js = "(async function(){try{"
-                + "const c=Object.fromEntries(document.cookie.split('; ').filter(Boolean).map(x=>x.split('=')));"
-                + "const csrf=decodeURIComponent(c.divault_csrf||c.qv_csrf||'');"
-                + "const r=await fetch('/api/notes',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({title:"
-                + jsString(pendingShareTitle) + ",body:" + jsString(pendingShareBody)
-                + ",type:'text',section:'All'})});return r.ok?'ok':'fail';}catch(e){return 'fail';}})();";
-        webView.evaluateJavascript(js, result -> {
-            if (result != null && result.contains("ok")) {
-                Toast.makeText(this, R.string.shared_note_saved, Toast.LENGTH_SHORT).show();
-            } else {
-                Toast.makeText(this, R.string.shared_note_failed, Toast.LENGTH_LONG).show();
-            }
-            pendingShareTitle = null;
-            pendingShareBody = null;
-            shareAttempted = false;
-        });
+        // Route through the app's offline-capable capture so shares queue even when offline.
+        // It waits for the app to finish signing in, then reports back via DiVaultAndroid.shareResult.
+        String js = "(function(){var t=" + jsString(pendingShareTitle) + ",b=" + jsString(pendingShareBody) + ",n=0;"
+                + "function go(){try{"
+                + "if(window.divaultReady&&window.divaultCaptureShared){"
+                + "Promise.resolve(window.divaultCaptureShared(t,b)).then(function(r){DiVaultAndroid.shareResult(String(r));}).catch(function(){DiVaultAndroid.shareResult('fail');});return;}"
+                + "if(n++<80){setTimeout(go,250);return;}DiVaultAndroid.shareResult('signedout');"
+                + "}catch(e){DiVaultAndroid.shareResult('fail');}}go();})();";
+        webView.post(() -> webView.evaluateJavascript(js, null));
+        pendingShareTitle = null;
+        pendingShareBody = null;
+        shareAttempted = false;
+    }
+
+    private void handleQuickCaptureIntent(Intent intent) {
+        if (intent == null) return;
+        if (ACTION_QUICK_CAPTURE.equals(intent.getAction())) pendingQuickCapture = true;
+    }
+
+    private void injectPendingQuickCapture() {
+        if (!pendingQuickCapture || webView == null) return;
+        pendingQuickCapture = false;
+        // Open the instant quick-note composer once the app is ready.
+        String js = "(function(){var n=0;function go(){try{"
+                + "if(window.divaultReady&&window.divaultOpenQuickCapture){window.divaultOpenQuickCapture('');return;}"
+                + "if(n++<80){setTimeout(go,250);}"
+                + "}catch(e){}}go();})();";
+        webView.post(() -> webView.evaluateJavascript(js, null));
     }
 
     private String jsString(String value) {
@@ -408,6 +444,19 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void changeServer() {
             runOnUiThread(() -> promptForServerUrl());
+        }
+
+        @JavascriptInterface
+        public void shareResult(String status) {
+            final String value = status == null ? "" : status;
+            runOnUiThread(() -> {
+                int message;
+                if ("ok".equals(value)) message = R.string.shared_note_saved;
+                else if ("queued".equals(value)) message = R.string.shared_note_queued;
+                else if ("signedout".equals(value)) message = R.string.shared_note_signedout;
+                else message = R.string.shared_note_failed;
+                Toast.makeText(MainActivity.this, message, message == R.string.shared_note_saved ? Toast.LENGTH_SHORT : Toast.LENGTH_LONG).show();
+            });
         }
 
         @JavascriptInterface
